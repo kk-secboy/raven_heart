@@ -120,6 +120,7 @@ agent_core never imports runtime
 - SQLite memory store.
 - Markdown memory store.
 - Postgres, vector DB, graph, or product memory can implement `MemoryPort` outside core.
+- Runner-level memory recall injection through `ContextInjection`.
 - Memory governance hooks.
 - Leak scanning and global bucket checks.
 
@@ -159,7 +160,8 @@ records trim metadata in the prompt manifest. `AgentRunner` applies this against
 
 `ContextInjection` lets runtimes or core services place structured material into
 a target bucket without rewriting the prompt builder. Resume checkpoints use this
-path today; memory, operator hints, and runtime-specific context can use the same
+path today. `AgentRunner` also injects memory recall through this path when
+memory is enabled; operator hints and runtime-specific context can use the same
 SDK-level mechanism later.
 
 ## Yaklang Influence

@@ -15,7 +15,7 @@ from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInje
 from agent_core.events import EventSinkPort
 from agent_core.harness import AgentHarness, CancelToken, InMemoryAgentJournal, ResumeToken
 from agent_core.loop_guard import LoopGuard
-from agent_core.memory import MemoryPort, NullMemory
+from agent_core.memory import MemoryHit, MemoryPort, MemoryQuery, NullMemory
 from agent_core.mcp import MCPCenter
 from agent_core.policy import PolicyPort
 from agent_core.providers import LLMProviderPort
@@ -151,7 +151,12 @@ class AgentRunner:
         if run_request.refresh:
             await self.refresh()
         resume_manifest = await self._resume_manifest(run_request.resume_token)
-        context = self._context_for(run_request, resume_manifest=resume_manifest)
+        memory_injections = await self._memory_injections(run_request)
+        context = self._context_for(
+            run_request,
+            resume_manifest=resume_manifest,
+            injections=memory_injections,
+        )
         prompt = self._prompt_builder().build(context).trim_to_budget(
             self.session.profile.budget.max_prompt_bytes
         )
@@ -195,15 +200,16 @@ class AgentRunner:
         request: AgentRunRequest,
         *,
         resume_manifest: dict[str, Any] | None = None,
+        injections: tuple[ContextInjection, ...] = (),
     ) -> AgentContextPack:
         base = request.context or AgentContextPack()
         system = base.system or self.session.profile.instructions
         dynamic_task = base.dynamic_task or request.task
         resume_manifest = resume_manifest or {}
-        injections = base.injections
+        context_injections = (*base.injections, *injections)
         if resume_manifest:
-            injections = (
-                *injections,
+            context_injections = (
+                *context_injections,
                 ContextInjection(
                     name="resume_checkpoint",
                     content=_resume_context_block(resume_manifest),
@@ -234,8 +240,31 @@ class AgentRunner:
             workspace=base.workspace,
             current_time=base.current_time,
             dynamic_task=dynamic_task,
-            injections=injections,
+            injections=context_injections,
             metadata=metadata,
+        )
+
+    async def _memory_injections(self, request: AgentRunRequest) -> tuple[ContextInjection, ...]:
+        if not self.session.profile.capabilities.memory_enabled:
+            return ()
+        context = request.context or AgentContextPack()
+        query_text = context.dynamic_task or request.task
+        hits = await self.session.memory.search(MemoryQuery(query=query_text, limit=5))
+        if not hits:
+            return ()
+        return (
+            ContextInjection(
+                name="memory_recall",
+                content=_memory_context_block(hits),
+                target=PromptBucketRole.SEMI_DYNAMIC_1,
+                source="memory",
+                priority=80,
+                metadata={
+                    "query": query_text,
+                    "hit_count": len(hits),
+                    "sources": [hit.source for hit in hits if hit.source],
+                },
+            ),
         )
 
     def _executor(self) -> ReActExecutor:
@@ -247,7 +276,7 @@ class AgentRunner:
             harness=self.session.harness,
             event_sink=self.session.event_sink,
             policy=self.session.policy,
-            memory=self.session.memory if self.session.profile.capabilities.memory_enabled else NullMemory(),
+            memory=NullMemory(),
             skills=self.session.skills,
             timeline=self.session.timeline,
             tool_replay=self.session.tool_replay,
@@ -452,6 +481,14 @@ def _resume_context_block(manifest: dict[str, Any]) -> str:
         "state:\n"
         f"{rendered_state}"
     )
+
+
+def _memory_context_block(hits: tuple[MemoryHit, ...]) -> str:
+    lines = []
+    for hit in hits:
+        source = hit.source or "memory"
+        lines.append(f"- {source} ({hit.score:.3f}): {hit.content}")
+    return "[memory]\n" + "\n".join(lines)
 
 
 def _replace_run(

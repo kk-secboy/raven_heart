@@ -80,13 +80,20 @@ async def test_agent_runner_executes_react_with_profile_context_and_manifest() -
     assert outcome.result.output == "done"
     assert provider.requests[0].model == "mock-mini"
     assert provider.requests[0].metadata["max_cost_usd"] == 0.5
-    assert "Follow core rules." in provider.requests[0].messages[0].content
-    assert "workspace note" in provider.requests[0].messages[0].content
-    assert "target admin UI" in provider.requests[0].messages[-1].content
+    prompt_text = provider.requests[0].messages[0].content
+    assert "Follow core rules." in prompt_text
+    assert "workspace note" in prompt_text
+    assert "[context_injection:memory_recall source=memory]" in prompt_text
+    assert "target admin UI" in prompt_text
+    assert all(message.name != "memory" for message in provider.requests[0].messages)
     assert tools.invocations[0].tool_name == "lookup"
     assert outcome.session_manifest["profile"]["name"] == "core-test"
     assert outcome.session_manifest["capabilities"]["skills"]["loaded_skills"][0]["name"] == "recon"
     assert outcome.prompt_manifest["metadata"]["request_id"] == "r1"
+    memory_injection = outcome.prompt_manifest["metadata"]["context_injections"][0]
+    assert memory_injection["name"] == "memory_recall"
+    assert memory_injection["source"] == "memory"
+    assert memory_injection["metadata"]["hit_count"] == 1
     assert journal.finished[0]["status"] == "completed"
 
 

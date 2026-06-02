@@ -78,3 +78,8 @@ part of the core execution path rather than a Raven-specific adapter behavior.
 continuity, operator hints, and runtime-supplied context. It declares the target
 bucket, source, priority, and metadata. The runtime still owns the actual content
 and policy for adding it.
+
+When memory is enabled on an `AgentSession`, `AgentRunner` recalls memory through
+`MemoryPort` and injects the rendered hits as `ContextInjection(source="memory")`.
+Standalone `ReActExecutor` still supports direct memory messages for tests and
+small embeddings that do not use the full runner.
