@@ -466,6 +466,54 @@ class SQLiteJournalStore(AgentJournalStorePort):
             conn.commit()
 
 
+class MarkdownJournalStore(AgentJournalStorePort):
+    """Markdown-backed journal snapshot store for inspectable local runs."""
+
+    _START = "<!-- agent-journal-snapshot"
+    _END = "-->"
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def load_snapshot(self) -> AgentJournalSnapshot | None:
+        if not self.path.exists():
+            return None
+        text = self.path.read_text(encoding="utf-8")
+        start = text.find(self._START)
+        if start < 0:
+            return None
+        payload_start = start + len(self._START)
+        end = text.find(self._END, payload_start)
+        if end < 0:
+            raise ResumeError("invalid Markdown journal snapshot")
+        raw = text[payload_start:end].strip()
+        try:
+            manifest = json.loads(raw or "{}")
+        except json.JSONDecodeError as exc:
+            raise ResumeError(f"invalid Markdown journal snapshot: {exc}") from exc
+        if not isinstance(manifest, dict):
+            raise ResumeError("invalid Markdown journal snapshot")
+        return _snapshot_from_manifest(manifest)
+
+    def save_snapshot(self, snapshot: AgentJournalSnapshot) -> None:
+        raw = json.dumps(snapshot.manifest(), ensure_ascii=False, indent=2, sort_keys=True)
+        body = (
+            "# Agent Journal Snapshot\n\n"
+            "This file is managed by raven_heart. The latest resumable state is stored below.\n\n"
+            f"{self._START}\n"
+            f"{raw}\n"
+            f"{self._END}\n"
+        )
+        self.path.write_text(body, encoding="utf-8")
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-markdown-journal-store/v1",
+            "path": str(self.path),
+        }
+
+
 class PersistentAgentJournal(InMemoryAgentJournal):
     """Harness journal that persists through a pluggable snapshot store."""
 

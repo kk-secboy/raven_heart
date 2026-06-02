@@ -63,7 +63,7 @@ agent_core never imports runtime
 - Run and turn lifecycle.
 - In-memory journal.
 - Persistent journal backed by `AgentJournalStorePort`.
-- Built-in in-memory and SQLite journal stores.
+- Built-in in-memory, SQLite, and Markdown journal stores.
 - Postgres or other durable stores can implement the same port outside core.
 - Checkpoints and resume tokens.
 - `AgentRunRequest.resume_token` for injecting checkpoint state into the next run.
@@ -128,7 +128,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Data area | Core port | Built-in lightweight implementations | External/runtime implementations |
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product knowledge stores |
-| Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store | Postgres, object storage, event log, workflow database |
+| Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, build artifacts |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
 

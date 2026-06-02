@@ -7,6 +7,7 @@ from agent_core.errors import HarnessError, ResumeError
 from agent_core.harness import (
     InMemoryAgentJournal,
     InMemoryJournalStore,
+    MarkdownJournalStore,
     PersistentAgentJournal,
     SQLiteAgentJournal,
     SQLiteJournalStore,
@@ -91,6 +92,27 @@ async def test_sqlite_journal_store_persists_checkpoint_resume_and_manifest(tmp_
     assert resumable[0]["checkpoint_id"] == checkpoint.checkpoint_id
     assert restored.manifest()["schema_version"] == "agent-core-persistent-journal/v1"
     assert restored.manifest()["store"]["schema_version"] == "agent-core-sqlite-journal-store/v1"
+
+
+@pytest.mark.asyncio
+async def test_markdown_journal_store_persists_checkpoint_resume_and_manifest(tmp_path) -> None:
+    path = tmp_path / "journal.md"
+    journal = PersistentAgentJournal(MarkdownJournalStore(path))
+    run = await journal.start_run("markdown task", metadata={"profile": "markdown"})
+    turn = await journal.start_turn(run, 0)
+    checkpoint = await journal.checkpoint(turn, {"status": "ready", "value": 3})
+    token = journal.resume_token(checkpoint)
+    await journal.finish_run(run, "completed", {"output": "done"})
+
+    restored = PersistentAgentJournal(MarkdownJournalStore(path))
+    resumed = await restored.resume(token)
+    text = path.read_text(encoding="utf-8")
+
+    assert resumed.state == {"status": "ready", "value": 3}
+    assert restored.runs[run.run_id].metadata["profile"] == "markdown"
+    assert restored.finished[0]["result"]["output"] == "done"
+    assert "<!-- agent-journal-snapshot" in text
+    assert restored.manifest()["store"]["schema_version"] == "agent-core-markdown-journal-store/v1"
 
 
 @pytest.mark.asyncio

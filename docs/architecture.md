@@ -37,7 +37,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Data area | Port | Built-in implementations | Runtime implementations |
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | PG, vector DB, graph/RAG, product knowledge |
-| Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store | PG, object storage, workflow DB, audit event log |
+| Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, CI/build artifacts |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
 
