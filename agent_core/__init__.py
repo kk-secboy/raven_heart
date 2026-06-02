@@ -109,7 +109,15 @@ from agent_core.skills import (
     parse_skill_resource_ref,
     skill_from_markdown,
 )
-from agent_core.trace import CapabilityTrace, CostTrace, PromptTrace, ToolTrace
+from agent_core.trace import (
+    AgentJournalReplay,
+    AgentReplayEvent,
+    CapabilityTrace,
+    CostTrace,
+    PromptTrace,
+    ReplayIssue,
+    ToolTrace,
+)
 from agent_core.tools import (
     InMemoryToolReplay,
     ToolCenter,
@@ -134,11 +142,13 @@ __all__ = [
     "AgentHarness",
     "AgentJournalSnapshot",
     "AgentJournalStorePort",
+    "AgentJournalReplay",
     "AgentPromptBuilder",
     "AgentProfile",
     "AgentRunner",
     "AgentRunOutcome",
     "AgentRunRequest",
+    "AgentReplayEvent",
     "AgentSession",
     "AgentSessionManager",
     "ArtifactRecord",
@@ -194,6 +204,7 @@ __all__ = [
     "ReActExecutor",
     "ReActResult",
     "ResumeToken",
+    "ReplayIssue",
     "RunStatus",
     "RunState",
     "RuleBasedPolicy",

@@ -21,6 +21,7 @@ ops agents, research agents, and future automation systems.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Pluggable journal stores for harness checkpoint/resume persistence.
+- Journal replay manifests and snapshot consistency audit.
 - Policy gates, budget metadata, loop guards, and capability manifests.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
@@ -71,6 +72,7 @@ agent_core never imports runtime
 - `AgentRunRequest.resume_token` for injecting checkpoint state into the next run.
 - Run manifest and error recording.
 - Terminal status checks.
+- `AgentJournalReplay` for replayable event timelines and journal consistency audit.
 
 ### ReAct
 

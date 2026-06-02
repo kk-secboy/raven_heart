@@ -25,7 +25,7 @@ agent_core
 | Tool center | Real tools, shell/file/network access, sandboxing |
 | MCP center | MCP server deployment, credentials, process lifecycle |
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
-| Harness journal and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
+| Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
 | Harness/ReAct runner | UI events, API routes, production persistence backend |
 | Policy ports | Operator approval UX and organization policy |
@@ -44,6 +44,10 @@ Core ships lightweight implementations so the SDK can run by itself:
 The SDK must not require a production database driver. Production backends should
 be added by the host runtime or by separate adapter packages that implement the
 same ports.
+
+`AgentJournalReplay` turns a journal snapshot into a replayable event manifest
+and reports consistency issues before a runtime depends on that state for UI,
+debugging, audit, or resume decisions.
 
 ## Adapter Policy
 

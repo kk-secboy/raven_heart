@@ -15,6 +15,7 @@ from agent_core.harness import (
 from agent_core.prompt import PromptIR
 from agent_core.react import ReActConfig, ReActExecutor
 from agent_core.testing import MockLLMProvider, MockToolRuntime
+from agent_core.trace import AgentJournalReplay
 
 
 @pytest.mark.asyncio
@@ -159,6 +160,67 @@ async def test_react_executor_records_replayable_journal_snapshot() -> None:
     assert len(restored.model_events) == 2
     assert len(restored.tool_calls) == 1
     assert restored.finished[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_agent_journal_replay_reconstructs_run_events_and_manifest() -> None:
+    journal = InMemoryAgentJournal()
+    run = await journal.start_run("replay task")
+    turn = await journal.start_turn(run, 0)
+    await journal.record_prompt(turn, {"prompt_sha256": "abc"})
+    await journal.record_model_event(turn, {"type": "message_end"})
+    await journal.record_tool_call(turn, {"tool_name": "lookup", "status": "completed"})
+    checkpoint = await journal.checkpoint(turn, {"status": "tool_finished"})
+    await journal.record_error(run=run, turn=turn, error="minor warning")
+    await journal.finish_run(run, "completed", {"output": "done"})
+
+    replay = AgentJournalReplay.from_snapshot(journal.snapshot(), run_id=run.run_id)
+    manifest = replay.manifest()
+
+    assert replay.ok
+    assert replay.event_types() == (
+        "run_started",
+        "turn_started",
+        "prompt_recorded",
+        "model_event",
+        "tool_call",
+        "checkpoint",
+        "error",
+        "run_finished",
+    )
+    assert manifest["schema_version"] == "agent-core-journal-replay/v1"
+    assert manifest["event_count"] == 8
+    assert manifest["events"][5]["payload"]["checkpoint_id"] == checkpoint.checkpoint_id
+    assert manifest["issues"] == []
+
+
+def test_agent_journal_replay_reports_snapshot_consistency_issues() -> None:
+    replay = AgentJournalReplay.from_manifest(
+        {
+            "runs": [
+                {
+                    "run_id": "run-1",
+                    "status": "completed",
+                    "task": "broken",
+                    "created_at": "now",
+                    "metadata": {},
+                }
+            ],
+            "turns": [{"run_id": "missing-run", "turn_id": "turn-1"}],
+            "tool_calls": [{"run_id": "run-1", "turn_id": "missing-turn"}],
+            "checkpoints": [
+                {"run_id": "run-1", "turn_id": "", "sequence": 2},
+                {"run_id": "run-1", "turn_id": "", "sequence": 1},
+            ],
+        }
+    )
+    codes = {issue.code for issue in replay.issues}
+
+    assert not replay.ok
+    assert "unknown_run" in codes
+    assert "unknown_turn" in codes
+    assert "non_monotonic_checkpoint_sequence" in codes
+    assert "terminal_run_missing_finished_record" in codes
 
 
 @pytest.mark.asyncio
