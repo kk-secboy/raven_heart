@@ -13,9 +13,28 @@ from uuid import uuid4
 from agent_core.errors import HarnessError, ResumeError
 
 
-RunStatus = Literal["running", "completed", "cancelled", "failed", "max_iterations", "stalled"]
+RunStatus = Literal[
+    "running",
+    "completed",
+    "cancelled",
+    "failed",
+    "max_iterations",
+    "stalled",
+    "denied",
+    "approval_required",
+]
 TurnStatus = Literal["running", "completed", "cancelled", "failed"]
-TERMINAL_RUN_STATUSES = frozenset({"completed", "cancelled", "failed", "max_iterations", "stalled"})
+TERMINAL_RUN_STATUSES = frozenset(
+    {
+        "completed",
+        "cancelled",
+        "failed",
+        "max_iterations",
+        "stalled",
+        "denied",
+        "approval_required",
+    }
+)
 TERMINAL_TURN_STATUSES = frozenset({"completed", "cancelled", "failed"})
 
 

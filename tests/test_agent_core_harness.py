@@ -242,6 +242,23 @@ async def test_agent_journal_rejects_invalid_lifecycle_transitions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_journal_accepts_policy_terminal_statuses_and_round_trips() -> None:
+    journal = InMemoryAgentJournal()
+    denied = await journal.start_run("denied task")
+    approval = await journal.start_run("approval task")
+
+    await journal.finish_run(denied, "denied", {"output": "blocked"})
+    await journal.finish_run(approval, "approval_required", {"output": "needs approval"})
+
+    restored = InMemoryAgentJournal.from_manifest(journal.snapshot().manifest())
+
+    assert restored.runs[denied.run_id].status == "denied"
+    assert restored.runs[approval.run_id].status == "approval_required"
+    assert restored.finished[0]["status"] == "denied"
+    assert restored.finished[1]["status"] == "approval_required"
+
+
+@pytest.mark.asyncio
 async def test_agent_journal_resume_validates_token_sequence() -> None:
     journal = InMemoryAgentJournal()
     run = await journal.start_run("task")

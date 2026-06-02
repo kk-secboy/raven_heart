@@ -73,6 +73,7 @@ agent_core never imports runtime
 - `AgentRunRequest.resume_token` for injecting checkpoint state into the next run.
 - Run manifest and error recording.
 - Terminal status checks.
+- Policy terminal statuses: `denied` and `approval_required`.
 - `AgentJournalReplay` for replayable event timelines and journal consistency audit.
 
 ### ReAct

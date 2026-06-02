@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from agent_core.actions import ActionRegistry, ParsedAction
+from agent_core.harness import InMemoryAgentJournal
 from agent_core.mcp import MCPCenter, MCPServerSpec, MCPToolReference, MCPToolSpec
 from agent_core.policy import CompositePolicy, PolicyRule, RuleBasedPolicy
 from agent_core.prompt import PromptIR
@@ -215,6 +216,40 @@ async def test_approval_required_action_policy_stops_run_with_approval_metadata(
     assert result.output == "final answer needs approval"
     assert result.metadata["approval"]["subject"] == "action:finish"
     assert harness.finished[-1]["status"] == "approval_required"
+
+
+@pytest.mark.asyncio
+async def test_policy_terminal_statuses_are_valid_for_core_journal() -> None:
+    provider = MockLLMProvider(
+        [
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    policy = RuleBasedPolicy(
+        [
+            PolicyRule(
+                name="finish-deny",
+                status="deny",
+                action_names=("finish",),
+                reason="finish denied",
+            )
+        ]
+    )
+    journal = InMemoryAgentJournal()
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=ToolRegistry(),
+        action_registry=ActionRegistry(),
+        harness=journal,
+        policy=policy,
+        config=ReActConfig(max_iterations=2),
+    )
+
+    result = await executor.run("deny final", PromptIR.from_parts(dynamic="task"))
+
+    assert result.status == "denied"
+    assert journal.finished[-1]["status"] == "denied"
+    assert journal.runs[result.run_id].status == "denied"
 
 
 @pytest.mark.asyncio
