@@ -4,7 +4,13 @@ import pytest
 
 from agent_core.actions import ActionRegistry
 from agent_core.errors import HarnessError, ResumeError
-from agent_core.harness import InMemoryAgentJournal
+from agent_core.harness import (
+    InMemoryAgentJournal,
+    InMemoryJournalStore,
+    PersistentAgentJournal,
+    SQLiteAgentJournal,
+    SQLiteJournalStore,
+)
 from agent_core.prompt import PromptIR
 from agent_core.react import ReActConfig, ReActExecutor
 from agent_core.testing import MockLLMProvider, MockToolRuntime
@@ -33,6 +39,71 @@ async def test_in_memory_agent_journal_checkpoints_resume_and_round_trips_snapsh
     assert restored.tool_calls[0]["tool_name"] == "lookup"
     assert restored.finished[0]["result"]["output"] == "done"
     assert restored.turns[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_persistent_agent_journal_uses_store_port_for_resume() -> None:
+    store = InMemoryJournalStore()
+    journal = PersistentAgentJournal(store)
+    run = await journal.start_run("durable task", metadata={"profile": "store"})
+    turn = await journal.start_turn(run, 0)
+    checkpoint = await journal.checkpoint(turn, {"status": "tool_finished", "value": 2})
+    token = journal.resume_token(checkpoint)
+    await journal.finish_run(run, "completed", {"output": "done"})
+
+    restored = PersistentAgentJournal(store)
+    resumed = await restored.resume(token)
+    manifest = restored.manifest()
+
+    assert resumed.state == {"status": "tool_finished", "value": 2}
+    assert restored.runs[run.run_id].status == "completed"
+    assert restored.finished[0]["result"]["output"] == "done"
+    assert manifest["schema_version"] == "agent-core-persistent-journal/v1"
+    assert manifest["store"]["schema_version"] == "agent-core-in-memory-journal-store/v1"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_journal_store_persists_checkpoint_resume_and_manifest(tmp_path) -> None:
+    path = tmp_path / "journal.sqlite"
+    journal = PersistentAgentJournal(SQLiteJournalStore(path))
+    run = await journal.start_run("durable task", metadata={"profile": "sqlite"})
+    turn = await journal.start_turn(run, 0)
+    await journal.record_prompt(turn, {"bucket_hash": "abc"})
+    await journal.record_model_event(turn, {"type": "message_end"})
+    await journal.record_tool_call(turn, {"tool_name": "lookup", "status": "completed"})
+    checkpoint = await journal.checkpoint(turn, {"status": "tool_finished", "value": 2})
+    token = journal.resume_token(checkpoint)
+    await journal.record_error(run=run, turn=turn, error=ValueError("durable error"))
+    await journal.finish_run(run, "completed", {"output": "done"})
+
+    restored = PersistentAgentJournal(SQLiteJournalStore(path))
+    resumed = await restored.resume(token)
+    manifest = restored.run_manifest(run.run_id)
+    resumable = restored.resumable_runs()
+
+    assert resumed.state == {"status": "tool_finished", "value": 2}
+    assert restored.runs[run.run_id].status == "completed"
+    assert manifest["run"]["metadata"]["profile"] == "sqlite"
+    assert manifest["prompts"][0]["manifest"]["bucket_hash"] == "abc"
+    assert manifest["tool_calls"][0]["tool_name"] == "lookup"
+    assert manifest["errors"][0]["message"] == "durable error"
+    assert manifest["finished"][0]["result"]["output"] == "done"
+    assert resumable[0]["checkpoint_id"] == checkpoint.checkpoint_id
+    assert restored.manifest()["schema_version"] == "agent-core-persistent-journal/v1"
+    assert restored.manifest()["store"]["schema_version"] == "agent-core-sqlite-journal-store/v1"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_agent_journal_is_convenience_wrapper(tmp_path) -> None:
+    path = tmp_path / "journal.sqlite"
+    journal = SQLiteAgentJournal(path)
+    run = await journal.start_run("wrapper task")
+    turn = await journal.start_turn(run, 0)
+    checkpoint = await journal.checkpoint(turn, {"status": "ready"})
+
+    restored = SQLiteAgentJournal(path)
+    assert (await restored.resume(journal.resume_token(checkpoint))).state == {"status": "ready"}
+    assert restored.path == path
 
 
 @pytest.mark.asyncio

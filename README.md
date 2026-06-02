@@ -18,6 +18,7 @@ ops agents, research agents, and future automation systems.
 - MCP center and SDK-free stdio connector.
 - Prompt buckets and context trimming.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
+- Pluggable journal stores for harness checkpoint/resume persistence.
 - Policy gates, budget metadata, loop guards, and capability manifests.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
@@ -45,8 +46,8 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Tool registry protocol | Real tools, sandboxing, permissions |
 | Skill registry | Skill distribution UX |
 | MCP center interfaces | MCP server deployment and secrets |
-| SQLite/Markdown memory | Graphiti, RAG, durable product stores |
-| Harness state contracts | API routes, UI events, persistence backend |
+| Memory and journal ports | Graphiti, RAG, durable product stores |
+| Harness state contracts | API routes, UI events, production persistence backend |
 
 The dependency direction must always be:
 
@@ -61,6 +62,9 @@ agent_core never imports runtime
 
 - Run and turn lifecycle.
 - In-memory journal.
+- Persistent journal backed by `AgentJournalStorePort`.
+- Built-in in-memory and SQLite journal stores.
+- Postgres or other durable stores can implement the same port outside core.
 - Checkpoints and resume tokens.
 - `AgentRunRequest.resume_token` for injecting checkpoint state into the next run.
 - Run manifest and error recording.
@@ -113,8 +117,24 @@ agent_core never imports runtime
 - In-memory memory store.
 - SQLite memory store.
 - Markdown memory store.
+- Postgres, vector DB, graph, or product memory can implement `MemoryPort` outside core.
 - Memory governance hooks.
 - Leak scanning and global bucket checks.
+
+### Data Backend Boundary
+
+The SDK core treats data backends as ports, not as product commitments:
+
+| Data area | Core port | Built-in lightweight implementations | External/runtime implementations |
+| --- | --- | --- | --- |
+| Memory | `MemoryPort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product knowledge stores |
+| Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store | Postgres, object storage, event log, workflow database |
+| Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, build artifacts |
+| Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
+
+This keeps `agent_core` small and importable while still leaving a clean path to
+production storage. A runtime should bring its own durable backends when it needs
+PG, graph memory, multi-tenant isolation, retention policy, or product audit.
 
 ### Prompt Buckets
 

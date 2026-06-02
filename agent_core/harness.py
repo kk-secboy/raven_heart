@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -126,6 +129,19 @@ class AgentJournalSnapshot:
             "errors": list(self.errors),
             "finished": list(self.finished),
         }
+
+
+class AgentJournalStorePort(Protocol):
+    """Persistence boundary for harness journals."""
+
+    def load_snapshot(self) -> AgentJournalSnapshot | None:
+        """Load the latest durable journal snapshot."""
+
+    def save_snapshot(self, snapshot: AgentJournalSnapshot) -> None:
+        """Persist the latest journal snapshot."""
+
+    def manifest(self) -> dict[str, Any]:
+        """Describe the backing store without leaking implementation details."""
 
 
 class InMemoryAgentJournal(AgentHarness):
@@ -295,18 +311,7 @@ class InMemoryAgentJournal(AgentHarness):
 
     @classmethod
     def from_manifest(cls, manifest: dict[str, Any]) -> "InMemoryAgentJournal":
-        snapshot = AgentJournalSnapshot(
-            schema_version=str(manifest.get("schema_version") or "agent-core-journal/v1"),
-            runs=tuple(dict(item) for item in manifest.get("runs", ())),
-            turns=tuple(dict(item) for item in manifest.get("turns", ())),
-            prompts=tuple(dict(item) for item in manifest.get("prompts", ())),
-            model_events=tuple(dict(item) for item in manifest.get("model_events", ())),
-            tool_calls=tuple(dict(item) for item in manifest.get("tool_calls", ())),
-            checkpoints=tuple(dict(item) for item in manifest.get("checkpoints", ())),
-            errors=tuple(dict(item) for item in manifest.get("errors", ())),
-            finished=tuple(dict(item) for item in manifest.get("finished", ())),
-        )
-        return cls(snapshot)
+        return cls(_snapshot_from_manifest(manifest))
 
     def _load_snapshot(self, snapshot: AgentJournalSnapshot) -> None:
         for item in snapshot.runs:
@@ -380,6 +385,162 @@ class InMemoryAgentJournal(AgentHarness):
         ]
 
 
+class InMemoryJournalStore(AgentJournalStorePort):
+    """Snapshot store useful for tests and in-process SDK embeddings."""
+
+    def __init__(self, snapshot: AgentJournalSnapshot | None = None) -> None:
+        self._snapshot = _copy_snapshot(snapshot) if snapshot is not None else None
+
+    def load_snapshot(self) -> AgentJournalSnapshot | None:
+        return _copy_snapshot(self._snapshot) if self._snapshot is not None else None
+
+    def save_snapshot(self, snapshot: AgentJournalSnapshot) -> None:
+        self._snapshot = _copy_snapshot(snapshot)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-in-memory-journal-store/v1",
+            "has_snapshot": self._snapshot is not None,
+        }
+
+
+class SQLiteJournalStore(AgentJournalStorePort):
+    """SQLite snapshot store for durable local SDK runs."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def load_snapshot(self) -> AgentJournalSnapshot | None:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                """
+                SELECT manifest_json
+                FROM agent_journal_state
+                WHERE id = 1
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            manifest = json.loads(str(row[0] or "{}"))
+        except json.JSONDecodeError as exc:
+            raise ResumeError(f"invalid SQLite journal snapshot: {exc}") from exc
+        if not isinstance(manifest, dict):
+            raise ResumeError("invalid SQLite journal snapshot")
+        return _snapshot_from_manifest(manifest)
+
+    def save_snapshot(self, snapshot: AgentJournalSnapshot) -> None:
+        raw = json.dumps(snapshot.manifest(), ensure_ascii=False, sort_keys=True)
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_journal_state(id, manifest_json, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    manifest_json = excluded.manifest_json,
+                    updated_at = excluded.updated_at
+                """,
+                (raw, utc_now_iso()),
+            )
+            conn.commit()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-sqlite-journal-store/v1",
+            "path": str(self.path),
+        }
+
+    def _init_db(self) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_journal_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    manifest_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+
+class PersistentAgentJournal(InMemoryAgentJournal):
+    """Harness journal that persists through a pluggable snapshot store."""
+
+    def __init__(
+        self,
+        store: AgentJournalStorePort,
+        snapshot: AgentJournalSnapshot | None = None,
+    ) -> None:
+        self.store = store
+        super().__init__(snapshot if snapshot is not None else store.load_snapshot())
+        if snapshot is not None:
+            self._persist()
+
+    async def start_run(self, task: str, metadata: dict[str, Any] | None = None) -> RunState:
+        run = await super().start_run(task, metadata)
+        self._persist()
+        return run
+
+    async def start_turn(self, run: RunState, index: int) -> TurnState:
+        turn = await super().start_turn(run, index)
+        self._persist()
+        return turn
+
+    async def record_prompt(self, turn: TurnState, manifest: dict[str, Any]) -> None:
+        await super().record_prompt(turn, manifest)
+        self._persist()
+
+    async def record_model_event(self, turn: TurnState, event: dict[str, Any]) -> None:
+        await super().record_model_event(turn, event)
+        self._persist()
+
+    async def record_tool_call(self, turn: TurnState, event: dict[str, Any]) -> None:
+        await super().record_tool_call(turn, event)
+        self._persist()
+
+    async def checkpoint(self, turn: TurnState, state: dict[str, Any]) -> Checkpoint:
+        checkpoint = await super().checkpoint(turn, state)
+        self._persist()
+        return checkpoint
+
+    async def finish_run(self, run: RunState, status: str, result: dict[str, Any]) -> None:
+        await super().finish_run(run, status, result)
+        self._persist()
+
+    async def record_error(
+        self,
+        *,
+        run: RunState | None = None,
+        turn: TurnState | None = None,
+        error: BaseException | str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        await super().record_error(run=run, turn=turn, error=error, metadata=metadata)
+        self._persist()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-persistent-journal/v1",
+            "store": self.store.manifest(),
+            "snapshot": self.snapshot().manifest(),
+        }
+
+    def _persist(self) -> None:
+        self.store.save_snapshot(self.snapshot())
+
+
+class SQLiteAgentJournal(PersistentAgentJournal):
+    """Convenience wrapper for ``PersistentAgentJournal(SQLiteJournalStore(...))``."""
+
+    def __init__(self, path: str | Path, snapshot: AgentJournalSnapshot | None = None) -> None:
+        store = SQLiteJournalStore(path)
+        self.path = store.path
+        super().__init__(store, snapshot=snapshot)
+
+
 def _run_to_dict(run: RunState) -> dict[str, Any]:
     return {
         "run_id": run.run_id,
@@ -438,4 +599,22 @@ def _turn_status_for_run(status: str) -> TurnStatus:
     if status == "failed":
         return "failed"
     return "completed"
+
+
+def _copy_snapshot(snapshot: AgentJournalSnapshot) -> AgentJournalSnapshot:
+    return _snapshot_from_manifest(snapshot.manifest())
+
+
+def _snapshot_from_manifest(manifest: dict[str, Any]) -> AgentJournalSnapshot:
+    return AgentJournalSnapshot(
+        schema_version=str(manifest.get("schema_version") or "agent-core-journal/v1"),
+        runs=tuple(dict(item) for item in manifest.get("runs", ())),
+        turns=tuple(dict(item) for item in manifest.get("turns", ())),
+        prompts=tuple(dict(item) for item in manifest.get("prompts", ())),
+        model_events=tuple(dict(item) for item in manifest.get("model_events", ())),
+        tool_calls=tuple(dict(item) for item in manifest.get("tool_calls", ())),
+        checkpoints=tuple(dict(item) for item in manifest.get("checkpoints", ())),
+        errors=tuple(dict(item) for item in manifest.get("errors", ())),
+        finished=tuple(dict(item) for item in manifest.get("finished", ())),
+    )
 
