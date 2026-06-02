@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
@@ -18,6 +18,7 @@ EventType = Literal[
     "tool_finished",
     "timeline_updated",
     "checkpoint_created",
+    "loop_warning",
     "error",
     "run_finished",
     "run_cancelled",
@@ -37,6 +38,16 @@ class AgentEvent:
     payload: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now_iso)
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "run_id": self.run_id,
+            "turn_id": self.turn_id,
+            "sequence": self.sequence,
+            "payload": dict(self.payload),
+            "created_at": self.created_at,
+        }
+
 
 class EventSinkPort(Protocol):
     async def emit(self, event: AgentEvent) -> None:
@@ -53,5 +64,14 @@ class ListEventSink:
         self.events: list[AgentEvent] = []
 
     async def emit(self, event: AgentEvent) -> None:
+        if event.sequence <= 0:
+            event = replace(event, sequence=len(self.events) + 1)
         self.events.append(event)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-event-log/v1",
+            "event_count": len(self.events),
+            "events": [event.manifest() for event in self.events],
+        }
 

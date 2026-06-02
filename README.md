@@ -22,6 +22,7 @@ ops agents, research agents, and future automation systems.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Journal replay manifests and snapshot consistency audit.
+- Sequenced event stream and event log manifests.
 - Policy gates, budget metadata, loop guards, and capability manifests.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
@@ -84,6 +85,12 @@ agent_core never imports runtime
 - Prompt timeline.
 - Memory injection.
 - Artifact compaction.
+
+### Events
+
+- `AgentEvent` and `EventSinkPort`.
+- Monotonic event sequencing inside `ReActExecutor`.
+- `ListEventSink` for lightweight event capture and manifest export.
 
 ### LLM Providers
 

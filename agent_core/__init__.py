@@ -15,7 +15,7 @@ from agent_core.artifacts import ArtifactRecord, ArtifactStorePort, InMemoryArti
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
-from agent_core.events import AgentEvent, EventSinkPort
+from agent_core.events import AgentEvent, EventSinkPort, ListEventSink, NullEventSink
 from agent_core.harness import (
     AgentHarness,
     AgentJournalSnapshot,
@@ -163,6 +163,8 @@ __all__ = [
     "ContextInjection",
     "CostTrace",
     "EventSinkPort",
+    "ListEventSink",
+    "NullEventSink",
     "DEFAULT_PROMPT_TRIM_ORDER",
     "LLMProviderPort",
     "LLMProviderCenter",

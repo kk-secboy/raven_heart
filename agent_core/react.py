@@ -97,6 +97,7 @@ class ReActExecutor:
         self.config = config or ReActConfig()
         self.loop_guard = loop_guard or LoopGuard(self.config.loop_guard)
         self.artifact_store = artifact_store
+        self._event_sequence = 0
         self._ensure_builtin_actions()
         self._ensure_tool_actions()
 
@@ -786,6 +787,7 @@ class ReActExecutor:
         await self.event_sink.emit(
             AgentEvent(
                 type="timeline_updated",
+                sequence=self._next_event_sequence(),
                 payload={
                     "item_id": item.item_id,
                     "kind": item.kind,
@@ -811,8 +813,18 @@ class ReActExecutor:
         payload: dict[str, Any] | None = None,
     ) -> None:
         await self.event_sink.emit(
-            AgentEvent(type=event_type, run_id=run.run_id, turn_id=turn_id, payload=payload or {})
+            AgentEvent(
+                type=event_type,
+                run_id=run.run_id,
+                turn_id=turn_id,
+                sequence=self._next_event_sequence(),
+                payload=payload or {},
+            )
         )
+
+    def _next_event_sequence(self) -> int:
+        self._event_sequence += 1
+        return self._event_sequence
 
 
 def _provider_request_metadata(budget: RuntimeBudget) -> dict[str, Any]:

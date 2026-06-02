@@ -28,6 +28,7 @@ agent_core
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
 | Harness/ReAct runner | UI events, API routes, production persistence backend |
+| Sequenced event stream | UI rendering, logs, metrics, audit pipeline |
 | Policy ports | Operator approval UX and organization policy |
 
 ## Data Backend Boundary
@@ -48,6 +49,10 @@ same ports.
 `AgentJournalReplay` turns a journal snapshot into a replayable event manifest
 and reports consistency issues before a runtime depends on that state for UI,
 debugging, audit, or resume decisions.
+
+`ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
+can capture them with `ListEventSink`; production runtimes should implement
+`EventSinkPort` for their own logs, UI streams, metrics, or audit systems.
 
 ## Adapter Policy
 

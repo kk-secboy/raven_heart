@@ -9,7 +9,7 @@ from agent_core.actions import (
     ActionVerification,
     ParsedAction,
 )
-from agent_core.events import ListEventSink
+from agent_core.events import AgentEvent, ListEventSink
 from agent_core.artifacts import InMemoryArtifactStore
 from agent_core.harness import CancelToken
 from agent_core.loop_guard import LoopGuardConfig
@@ -22,6 +22,17 @@ from agent_core.skills import SkillRegistry, SkillsContext
 from agent_core.timeline import TimelineStore
 from agent_core.tools import InMemoryToolReplay, ToolInvocation, ToolRegistry, ToolResult, ToolSpec
 from agent_core.testing import InMemoryHarness, MockLLMProvider, MockMemory, MockToolRuntime
+
+
+@pytest.mark.asyncio
+async def test_list_event_sink_assigns_sequence_for_external_events() -> None:
+    events = ListEventSink()
+
+    await events.emit(AgentEvent(type="run_started"))
+    await events.emit(AgentEvent(type="run_finished"))
+
+    assert [event.sequence for event in events.events] == [1, 2]
+    assert events.manifest()["events"][1]["type"] == "run_finished"
 
 
 @pytest.mark.asyncio
@@ -59,6 +70,11 @@ async def test_react_executor_runs_tool_then_finish_with_mock_ports() -> None:
     assert harness.prompts
     assert harness.checkpoints[-1].state["status"] == "finished"
     assert [event.type for event in events.events if event.type == "tool_finished"]
+    assert [event.sequence for event in events.events] == list(range(1, len(events.events) + 1))
+    manifest = events.manifest()
+    assert manifest["schema_version"] == "agent-core-event-log/v1"
+    assert manifest["event_count"] == len(events.events)
+    assert manifest["events"][0]["type"] == "run_started"
 
 
 @pytest.mark.asyncio
