@@ -1,61 +1,75 @@
 # raven_heart
 
-`raven_heart` is a provider-neutral agent core for building long-running
-Harness/ReAct agents. It was extracted from RavenStorm so the agent base can be
-developed independently from Raven's current OpenAI Agents SDK runtime.
+`raven_heart` is a pure, provider-neutral Harness/ReAct LLM Agent SDK base.
+It is designed to be imported by different runtimes such as Raven, code agents,
+ops agents, research agents, and future automation systems.
 
-中文一句话：这是 Raven 的 AI agent 基座，不是 pentest runtime。它负责 agent 怎么思考、
-怎么组织上下文、怎么调工具、怎么接记忆、怎么恢复运行；具体工具、Graphiti、FastAPI、
-OpenAI Agents SDK 这些都应该通过 runtime adapter 接进来。
+中文一句话：这是一个纯独立 agent SDK 基座，只负责 agent 的通用核心能力，不包含 Raven、OpenAI Agents SDK、Graphiti 或其他具体 runtime adapter。
 
-## Why This Exists
+## Scope
 
-RavenStorm originally used the OpenAI Agents SDK as the main runtime. That is
-convenient early on, but it makes several core behaviors hard to own:
+`agent_core` contains only reusable agent mechanics:
 
-- ReAct loop semantics and action parsing.
-- Harness lifecycle, checkpoint, resume, and audit trail.
+- ReAct loop and structured action execution.
+- Harness lifecycle, checkpoint, resume, trace, and replay primitives.
+- LLM provider abstractions and provider routing.
+- Tool registry and tool center.
+- Skill center and skill context injection.
+- MCP center and SDK-free stdio connector.
 - Prompt buckets and context trimming.
-- Tool registry, MCP registry, skill loading, and policy gates.
-- Memory stores and memory governance.
-- Runtime migration across security, code, ops, and research agents.
+- SQLite, Markdown, and in-memory stores for lightweight memory.
+- Policy gates, budget metadata, loop guards, and capability manifests.
 
-`raven_heart` moves those behaviors into our own base layer. Raven-specific
-runtime pieces stay outside the core.
+Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
+
+## Non-Goals
+
+This repository does not contain:
+
+- Raven runtime adapters.
+- OpenAI Agents SDK compatibility adapters.
+- Graphiti adapters.
+- Concrete pentest tools.
+- FastAPI, gateway, UI, database, or deployment code.
+- Yaklang source translation.
+
+Those can be built later in RavenStorm or separate adapter repositories. Keeping them out makes this package usable by code agents and other non-Raven agents.
 
 ## Design Boundary
 
-| Belongs in `agent_core` | Belongs in runtime / integration |
+| Core owns | Runtime owns |
 | --- | --- |
-| Harness state machine | FastAPI routes, WebSocket events |
-| ReAct executor | Concrete task orchestration UI |
-| Prompt bucket IR | Domain-specific prompt contracts |
-| Tool center and tool manifests | Real pentest tools and sandbox execution |
-| Skill registry and context windows | Skill distribution and product UX |
-| MCP center and stdio connector | MCP server deployment and credentials |
-| Provider port and provider router | OpenAI, Anthropic, local model clients |
-| Memory center, SQLite, Markdown memory | Graphiti, Document RAG, project stores |
-| Policy interface and rule policy | Operator approval UX and org policy |
+| Agent loop semantics | Product orchestration |
+| Prompt bucket IR | Domain-specific prompt content |
+| Provider protocol | Concrete LLM clients and credentials |
+| Tool registry protocol | Real tools, sandboxing, permissions |
+| Skill registry | Skill distribution UX |
+| MCP center interfaces | MCP server deployment and secrets |
+| SQLite/Markdown memory | Graphiti, RAG, durable product stores |
+| Harness state contracts | API routes, UI events, persistence backend |
 
-The rule is simple: `agent_core` owns agent mechanics. Runtime owns concrete
-systems, credentials, persistence, UI, and domain behavior.
+The dependency direction must always be:
+
+```text
+runtime imports agent_core
+agent_core never imports runtime
+```
 
 ## Core Capabilities
 
 ### Harness
 
 - Run and turn lifecycle.
-- Terminal status checks.
 - In-memory journal.
 - Checkpoints and resume tokens.
 - Run manifest and error recording.
+- Terminal status checks.
 
 ### ReAct
 
 - Provider-neutral ReAct loop.
 - Structured action parsing.
-- Built-in actions such as `finish`, `fail`, `call_tool`, `search_skill`,
-  `load_skill`, and memory actions.
+- Built-in actions: `finish`, `fail`, `call_tool`, `search_skill`, `load_skill`, memory actions.
 - Loop guard.
 - Tool replay.
 - Prompt timeline.
@@ -65,9 +79,9 @@ systems, credentials, persistence, UI, and domain behavior.
 ### LLM Providers
 
 - `LLMProviderPort` protocol.
-- Provider registry and default provider routing.
+- Provider registry and routing.
 - Retry and fallback.
-- Usage and failure accounting.
+- Usage/failure accounting.
 - Budget checks.
 
 ### Tools
@@ -75,14 +89,14 @@ systems, credentials, persistence, UI, and domain behavior.
 - `ToolSpec`, `ToolRegistry`, and `ToolCenter`.
 - Runtime mounts.
 - Tool tags, aliases, manifests, inventory, and search.
-- In-memory replay support.
+- In-memory replay.
 
 ### Skills
 
 - `SkillRegistry` and `SkillsContext`.
 - Markdown skill parsing.
 - `SKILL.md` discovery.
-- Zip archive skill loading with path safety checks.
+- Zip skill archive loading with path-safety checks.
 - Resource loading and windowed context views.
 
 ### MCP
@@ -90,8 +104,7 @@ systems, credentials, persistence, UI, and domain behavior.
 - `MCPCenter`.
 - Tool, resource, and prompt registration.
 - Server state refresh.
-- Stdio JSON-RPC connector.
-- No dependency on the MCP Python SDK inside core.
+- SDK-free stdio JSON-RPC connector.
 
 ### Memory
 
@@ -104,66 +117,38 @@ systems, credentials, persistence, UI, and domain behavior.
 
 ### Prompt Buckets
 
-The prompt builder uses bucketed context instead of one giant string:
-
 | Bucket | Purpose |
 | --- | --- |
 | Static | Stable role, rules, and agent contract |
 | Capability | Available tools, MCP tools, actions, and skills |
 | Skill | Loaded skill bodies and resource windows |
-| Memory | Recalled facts, continuity hints, and prior observations |
+| Memory | Recalled facts, continuity hints, prior observations |
 | Task | Current objective, constraints, and runtime context |
-| Reactive | Recent tool results, failures, deltas, and loop-local state |
-
-This mirrors the useful part of Yaklang-style agent context management without
-copying Yaklang code.
+| Reactive | Recent tool results, failures, deltas, loop-local state |
 
 ## Yaklang Influence
 
-This project studies Yaklang's agent ideas at the architecture level:
+This project studies Yaklang-style agent ideas at the architecture level:
 
 - Semantic context partitioning.
 - Automatic context trimming.
-- Tool and skill capability surfaces.
+- Context injection.
 - Memory-backed continuity.
-- Runtime adapter separation.
+- Tool, skill, and MCP capability orchestration.
 
-It does **not** translate Yaklang source code. Yaklang is AGPL-licensed; this
-repository should remain an independent implementation of similar concepts.
+It does not translate Yaklang source code. Yaklang is AGPL-licensed; this repository is an independent implementation of similar ideas.
 
 ## Repository Layout
 
 ```text
-agent_core/
-  actions.py          # action registry and validation
-  harness.py          # lifecycle, journal, checkpoint, resume
-  react.py            # ReAct executor
-  providers.py        # LLM provider ports and router
-  tools.py            # tool registry and tool center
-  skills.py           # skill registry and context windows
-  mcp.py              # MCP center
-  mcp_stdio.py        # stdio JSON-RPC MCP-like connector
-  memory.py           # memory ports and stores
-  context.py          # prompt/context builder
-  prompt.py           # prompt IR and buckets
-  policy.py           # policy ports and rule policy
-  runner.py           # high-level session runner
-
-tests/
-  test_agent_core_*.py
-
-integrations/
-  raven/
-    agent_core_adapter.py   # Raven runtime adapter
-    test_runtime_adapter.py # requires Raven runtime modules
-
-docs/
-  architecture.md
+agent_core/        # standalone SDK package
+tests/             # core tests only
+examples/          # pure core examples, no runtime adapters
+docs/              # architecture notes
+.github/workflows/ # CI
 ```
 
 ## Install
-
-For local development:
 
 ```bash
 python -m venv .venv
@@ -182,39 +167,42 @@ The core package currently has no required runtime dependencies.
 
 ## Test
 
-Run the standalone core suite:
-
 ```bash
 python -m pytest
 ```
 
-Current extraction baseline:
+Current baseline:
 
 ```text
 102 passed
 ```
 
-The default suite intentionally excludes Raven-specific integration tests.
-`integrations/raven/test_runtime_adapter.py` requires a RavenStorm checkout with
-`app.openai_agents_runtime` available.
+## Examples
 
-## Raven Integration
+Run a deterministic ReAct session:
 
-The Raven adapter demonstrates how to expose existing Raven runtime objects
-through `agent_core` ports:
+```bash
+python examples/minimal_react.py
+```
 
-- SDK function tools become `ToolRuntimePort` mounts.
-- Runtime completion callables become `LLMProviderPort` providers.
-- Working memory or Graphiti-like backends become `MemoryPort` stores.
-- TaskTree tools can be probed before session construction.
+Run memory and skill context examples:
 
-This is the intended migration path:
+```bash
+python examples/memory_and_skills.py
+```
 
-1. Keep Raven runtime behavior where it is.
-2. Wrap Raven tools, memory, and providers with adapters.
-3. Run Raven flows through `AgentRunner`.
-4. Move OpenAI Agents SDK usage behind the adapter.
-5. Remove direct SDK dependency from the core path once parity is proven.
+## How A Runtime Uses This SDK
+
+A runtime should:
+
+1. Implement or provide an `LLMProviderPort`.
+2. Register tools through `ToolRegistry` or mount a `ToolRuntimePort`.
+3. Load skills through `SkillRegistry` / `SkillsContext`.
+4. Attach memory through `MemoryPort` / `MemoryCenter`.
+5. Build an `AgentSession`.
+6. Run it with `AgentRunner`.
+
+The runtime may be Raven, a code agent, an ops agent, or any other host. The runtime owns concrete tools, credentials, persistence, UI, and deployment. `raven_heart` owns the reusable agent mechanics.
 
 ## Current Status
 
@@ -227,15 +215,9 @@ This is the intended migration path:
 | MCP center | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
 | Prompt buckets/trimming | MVP implemented |
-| Raven adapter | Prototype implemented |
-| Full Raven runtime replacement | Not complete |
-
-This repository is usable as a base, but it is not yet a finished replacement
-for RavenStorm's OpenAI Agents SDK runtime. Full replacement still needs real
-runtime parity tests, provider integration, production persistence, and Raven
-end-to-end migration.
+| Runtime adapter code | intentionally excluded |
+| Full OpenAI Agents SDK replacement | in progress |
 
 ## License
 
 MIT. See `LICENSE`.
-

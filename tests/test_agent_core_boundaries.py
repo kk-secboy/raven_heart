@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 AGENT_CORE = Path(__file__).resolve().parents[1] / "agent_core"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_agent_core_has_no_runtime_or_provider_imports() -> None:
@@ -65,4 +66,21 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
     assert expected <= set(agent_core.__all__)
     for name in expected:
         assert getattr(agent_core, name) is not None
+
+
+def test_repository_does_not_ship_runtime_adapter_packages() -> None:
+    forbidden_dirs = {
+        "adapters",
+        "integrations",
+        "openai_agents_runtime",
+        "graphiti",
+        "raven_runtime",
+    }
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in ROOT.iterdir()
+        if path.is_dir() and path.name in forbidden_dirs
+    ]
+
+    assert offenders == []
 
