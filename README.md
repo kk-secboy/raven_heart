@@ -62,6 +62,7 @@ agent_core never imports runtime
 - Run and turn lifecycle.
 - In-memory journal.
 - Checkpoints and resume tokens.
+- `AgentRunRequest.resume_token` for injecting checkpoint state into the next run.
 - Run manifest and error recording.
 - Terminal status checks.
 
@@ -201,6 +202,7 @@ A runtime should:
 4. Attach memory through `MemoryPort` / `MemoryCenter`.
 5. Build an `AgentSession`.
 6. Run it with `AgentRunner`.
+7. Resume from checkpoints by passing a `ResumeToken` into `AgentRunRequest`.
 
 The runtime may be Raven, a code agent, an ops agent, or any other host. The runtime owns concrete tools, credentials, persistence, UI, and deployment. `raven_heart` owns the reusable agent mechanics.
 

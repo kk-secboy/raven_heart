@@ -13,7 +13,7 @@ from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder
 from agent_core.events import EventSinkPort
-from agent_core.harness import AgentHarness, CancelToken, InMemoryAgentJournal
+from agent_core.harness import AgentHarness, CancelToken, InMemoryAgentJournal, ResumeToken
 from agent_core.loop_guard import LoopGuard
 from agent_core.memory import MemoryPort, NullMemory
 from agent_core.mcp import MCPCenter
@@ -91,6 +91,7 @@ class AgentRunRequest:
     context: AgentContextPack | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     refresh: bool = False
+    resume_token: ResumeToken | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ class AgentRunOutcome:
     result: ReActResult
     session_manifest: dict[str, Any]
     prompt_manifest: dict[str, Any]
+    resume_manifest: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -147,7 +149,8 @@ class AgentRunner:
         run_request = request if isinstance(request, AgentRunRequest) else AgentRunRequest(task=str(request))
         if run_request.refresh:
             await self.refresh()
-        context = self._context_for(run_request)
+        resume_manifest = await self._resume_manifest(run_request.resume_token)
+        context = self._context_for(run_request, resume_manifest=resume_manifest)
         prompt = self._prompt_builder().build(context)
         executor = self._executor()
         result = await executor.run(run_request.task, prompt)
@@ -155,6 +158,7 @@ class AgentRunner:
             result=result,
             session_manifest=self.session.manifest(),
             prompt_manifest=prompt.manifest(),
+            resume_manifest=resume_manifest,
         )
 
     def _prompt_builder(self) -> AgentPromptBuilder:
@@ -168,15 +172,48 @@ class AgentRunner:
             capabilities=self.session.capability_catalog(),
         )
 
-    def _context_for(self, request: AgentRunRequest) -> AgentContextPack:
+    async def _resume_manifest(self, token: ResumeToken | None) -> dict[str, Any]:
+        if token is None:
+            return {}
+        checkpoint = await self.session.harness.resume(token)
+        return {
+            "schema_version": "agent-core-resume/v1",
+            "run_id": checkpoint.run_id,
+            "turn_id": checkpoint.turn_id,
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "sequence": checkpoint.sequence,
+            "created_at": checkpoint.created_at,
+            "state": dict(checkpoint.state),
+            "token_metadata": dict(token.metadata),
+        }
+
+    def _context_for(
+        self,
+        request: AgentRunRequest,
+        *,
+        resume_manifest: dict[str, Any] | None = None,
+    ) -> AgentContextPack:
         base = request.context or AgentContextPack()
         system = base.system or self.session.profile.instructions
         dynamic_task = base.dynamic_task or request.task
+        resume_manifest = resume_manifest or {}
+        workspace = base.workspace
+        if resume_manifest:
+            workspace = "\n\n".join(
+                part
+                for part in (
+                    workspace,
+                    _resume_context_block(resume_manifest),
+                )
+                if part
+            )
         metadata = {
             **base.metadata,
             **request.metadata,
             "profile": self.session.profile.name,
         }
+        if resume_manifest:
+            metadata["resume"] = resume_manifest
         return AgentContextPack(
             system=system,
             task_instruction=base.task_instruction,
@@ -184,7 +221,7 @@ class AgentRunner:
             output_example=base.output_example,
             recent_tools_cache=base.recent_tools_cache,
             user_history=base.user_history,
-            workspace=base.workspace,
+            workspace=workspace,
             current_time=base.current_time,
             dynamic_task=dynamic_task,
             metadata=metadata,
@@ -387,6 +424,23 @@ def _budget_manifest(budget: RuntimeBudget) -> dict[str, Any]:
         "max_tool_result_bytes": budget.max_tool_result_bytes,
         "max_cost_usd": budget.max_cost_usd,
     }
+
+
+def _resume_context_block(manifest: dict[str, Any]) -> str:
+    state = manifest.get("state") if isinstance(manifest.get("state"), dict) else {}
+    state_lines = []
+    for key, value in sorted(state.items(), key=lambda item: str(item[0])):
+        state_lines.append(f"- {key}: {value}")
+    rendered_state = "\n".join(state_lines) if state_lines else "- empty"
+    return (
+        "== Resumed Checkpoint ==\n"
+        f"run_id: {manifest.get('run_id')}\n"
+        f"turn_id: {manifest.get('turn_id')}\n"
+        f"checkpoint_id: {manifest.get('checkpoint_id')}\n"
+        f"sequence: {manifest.get('sequence')}\n"
+        "state:\n"
+        f"{rendered_state}"
+    )
 
 
 def _replace_run(

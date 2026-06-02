@@ -111,6 +111,43 @@ async def test_agent_runner_respects_profile_memory_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_runner_injects_resume_checkpoint_context() -> None:
+    journal = InMemoryAgentJournal()
+    original_run = await journal.start_run("original task")
+    original_turn = await journal.start_turn(original_run, 0)
+    checkpoint = await journal.checkpoint(
+        original_turn,
+        {
+            "status": "tool_finished",
+            "last_tool": "lookup",
+            "observation": "admin UI found",
+        },
+    )
+    token = journal.resume_token(checkpoint)
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "resumed"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="resumable"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        harness=journal,
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(task="continue task", resume_token=token)
+    )
+
+    assert outcome.result.status == "completed"
+    assert outcome.result.output == "resumed"
+    assert outcome.resume_manifest["checkpoint_id"] == checkpoint.checkpoint_id
+    assert outcome.resume_manifest["state"]["observation"] == "admin UI found"
+    assert outcome.prompt_manifest["metadata"]["resume"]["checkpoint_id"] == checkpoint.checkpoint_id
+    prompt_text = provider.requests[0].messages[0].content
+    assert "== Resumed Checkpoint ==" in prompt_text
+    assert "admin UI found" in prompt_text
+    assert "last_tool: lookup" in prompt_text
+
+
+@pytest.mark.asyncio
 async def test_agent_runner_refreshes_tools_and_tolerates_partial_mcp_refresh() -> None:
     registry = ToolRegistry()
 
@@ -155,6 +192,34 @@ async def test_agent_session_manager_runs_and_indexes_sessions() -> None:
     assert manager.outcome(run.run_key) == outcome
     assert manager.manifest()["sessions"]["managed"]["profile"]["name"] == "managed"
     assert manager.manifest()["runs"][0]["metadata"]["request_id"] == "r1"
+
+
+@pytest.mark.asyncio
+async def test_agent_session_manager_runs_with_resume_token() -> None:
+    journal = InMemoryAgentJournal()
+    original_run = await journal.start_run("managed original")
+    original_turn = await journal.start_turn(original_run, 0)
+    checkpoint = await journal.checkpoint(original_turn, {"step": "halfway"})
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "resumed"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="managed-resume"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        harness=journal,
+    )
+    manager = AgentSessionManager()
+    manager.register(session)
+
+    outcome = await manager.run(
+        "managed-resume",
+        AgentRunRequest(task="continue", resume_token=journal.resume_token(checkpoint)),
+    )
+    run = manager.runs()[0]
+
+    assert outcome.result.status == "completed"
+    assert outcome.resume_manifest["state"]["step"] == "halfway"
+    assert run.status == "completed"
+    assert run.result_run_id == outcome.result.run_id
 
 
 @pytest.mark.asyncio
