@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_core.context import AgentContextPack, AgentPromptBuilder
+from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
 from agent_core.prompt import PromptBucketRole
 from agent_core.skills import (
     SkillRegistry,
@@ -69,6 +69,43 @@ async def test_prompt_builder_places_tools_skills_timeline_in_expected_buckets()
     assert "[timeline_open]" in prompt.bucket(PromptBucketRole.TIMELINE_OPEN).content
     assert "[workspace]" in prompt.bucket(PromptBucketRole.TIMELINE_OPEN).content
     assert "inspect target" in prompt.bucket(PromptBucketRole.DYNAMIC).content
+
+
+def test_prompt_builder_places_context_injections_by_target_bucket() -> None:
+    prompt = AgentPromptBuilder().build(
+        AgentContextPack(
+            dynamic_task="inspect",
+            injections=(
+                ContextInjection(
+                    name="operator_hint",
+                    content="operator says continue",
+                    target=PromptBucketRole.DYNAMIC,
+                    source="runtime",
+                    priority=5,
+                    metadata={"request_id": "r1"},
+                ),
+                ContextInjection(
+                    name="resume_checkpoint",
+                    content="checkpoint state",
+                    target=PromptBucketRole.TIMELINE_OPEN,
+                    source="harness",
+                    priority=10,
+                ),
+            ),
+        )
+    )
+    manifest = prompt.manifest()["metadata"]["context_injections"]
+
+    assert "[context_injection:operator_hint source=runtime]" in prompt.bucket(
+        PromptBucketRole.DYNAMIC
+    ).content
+    assert "operator says continue" in prompt.bucket(PromptBucketRole.DYNAMIC).content
+    assert "[context_injection:resume_checkpoint source=harness]" in prompt.bucket(
+        PromptBucketRole.TIMELINE_OPEN
+    ).content
+    assert manifest[0]["name"] == "resume_checkpoint"
+    assert manifest[1]["name"] == "operator_hint"
+    assert manifest[1]["metadata"]["request_id"] == "r1"
 
 
 def test_skills_context_renders_loaded_and_available_sections() -> None:

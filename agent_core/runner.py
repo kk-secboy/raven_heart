@@ -11,7 +11,7 @@ from agent_core.actions import ActionRegistry, ActionVerifierPort
 from agent_core.artifacts import ArtifactStorePort
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, RuntimeBudget
-from agent_core.context import AgentContextPack, AgentPromptBuilder
+from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
 from agent_core.events import EventSinkPort
 from agent_core.harness import AgentHarness, CancelToken, InMemoryAgentJournal, ResumeToken
 from agent_core.loop_guard import LoopGuard
@@ -19,6 +19,7 @@ from agent_core.memory import MemoryPort, NullMemory
 from agent_core.mcp import MCPCenter
 from agent_core.policy import PolicyPort
 from agent_core.providers import LLMProviderPort
+from agent_core.prompt import PromptBucketRole
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
 from agent_core.skills import SkillsContext
 from agent_core.timeline import TimelineBudget, TimelineStore
@@ -199,15 +200,22 @@ class AgentRunner:
         system = base.system or self.session.profile.instructions
         dynamic_task = base.dynamic_task or request.task
         resume_manifest = resume_manifest or {}
-        workspace = base.workspace
+        injections = base.injections
         if resume_manifest:
-            workspace = "\n\n".join(
-                part
-                for part in (
-                    workspace,
-                    _resume_context_block(resume_manifest),
-                )
-                if part
+            injections = (
+                *injections,
+                ContextInjection(
+                    name="resume_checkpoint",
+                    content=_resume_context_block(resume_manifest),
+                    target=PromptBucketRole.TIMELINE_OPEN,
+                    source="harness",
+                    priority=100,
+                    metadata={
+                        "run_id": resume_manifest.get("run_id"),
+                        "checkpoint_id": resume_manifest.get("checkpoint_id"),
+                        "sequence": resume_manifest.get("sequence"),
+                    },
+                ),
             )
         metadata = {
             **base.metadata,
@@ -223,9 +231,10 @@ class AgentRunner:
             output_example=base.output_example,
             recent_tools_cache=base.recent_tools_cache,
             user_history=base.user_history,
-            workspace=workspace,
+            workspace=base.workspace,
             current_time=base.current_time,
             dynamic_task=dynamic_task,
+            injections=injections,
             metadata=metadata,
         )
 

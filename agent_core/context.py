@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from agent_core.capabilities import CapabilityCatalog
@@ -34,6 +34,33 @@ class ContextObservation:
     notes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ContextInjection:
+    name: str
+    content: str
+    target: PromptBucketRole = PromptBucketRole.TIMELINE_OPEN
+    source: str = ""
+    priority: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def render(self) -> str:
+        body = self.content.strip()
+        if not body:
+            return ""
+        source = f" source={self.source}" if self.source else ""
+        return f"[context_injection:{self.name}{source}]\n{body}"
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "target": self.target.value,
+            "source": self.source,
+            "priority": self.priority,
+            "bytes": len(self.content.encode("utf-8")),
+            "metadata": dict(self.metadata),
+        }
+
+
 class ContextAssemblerPort(Protocol):
     async def assemble(self, task: str, budget: ContextBudget) -> PromptIR:
         """Build a prompt IR for one agent turn."""
@@ -50,7 +77,11 @@ class AgentContextPack:
     workspace: str = ""
     current_time: str = ""
     dynamic_task: str = ""
+    injections: tuple[ContextInjection, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def with_injection(self, injection: ContextInjection) -> "AgentContextPack":
+        return replace(self, injections=(*self.injections, injection))
 
 
 class AgentPromptBuilder:
@@ -74,12 +105,23 @@ class AgentPromptBuilder:
     def build(self, context: AgentContextPack) -> PromptIR:
         assembler = PromptAssembler()
         assembler.add(PromptBucketRole.HIGH_STATIC, context.system)
+        self._add_injections(assembler, context, PromptBucketRole.HIGH_STATIC)
         assembler.add(PromptBucketRole.FROZEN, self._frozen_materials())
+        self._add_injections(assembler, context, PromptBucketRole.FROZEN)
         assembler.add(PromptBucketRole.SEMI_DYNAMIC_1, self._semi_dynamic_1(context))
+        self._add_injections(assembler, context, PromptBucketRole.SEMI_DYNAMIC_1)
         assembler.add(PromptBucketRole.SEMI_DYNAMIC_2, self._semi_dynamic_2(context))
+        self._add_injections(assembler, context, PromptBucketRole.SEMI_DYNAMIC_2)
         assembler.add(PromptBucketRole.TIMELINE_OPEN, self._timeline_open(context))
+        self._add_injections(assembler, context, PromptBucketRole.TIMELINE_OPEN)
         assembler.add(PromptBucketRole.DYNAMIC, context.dynamic_task)
-        return assembler.build(metadata=context.metadata)
+        self._add_injections(assembler, context, PromptBucketRole.DYNAMIC)
+        metadata = dict(context.metadata)
+        if context.injections:
+            metadata["context_injections"] = [
+                injection.manifest() for injection in self._ordered_injections(context.injections)
+            ]
+        return assembler.build(metadata=metadata)
 
     def _frozen_materials(self) -> str:
         parts: list[str] = []
@@ -137,4 +179,26 @@ class AgentPromptBuilder:
         if context.current_time:
             parts.append("[current_time]\n" + context.current_time)
         return "\n\n".join(parts)
+
+    def _add_injections(
+        self,
+        assembler: PromptAssembler,
+        context: AgentContextPack,
+        role: PromptBucketRole,
+    ) -> None:
+        for injection in self._ordered_injections(context.injections):
+            if injection.target != role:
+                continue
+            rendered = injection.render()
+            if rendered:
+                assembler.add(role, rendered)
+
+    @staticmethod
+    def _ordered_injections(injections: tuple[ContextInjection, ...]) -> tuple[ContextInjection, ...]:
+        return tuple(
+            sorted(
+                injections,
+                key=lambda item: (-item.priority, item.target.value, item.name),
+            )
+        )
 

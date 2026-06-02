@@ -14,7 +14,7 @@ from agent_core.actions import (
 from agent_core.artifacts import ArtifactRecord, ArtifactStorePort, InMemoryArtifactStore
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
-from agent_core.context import AgentContextPack, AgentPromptBuilder
+from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
 from agent_core.events import AgentEvent, EventSinkPort
 from agent_core.harness import (
     AgentHarness,
@@ -150,6 +150,7 @@ __all__ = [
     "CapabilityTrace",
     "CompositePolicy",
     "Checkpoint",
+    "ContextInjection",
     "CostTrace",
     "EventSinkPort",
     "DEFAULT_PROMPT_TRIM_ORDER",

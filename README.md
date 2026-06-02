@@ -18,6 +18,7 @@ ops agents, research agents, and future automation systems.
 - MCP center and SDK-free stdio connector.
 - Prompt buckets and context trimming.
 - Provider-neutral prompt IR with semantic bucket trimming.
+- Context injection records for resume, memory, runtime hints, and other bucketed material.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Policy gates, budget metadata, loop guards, and capability manifests.
@@ -155,6 +156,11 @@ context injection, trimming, hashing, and replay manifests.
 `PromptIR.trim_to_budget()` trims lower-priority dynamic buckets first and
 records trim metadata in the prompt manifest. `AgentRunner` applies this against
 `RuntimeBudget.max_prompt_bytes` before calling the provider.
+
+`ContextInjection` lets runtimes or core services place structured material into
+a target bucket without rewriting the prompt builder. Resume checkpoints use this
+path today; memory, operator hints, and runtime-specific context can use the same
+SDK-level mechanism later.
 
 ## Yaklang Influence
 

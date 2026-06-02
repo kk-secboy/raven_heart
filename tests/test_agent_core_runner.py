@@ -172,7 +172,12 @@ async def test_agent_runner_injects_resume_checkpoint_context() -> None:
     assert outcome.resume_manifest["checkpoint_id"] == checkpoint.checkpoint_id
     assert outcome.resume_manifest["state"]["observation"] == "admin UI found"
     assert outcome.prompt_manifest["metadata"]["resume"]["checkpoint_id"] == checkpoint.checkpoint_id
+    injection = outcome.prompt_manifest["metadata"]["context_injections"][0]
+    assert injection["name"] == "resume_checkpoint"
+    assert injection["source"] == "harness"
+    assert injection["metadata"]["checkpoint_id"] == checkpoint.checkpoint_id
     prompt_text = provider.requests[0].messages[0].content
+    assert "[context_injection:resume_checkpoint source=harness]" in prompt_text
     assert "== Resumed Checkpoint ==" in prompt_text
     assert "admin UI found" in prompt_text
     assert "last_tool: lookup" in prompt_text
