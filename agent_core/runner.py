@@ -151,7 +151,9 @@ class AgentRunner:
             await self.refresh()
         resume_manifest = await self._resume_manifest(run_request.resume_token)
         context = self._context_for(run_request, resume_manifest=resume_manifest)
-        prompt = self._prompt_builder().build(context)
+        prompt = self._prompt_builder().build(context).trim_to_budget(
+            self.session.profile.budget.max_prompt_bytes
+        )
         executor = self._executor()
         result = await executor.run(run_request.task, prompt)
         return AgentRunOutcome(

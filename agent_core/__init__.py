@@ -79,6 +79,7 @@ from agent_core.policy import (
 )
 from agent_core.planner import Plan, PlannerPort, PlanStep, PlanUpdate
 from agent_core.prompt import PromptBucket, PromptBucketRole, PromptIR
+from agent_core.prompt import DEFAULT_PROMPT_TRIM_ORDER
 from agent_core.providers import (
     LLMProviderCenter,
     LLMBudgetExceededError,
@@ -151,6 +152,7 @@ __all__ = [
     "Checkpoint",
     "CostTrace",
     "EventSinkPort",
+    "DEFAULT_PROMPT_TRIM_ORDER",
     "LLMProviderPort",
     "LLMProviderCenter",
     "LLMBudgetExceededError",

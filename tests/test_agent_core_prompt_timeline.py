@@ -53,6 +53,29 @@ def test_prompt_dynamic_change_does_not_change_stable_bucket_hashes() -> None:
     )
 
 
+def test_prompt_ir_trims_dynamic_buckets_before_stable_prefix() -> None:
+    prompt = PromptIR.from_parts(
+        high_static="stable rules",
+        frozen="capability " + ("c" * 120),
+        semi_dynamic_1="skills " + ("s" * 120),
+        semi_dynamic_2="schema " + ("x" * 120),
+        timeline_open="old observation " + ("o" * 1200) + " latest observation",
+        dynamic="current task",
+    )
+
+    trimmed = prompt.trim_to_budget(900)
+    manifest = trimmed.manifest()
+    trim = manifest["metadata"]["trim"]
+
+    assert manifest["prompt_bytes"] <= 900
+    assert trimmed.bucket(PromptBucketRole.HIGH_STATIC).content == "stable rules"
+    assert trimmed.bucket(PromptBucketRole.DYNAMIC).content == "current task"
+    assert trimmed.bucket(PromptBucketRole.TIMELINE_OPEN).metadata["trimmed"] is True
+    assert trim["trimmed_roles"][0]["role"] == PromptBucketRole.TIMELINE_OPEN.value
+    assert trim["original_bytes"] > trim["final_bytes"]
+    assert "[...trimmed...]" in trimmed.bucket(PromptBucketRole.TIMELINE_OPEN).content
+
+
 def test_timeline_splits_frozen_and_open_when_over_budget() -> None:
     timeline = TimelineStore()
     for index in range(8):

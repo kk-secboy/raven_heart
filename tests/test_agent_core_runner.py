@@ -111,6 +111,37 @@ async def test_agent_runner_respects_profile_memory_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_runner_trims_prompt_to_profile_budget() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    session = AgentSession(
+        profile=AgentProfile(
+            name="trimmed",
+            instructions="stable rules",
+            budget=RuntimeBudget(max_prompt_bytes=900),
+        ),
+        provider=provider,
+        tools=MockToolRuntime(),
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="current task",
+            context=AgentContextPack(workspace="old observation " + ("o" * 1200) + " latest"),
+        )
+    )
+
+    prompt_text = provider.requests[0].messages[0].content
+    trim = outcome.prompt_manifest["metadata"]["trim"]
+
+    assert outcome.result.status == "completed"
+    assert len(prompt_text.encode("utf-8")) <= 900
+    assert "stable rules" in prompt_text
+    assert "current task" in prompt_text
+    assert "[...trimmed...]" in prompt_text
+    assert trim["target_bytes"] == 900
+
+
+@pytest.mark.asyncio
 async def test_agent_runner_injects_resume_checkpoint_context() -> None:
     journal = InMemoryAgentJournal()
     original_run = await journal.start_run("original task")

@@ -17,6 +17,7 @@ ops agents, research agents, and future automation systems.
 - Skill center and skill context injection.
 - MCP center and SDK-free stdio connector.
 - Prompt buckets and context trimming.
+- Provider-neutral prompt IR with semantic bucket trimming.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Policy gates, budget metadata, loop guards, and capability manifests.
@@ -138,6 +139,10 @@ PG, graph memory, multi-tenant isolation, retention policy, or product audit.
 
 ### Prompt Buckets
 
+`agent_core` owns prompt structure, not product-specific prompt wording. Runtime
+packages provide business instructions; the SDK provides bucket ordering,
+context injection, trimming, hashing, and replay manifests.
+
 | Bucket | Purpose |
 | --- | --- |
 | Static | Stable role, rules, and agent contract |
@@ -146,6 +151,10 @@ PG, graph memory, multi-tenant isolation, retention policy, or product audit.
 | Memory | Recalled facts, continuity hints, prior observations |
 | Task | Current objective, constraints, and runtime context |
 | Reactive | Recent tool results, failures, deltas, loop-local state |
+
+`PromptIR.trim_to_budget()` trims lower-priority dynamic buckets first and
+records trim metadata in the prompt manifest. `AgentRunner` applies this against
+`RuntimeBudget.max_prompt_bytes` before calling the provider.
 
 ## Yaklang Influence
 

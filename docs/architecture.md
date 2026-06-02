@@ -26,7 +26,7 @@ agent_core
 | MCP center | MCP server deployment, credentials, process lifecycle |
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
 | Harness journal and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
-| Prompt buckets | Domain-specific prompt material and task contracts |
+| Prompt buckets and trimming | Domain-specific prompt material and task contracts |
 | Harness/ReAct runner | UI events, API routes, production persistence backend |
 | Policy ports | Operator approval UX and organization policy |
 
@@ -63,3 +63,13 @@ OpenAI Agents SDK, RavenStorm, FastAPI, Graphiti, Redis, SQLAlchemy, or MCP SDK.
 - tool, skill, and MCP capability orchestration.
 
 It does not copy or translate Yaklang source code.
+
+## Prompt Boundary
+
+The SDK owns prompt mechanics, not business wording. `PromptIR` records semantic
+buckets, stable ordering, cache hints, hashes, and trim metadata. Runtimes provide
+the actual instructions, task contracts, examples, and domain language.
+
+`AgentRunner` applies `PromptIR.trim_to_budget()` with
+`RuntimeBudget.max_prompt_bytes` before provider calls, so automatic trimming is
+part of the core execution path rather than a Raven-specific adapter behavior.

@@ -26,6 +26,15 @@ PROMPT_BUCKET_ORDER = (
     PromptBucketRole.DYNAMIC,
 )
 
+DEFAULT_PROMPT_TRIM_ORDER = (
+    PromptBucketRole.TIMELINE_OPEN,
+    PromptBucketRole.SEMI_DYNAMIC_1,
+    PromptBucketRole.SEMI_DYNAMIC_2,
+    PromptBucketRole.FROZEN,
+    PromptBucketRole.DYNAMIC,
+    PromptBucketRole.HIGH_STATIC,
+)
+
 
 @dataclass(frozen=True)
 class CacheHint:
@@ -72,6 +81,14 @@ class PromptBucket:
         if not body:
             return ""
         return f'<prompt_materials role="{self.role.value}">\n{body}\n</prompt_materials>'
+
+    def with_content(self, content: str, metadata: dict[str, Any] | None = None) -> "PromptBucket":
+        return PromptBucket(
+            role=self.role,
+            content=content,
+            cache_hint=self.cache_hint,
+            metadata={**self.metadata, **dict(metadata or {})},
+        )
 
     def manifest(self) -> dict[str, Any]:
         hint = self.cache_hint or default_cache_hint(self.role)
@@ -150,6 +167,83 @@ class PromptIR:
             "metadata": dict(self.metadata),
         }
 
+    def trim_to_budget(
+        self,
+        max_bytes: int,
+        *,
+        trim_order: tuple[PromptBucketRole, ...] = DEFAULT_PROMPT_TRIM_ORDER,
+        marker: str = "\n[...trimmed...]\n",
+    ) -> "PromptIR":
+        """Return a semantically trimmed prompt while preserving bucket order.
+
+        The algorithm trims lower-priority dynamic context first, then gradually
+        moves toward stable buckets only when the prompt is still over budget.
+        It is deterministic and provider-neutral, so runtimes can use it before
+        calling any concrete LLM client.
+        """
+
+        target = max(1, int(max_bytes))
+        original_rendered = self.render()
+        original_bytes = len(original_rendered.encode("utf-8"))
+        if original_bytes <= target:
+            return self
+
+        by_role = {bucket.role: bucket for bucket in self.ordered_buckets()}
+        trimmed_roles: list[dict[str, Any]] = []
+        for role in trim_order:
+            current = PromptIR(
+                buckets=tuple(by_role.get(item, PromptBucket(item)) for item in PROMPT_BUCKET_ORDER),
+                metadata=dict(self.metadata),
+            )
+            current_bytes = len(current.render().encode("utf-8"))
+            if current_bytes <= target:
+                break
+            bucket = by_role.get(role, PromptBucket(role))
+            if not bucket.content:
+                continue
+            overage = current_bytes - target
+            new_content = _trim_bucket_content(bucket.content, overage, marker=marker)
+            if new_content == bucket.content:
+                continue
+            by_role[role] = bucket.with_content(
+                new_content,
+                {
+                    "trimmed": True,
+                    "original_bytes": bucket.bytes,
+                    "trimmed_bytes": len(new_content.encode("utf-8")),
+                },
+            )
+            trimmed_roles.append(
+                {
+                    "role": role.value,
+                    "original_bytes": bucket.bytes,
+                    "trimmed_bytes": len(new_content.encode("utf-8")),
+                }
+            )
+
+        result = PromptIR(
+            buckets=tuple(by_role.get(role, PromptBucket(role)) for role in PROMPT_BUCKET_ORDER),
+            metadata={
+                **self.metadata,
+                "trim": {
+                    "schema_version": "agent-core-prompt-trim/v1",
+                    "target_bytes": target,
+                    "original_bytes": original_bytes,
+                    "final_bytes": len(
+                        "\n\n".join(
+                            part
+                            for bucket in tuple(
+                                by_role.get(role, PromptBucket(role)) for role in PROMPT_BUCKET_ORDER
+                            )
+                            if (part := bucket.render())
+                        ).encode("utf-8")
+                    ),
+                    "trimmed_roles": trimmed_roles,
+                },
+            },
+        )
+        return result
+
 
 class PromptAssembler:
     """Small helper for building PromptIR incrementally."""
@@ -171,4 +265,48 @@ class PromptAssembler:
             ),
             metadata=dict(metadata or {}),
         )
+
+
+def _trim_bucket_content(content: str, overage: int, *, marker: str) -> str:
+    text = content.strip()
+    if not text:
+        return ""
+    marker_bytes = len(marker.encode("utf-8"))
+    target_bytes = len(text.encode("utf-8")) - max(1, overage) - marker_bytes
+    if target_bytes <= 0:
+        return ""
+    head_budget = max(1, target_bytes // 3)
+    tail_budget = max(1, target_bytes - head_budget)
+    head = _take_utf8_prefix(text, head_budget).rstrip()
+    tail = _take_utf8_suffix(text, tail_budget).lstrip()
+    trimmed = (head + marker + tail).strip()
+    return trimmed if trimmed != marker.strip() else ""
+
+
+def _take_utf8_prefix(text: str, max_bytes: int) -> str:
+    used = 0
+    parts: list[str] = []
+    for char in text:
+        char_bytes = len(char.encode("utf-8"))
+        if parts and used + char_bytes > max_bytes:
+            break
+        if not parts and char_bytes > max_bytes:
+            break
+        parts.append(char)
+        used += char_bytes
+    return "".join(parts)
+
+
+def _take_utf8_suffix(text: str, max_bytes: int) -> str:
+    used = 0
+    parts: list[str] = []
+    for char in reversed(text):
+        char_bytes = len(char.encode("utf-8"))
+        if parts and used + char_bytes > max_bytes:
+            break
+        if not parts and char_bytes > max_bytes:
+            break
+        parts.append(char)
+        used += char_bytes
+    return "".join(reversed(parts))
 

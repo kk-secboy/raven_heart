@@ -67,6 +67,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "MarkdownMemoryStore",
         "RuleBasedPolicy",
         "RuleBasedMemoryGovernance",
+        "DEFAULT_PROMPT_TRIM_ORDER",
     }
 
     assert expected <= set(agent_core.__all__)
