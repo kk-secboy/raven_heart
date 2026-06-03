@@ -56,6 +56,142 @@ def estimate_tokens(text: str) -> int:
 
 
 @dataclass(frozen=True)
+class PromptTrimRule:
+    role: PromptBucketRole
+    order: int
+    min_keep_bytes: int = 0
+    preserve_head_ratio: float = 0.33
+    protected: bool = False
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "min_keep_bytes", max(0, int(self.min_keep_bytes)))
+        ratio = min(0.9, max(0.1, float(self.preserve_head_ratio)))
+        object.__setattr__(self, "preserve_head_ratio", ratio)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "role": self.role.value,
+            "order": self.order,
+            "min_keep_bytes": self.min_keep_bytes,
+            "preserve_head_ratio": self.preserve_head_ratio,
+            "protected": self.protected,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class PromptTrimStep:
+    role: PromptBucketRole
+    original_bytes: int
+    final_bytes: int
+    overage_before: int
+    protected: bool = False
+    reason: str = ""
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "role": self.role.value,
+            "original_bytes": self.original_bytes,
+            "final_bytes": self.final_bytes,
+            "removed_bytes": max(0, self.original_bytes - self.final_bytes),
+            "overage_before": self.overage_before,
+            "protected": self.protected,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class PromptTrimPlan:
+    target_bytes: int
+    original_bytes: int
+    rules: tuple[PromptTrimRule, ...]
+    marker: str = "\n[...trimmed...]\n"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-prompt-trim-plan/v1",
+            "target_bytes": self.target_bytes,
+            "original_bytes": self.original_bytes,
+            "marker_bytes": len(self.marker.encode("utf-8")),
+            "rules": [rule.manifest() for rule in self.rules],
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class PromptTrimResult:
+    plan: PromptTrimPlan
+    steps: tuple[PromptTrimStep, ...]
+    final_bytes: int
+    converged: bool
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-prompt-trim/v1",
+            "target_bytes": self.plan.target_bytes,
+            "original_bytes": self.plan.original_bytes,
+            "final_bytes": self.final_bytes,
+            "converged": self.converged,
+            "plan": self.plan.manifest(),
+            "steps": [step.manifest() for step in self.steps],
+            "trimmed_roles": [
+                {
+                    "role": step.role.value,
+                    "original_bytes": step.original_bytes,
+                    "trimmed_bytes": step.final_bytes,
+                }
+                for step in self.steps
+                if step.final_bytes < step.original_bytes
+            ],
+        }
+
+
+def _default_min_keep_bytes(role: PromptBucketRole) -> int:
+    if role == PromptBucketRole.HIGH_STATIC:
+        return 4096
+    if role == PromptBucketRole.DYNAMIC:
+        return 256
+    if role == PromptBucketRole.FROZEN:
+        return 512
+    return 0
+
+
+def _default_preserve_head_ratio(role: PromptBucketRole) -> float:
+    if role == PromptBucketRole.TIMELINE_OPEN:
+        return 0.25
+    if role == PromptBucketRole.DYNAMIC:
+        return 0.1
+    return 0.33
+
+
+def _default_trim_reason(role: PromptBucketRole) -> str:
+    reasons = {
+        PromptBucketRole.TIMELINE_OPEN: "trim volatile timeline context first",
+        PromptBucketRole.SEMI_DYNAMIC_1: "trim recall, skills, and semi-dynamic context after timeline",
+        PromptBucketRole.SEMI_DYNAMIC_2: "trim task schema/examples after recall context",
+        PromptBucketRole.FROZEN: "trim capability catalog only after dynamic context",
+        PromptBucketRole.DYNAMIC: "preserve current task as long as possible",
+        PromptBucketRole.HIGH_STATIC: "stable system rules are protected",
+    }
+    return reasons[role]
+
+
+DEFAULT_PROMPT_TRIM_RULES = tuple(
+    PromptTrimRule(
+        role=role,
+        order=index,
+        min_keep_bytes=_default_min_keep_bytes(role),
+        preserve_head_ratio=_default_preserve_head_ratio(role),
+        protected=role == PromptBucketRole.HIGH_STATIC,
+        reason=_default_trim_reason(role),
+    )
+    for index, role in enumerate(DEFAULT_PROMPT_TRIM_ORDER)
+)
+
+
+@dataclass(frozen=True)
 class PromptBucket:
     role: PromptBucketRole
     content: str = ""
@@ -173,6 +309,7 @@ class PromptIR:
         *,
         trim_order: tuple[PromptBucketRole, ...] = DEFAULT_PROMPT_TRIM_ORDER,
         marker: str = "\n[...trimmed...]\n",
+        rules: tuple[PromptTrimRule, ...] | None = None,
     ) -> "PromptIR":
         """Return a semantically trimmed prompt while preserving bucket order.
 
@@ -188,9 +325,16 @@ class PromptIR:
         if original_bytes <= target:
             return self
 
+        plan = self.trim_plan(
+            max_bytes,
+            trim_order=trim_order,
+            marker=marker,
+            rules=rules,
+        )
         by_role = {bucket.role: bucket for bucket in self.ordered_buckets()}
-        trimmed_roles: list[dict[str, Any]] = []
-        for role in trim_order:
+        steps: list[PromptTrimStep] = []
+        for rule in plan.rules:
+            role = rule.role
             current = PromptIR(
                 buckets=tuple(by_role.get(item, PromptBucket(item)) for item in PROMPT_BUCKET_ORDER),
                 metadata=dict(self.metadata),
@@ -201,48 +345,120 @@ class PromptIR:
             bucket = by_role.get(role, PromptBucket(role))
             if not bucket.content:
                 continue
+            if rule.protected:
+                steps.append(
+                    PromptTrimStep(
+                        role=role,
+                        original_bytes=bucket.bytes,
+                        final_bytes=bucket.bytes,
+                        overage_before=current_bytes - target,
+                        protected=True,
+                        reason=rule.reason,
+                    )
+                )
+                continue
             overage = current_bytes - target
-            new_content = _trim_bucket_content(bucket.content, overage, marker=marker)
+            new_content = _trim_bucket_content(
+                bucket.content,
+                overage,
+                marker=marker,
+                min_keep_bytes=rule.min_keep_bytes,
+                preserve_head_ratio=rule.preserve_head_ratio,
+            )
             if new_content == bucket.content:
                 continue
+            new_bytes = len(new_content.encode("utf-8"))
             by_role[role] = bucket.with_content(
                 new_content,
                 {
                     "trimmed": True,
                     "original_bytes": bucket.bytes,
-                    "trimmed_bytes": len(new_content.encode("utf-8")),
+                    "trimmed_bytes": new_bytes,
+                    "trim_reason": rule.reason,
+                    "trim_min_keep_bytes": rule.min_keep_bytes,
                 },
             )
-            trimmed_roles.append(
-                {
-                    "role": role.value,
-                    "original_bytes": bucket.bytes,
-                    "trimmed_bytes": len(new_content.encode("utf-8")),
-                }
+            steps.append(
+                PromptTrimStep(
+                    role=role,
+                    original_bytes=bucket.bytes,
+                    final_bytes=new_bytes,
+                    overage_before=overage,
+                    reason=rule.reason,
+                )
             )
 
+        final_bytes = _rendered_bytes_by_role(by_role)
+        trim_result = PromptTrimResult(
+            plan=plan,
+            steps=tuple(steps),
+            final_bytes=final_bytes,
+            converged=final_bytes <= target,
+        )
         result = PromptIR(
             buckets=tuple(by_role.get(role, PromptBucket(role)) for role in PROMPT_BUCKET_ORDER),
             metadata={
                 **self.metadata,
-                "trim": {
-                    "schema_version": "agent-core-prompt-trim/v1",
-                    "target_bytes": target,
-                    "original_bytes": original_bytes,
-                    "final_bytes": len(
-                        "\n\n".join(
-                            part
-                            for bucket in tuple(
-                                by_role.get(role, PromptBucket(role)) for role in PROMPT_BUCKET_ORDER
-                            )
-                            if (part := bucket.render())
-                        ).encode("utf-8")
-                    ),
-                    "trimmed_roles": trimmed_roles,
-                },
+                "trim": trim_result.manifest(),
             },
         )
         return result
+
+    def trim_plan(
+        self,
+        max_bytes: int,
+        *,
+        trim_order: tuple[PromptBucketRole, ...] = DEFAULT_PROMPT_TRIM_ORDER,
+        marker: str = "\n[...trimmed...]\n",
+        rules: tuple[PromptTrimRule, ...] | None = None,
+    ) -> PromptTrimPlan:
+        target = max(1, int(max_bytes))
+        if rules is None:
+            default_by_role = {rule.role: rule for rule in DEFAULT_PROMPT_TRIM_RULES}
+            rules = tuple(
+                _trim_rule_for_role(default_by_role, role, index)
+                for index, role in enumerate(trim_order)
+            )
+        ordered = tuple(sorted(rules, key=lambda item: (item.order, item.role.value)))
+        return PromptTrimPlan(
+            target_bytes=target,
+            original_bytes=len(self.render().encode("utf-8")),
+            rules=ordered,
+            marker=marker,
+            metadata={
+                "bucket_roles": [bucket.role.value for bucket in self.ordered_buckets()],
+                "trim_order": [rule.role.value for rule in ordered],
+            },
+        )
+
+
+def _trim_rule_for_role(
+    defaults: dict[PromptBucketRole, PromptTrimRule],
+    role: PromptBucketRole,
+    index: int,
+) -> PromptTrimRule:
+    default = defaults.get(role)
+    if default is None:
+        return _fallback_trim_rule(role, index)
+    return PromptTrimRule(
+        role=role,
+        order=index,
+        min_keep_bytes=default.min_keep_bytes,
+        preserve_head_ratio=default.preserve_head_ratio,
+        protected=default.protected,
+        reason=default.reason,
+    )
+
+
+def _fallback_trim_rule(role: PromptBucketRole, index: int) -> PromptTrimRule:
+    return PromptTrimRule(
+        role=role,
+        order=index,
+        min_keep_bytes=_default_min_keep_bytes(role),
+        preserve_head_ratio=_default_preserve_head_ratio(role),
+        protected=role == PromptBucketRole.HIGH_STATIC,
+        reason=_default_trim_reason(role),
+    )
 
 
 class PromptAssembler:
@@ -267,15 +483,36 @@ class PromptAssembler:
         )
 
 
-def _trim_bucket_content(content: str, overage: int, *, marker: str) -> str:
+def _rendered_bytes_by_role(by_role: dict[PromptBucketRole, PromptBucket]) -> int:
+    rendered = "\n\n".join(
+        part
+        for bucket in tuple(by_role.get(role, PromptBucket(role)) for role in PROMPT_BUCKET_ORDER)
+        if (part := bucket.render())
+    )
+    return len(rendered.encode("utf-8"))
+
+
+def _trim_bucket_content(
+    content: str,
+    overage: int,
+    *,
+    marker: str,
+    min_keep_bytes: int = 0,
+    preserve_head_ratio: float = 0.33,
+) -> str:
     text = content.strip()
     if not text:
         return ""
     marker_bytes = len(marker.encode("utf-8"))
-    target_bytes = len(text.encode("utf-8")) - max(1, overage) - marker_bytes
+    current_bytes = len(text.encode("utf-8"))
+    target_bytes = current_bytes - max(1, overage) - marker_bytes
+    if min_keep_bytes and current_bytes > min_keep_bytes:
+        target_bytes = max(target_bytes, min_keep_bytes)
     if target_bytes <= 0:
         return ""
-    head_budget = max(1, target_bytes // 3)
+    if target_bytes >= current_bytes:
+        return text
+    head_budget = max(1, int(target_bytes * preserve_head_ratio))
     tail_budget = max(1, target_bytes - head_budget)
     head = _take_utf8_prefix(text, head_budget).rstrip()
     tail = _take_utf8_suffix(text, tail_budget).lstrip()

@@ -370,8 +370,13 @@ context injection, trimming, hashing, and replay manifests.
 | Task | Current objective, constraints, and runtime context |
 | Reactive | Recent tool results, failures, deltas, loop-local state |
 
-`PromptIR.trim_to_budget()` trims lower-priority dynamic buckets first and
-records trim metadata in the prompt manifest. `AgentRunner` applies this against
+`PromptIR.trim_plan()` and `PromptIR.trim_to_budget()` use
+`DEFAULT_PROMPT_TRIM_RULES` to produce an auditable `PromptTrimPlan` before
+cutting prompt text. The default rules trim volatile timeline context first,
+then semi-dynamic recall/schema material, then capability inventory, while
+protecting high-static system rules and preserving a minimum current-task
+window. The final prompt manifest records `PromptTrimResult` steps, removed
+bytes, protected roles, and convergence. `AgentRunner` applies this against
 `RuntimeBudget.max_prompt_bytes` before calling the provider.
 
 If `AgentSession.context_reducer` is configured, `AgentRunner` first applies
@@ -481,7 +486,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Memory backend routing/specs | MVP implemented |
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |
-| Prompt buckets/trimming | MVP implemented |
+| Prompt buckets/trimming | semantic trim plan MVP |
 | Context reducer | runner-integrated MVP |
 | Runtime adapter code | intentionally excluded |
 | Full OpenAI Agents SDK replacement | in progress |

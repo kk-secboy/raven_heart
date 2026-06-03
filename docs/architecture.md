@@ -257,6 +257,13 @@ If `AgentSession.context_reducer` is configured, the runner also applies
 timeline reduction before prompt assembly using
 `RuntimeBudget.max_timeline_bytes`.
 
+`PromptTrimPlan`, `PromptTrimRule`, `PromptTrimStep`, and `PromptTrimResult`
+make prompt trimming auditable before and after the cut. The default rules trim
+volatile timeline material first, then semi-dynamic recall/schema buckets, then
+capability inventory, while protecting high-static system rules and preserving a
+minimum dynamic task window. Runtimes can provide custom rules for code, ops, or
+security agents without changing bucket order or provider calls.
+
 `ContextInjection` is the SDK-level insertion record for resumable state, memory
 continuity, operator hints, and runtime-supplied context. It declares the target
 bucket, source, priority, and metadata. The runtime still owns the actual content

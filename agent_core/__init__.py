@@ -162,8 +162,17 @@ from agent_core.planner import (
     SQLitePlannerStore,
     TERMINAL_PLAN_STEP_STATUSES,
 )
-from agent_core.prompt import PromptBucket, PromptBucketRole, PromptIR
-from agent_core.prompt import DEFAULT_PROMPT_TRIM_ORDER
+from agent_core.prompt import (
+    DEFAULT_PROMPT_TRIM_ORDER,
+    DEFAULT_PROMPT_TRIM_RULES,
+    PromptBucket,
+    PromptBucketRole,
+    PromptIR,
+    PromptTrimPlan,
+    PromptTrimResult,
+    PromptTrimRule,
+    PromptTrimStep,
+)
 from agent_core.providers import (
     DefaultLLMProviderCodec,
     LLMCallRecord,
@@ -344,6 +353,7 @@ __all__ = [
     "MarkdownEventSink",
     "NullEventSink",
     "DEFAULT_PROMPT_TRIM_ORDER",
+    "DEFAULT_PROMPT_TRIM_RULES",
     "LLMProviderPort",
     "LLMProviderCodecPort",
     "LLMCallRecord",
@@ -395,6 +405,10 @@ __all__ = [
     "PromptBucket",
     "PromptBucketRole",
     "PromptIR",
+    "PromptTrimPlan",
+    "PromptTrimResult",
+    "PromptTrimRule",
+    "PromptTrimStep",
     "PromptTrace",
     "ReActConfig",
     "ReActExecutor",

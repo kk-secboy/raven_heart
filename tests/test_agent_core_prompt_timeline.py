@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from agent_core import apply_reduction_to_timeline
-from agent_core.prompt import PromptBucketRole, PromptIR
+from agent_core.prompt import PromptBucketRole, PromptIR, PromptTrimRule
 from agent_core.reducer import DefaultContextReducer, ReducerRequest
 from agent_core.timeline import TimelineBudget, TimelineItem, TimelineStore
 
@@ -73,8 +73,66 @@ def test_prompt_ir_trims_dynamic_buckets_before_stable_prefix() -> None:
     assert trimmed.bucket(PromptBucketRole.DYNAMIC).content == "current task"
     assert trimmed.bucket(PromptBucketRole.TIMELINE_OPEN).metadata["trimmed"] is True
     assert trim["trimmed_roles"][0]["role"] == PromptBucketRole.TIMELINE_OPEN.value
+    assert trim["plan"]["schema_version"] == "agent-core-prompt-trim-plan/v1"
+    assert trim["steps"][0]["reason"] == "trim volatile timeline context first"
     assert trim["original_bytes"] > trim["final_bytes"]
     assert "[...trimmed...]" in trimmed.bucket(PromptBucketRole.TIMELINE_OPEN).content
+
+
+def test_prompt_trim_plan_exports_semantic_rules_before_trimming() -> None:
+    prompt = PromptIR.from_parts(
+        high_static="stable rules",
+        timeline_open="old observation " + ("o" * 500),
+        dynamic="current task",
+    )
+
+    plan = prompt.trim_plan(400)
+    manifest = plan.manifest()
+
+    assert manifest["schema_version"] == "agent-core-prompt-trim-plan/v1"
+    assert manifest["target_bytes"] == 400
+    assert manifest["rules"][0]["role"] == PromptBucketRole.TIMELINE_OPEN.value
+    assert manifest["rules"][-1]["role"] == PromptBucketRole.HIGH_STATIC.value
+    assert manifest["rules"][-1]["protected"] is True
+    assert manifest["metadata"]["bucket_roles"] == [
+        "high_static",
+        "frozen",
+        "semi_dynamic_1",
+        "semi_dynamic_2",
+        "timeline_open",
+        "dynamic",
+    ]
+
+
+def test_prompt_trim_rules_can_protect_semantic_buckets() -> None:
+    prompt = PromptIR.from_parts(
+        high_static="stable rules " + ("s" * 200),
+        timeline_open="timeline " + ("t" * 700),
+        dynamic="current task " + ("d" * 200),
+    )
+    rules = (
+        PromptTrimRule(
+            role=PromptBucketRole.TIMELINE_OPEN,
+            order=0,
+            min_keep_bytes=0,
+            preserve_head_ratio=0.2,
+            reason="timeline can be aggressively reduced",
+        ),
+        PromptTrimRule(
+            role=PromptBucketRole.DYNAMIC,
+            order=1,
+            protected=True,
+            reason="current user task is protected",
+        ),
+    )
+
+    trimmed = prompt.trim_to_budget(650, rules=rules)
+    trim = trimmed.manifest()["metadata"]["trim"]
+
+    assert trimmed.bucket(PromptBucketRole.DYNAMIC).content.startswith("current task")
+    assert trimmed.bucket(PromptBucketRole.DYNAMIC).metadata == {}
+    assert trim["steps"][0]["role"] == PromptBucketRole.TIMELINE_OPEN.value
+    assert all(step["role"] != PromptBucketRole.DYNAMIC.value for step in trim["trimmed_roles"])
 
 
 def test_timeline_splits_frozen_and_open_when_over_budget() -> None:
