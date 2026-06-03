@@ -27,6 +27,7 @@ ops agents, research agents, and future automation systems.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Journal replay manifests and snapshot consistency audit.
 - Run trace bundle for provider/tool/approval/journal/event audit aggregation.
+- Run trace store port plus in-memory, SQLite, and Markdown trace stores.
 - Sequenced event stream and event log manifests.
 - Planner protocol and lightweight in-memory plan state.
 - Human-in-loop approval request and decision queue primitives.
@@ -114,6 +115,10 @@ agent_core never imports runtime
 - `AgentRunOutcome.trace_manifest` includes session, prompt, journal replay,
   provider call audit, tool replay, approvals, event log, resume, and timeline
   reduction manifests when available.
+- `RunTraceStorePort` plus `InMemoryRunTraceStore`, `SQLiteRunTraceStore`, and
+  `MarkdownRunTraceStore` for lightweight durable trace capture.
+- `AgentSession.trace_store` lets `AgentRunner` persist trace bundles
+  automatically after a run completes.
 - Runtime code can persist the bundle in PG, object storage, logs, or a workflow
   database without changing SDK execution semantics.
 
@@ -207,6 +212,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product knowledge stores |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, workflow replay DB |
+| Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, observability pipeline |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |

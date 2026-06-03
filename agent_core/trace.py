@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import re
+import sqlite3
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 
 from agent_core.harness import AgentJournalSnapshot, TERMINAL_RUN_STATUSES
 
@@ -107,6 +112,200 @@ class AgentRunTraceBundle:
             "timeline_reduction": dict(self.timeline_reduction),
             "metadata": dict(self.metadata),
         }
+
+
+class RunTraceStorePort(Protocol):
+    async def save(self, manifest: dict[str, Any]) -> None:
+        """Persist one run trace bundle manifest."""
+
+    async def load(self, run_id: str) -> dict[str, Any] | None:
+        """Load one run trace bundle by run id."""
+
+    async def records(self) -> tuple[dict[str, Any], ...]:
+        """Return persisted run trace manifests."""
+
+
+class NullRunTraceStore(RunTraceStorePort):
+    async def save(self, manifest: dict[str, Any]) -> None:
+        return None
+
+    async def load(self, run_id: str) -> dict[str, Any] | None:
+        return None
+
+    async def records(self) -> tuple[dict[str, Any], ...]:
+        return ()
+
+    def manifest(self) -> dict[str, Any]:
+        return {"schema_version": "agent-core-null-run-trace-store/v1", "record_count": 0}
+
+
+class InMemoryRunTraceStore(RunTraceStorePort):
+    def __init__(self, records: tuple[dict[str, Any], ...] = ()) -> None:
+        self._records: dict[str, dict[str, Any]] = {}
+        for record in records:
+            run_id = _run_id_from_trace_manifest(record)
+            if run_id:
+                self._records[run_id] = dict(record)
+
+    async def save(self, manifest: dict[str, Any]) -> None:
+        run_id = _run_id_from_trace_manifest(manifest)
+        if not run_id:
+            raise ValueError("trace manifest is missing run.run_id")
+        self._records[run_id] = dict(manifest)
+
+    async def load(self, run_id: str) -> dict[str, Any] | None:
+        record = self._records.get(run_id)
+        return dict(record) if record is not None else None
+
+    async def records(self) -> tuple[dict[str, Any], ...]:
+        return tuple(dict(item) for item in sorted(self._records.values(), key=_trace_sort_key))
+
+    def manifest(self) -> dict[str, Any]:
+        records = tuple(sorted(self._records.values(), key=_trace_sort_key))
+        return {
+            "schema_version": "agent-core-in-memory-run-trace-store/v1",
+            "record_count": len(records),
+            "records": [_trace_record_summary(record) for record in records],
+        }
+
+
+class SQLiteRunTraceStore(RunTraceStorePort):
+    """SQLite-backed run trace store for durable local SDK runs."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init()
+
+    async def save(self, manifest: dict[str, Any]) -> None:
+        run_id = _run_id_from_trace_manifest(manifest)
+        if not run_id:
+            raise ValueError("trace manifest is missing run.run_id")
+        raw = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                INSERT INTO run_trace_records(run_id, status, manifest_json)
+                VALUES (?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    status = excluded.status,
+                    manifest_json = excluded.manifest_json
+                """,
+                (run_id, _trace_status(manifest), raw),
+            )
+            conn.commit()
+
+    async def load(self, run_id: str) -> dict[str, Any] | None:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                """
+                SELECT manifest_json
+                FROM run_trace_records
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = json.loads(str(row[0] or "{}"))
+        return dict(value) if isinstance(value, dict) else {}
+
+    async def records(self) -> tuple[dict[str, Any], ...]:
+        with sqlite3.connect(self.path) as conn:
+            rows = conn.execute(
+                """
+                SELECT manifest_json
+                FROM run_trace_records
+                ORDER BY rowid ASC
+                """
+            ).fetchall()
+        records = []
+        for row in rows:
+            value = json.loads(str(row[0] or "{}"))
+            if isinstance(value, dict):
+                records.append(dict(value))
+        return tuple(records)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-sqlite-run-trace-store/v1",
+            "path": str(self.path),
+        }
+
+    def _init(self) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS run_trace_records (
+                    run_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    manifest_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+
+class MarkdownRunTraceStore(RunTraceStorePort):
+    """Markdown-backed run trace store for inspectable local SDK runs."""
+
+    _START = "<!-- run-trace-record "
+    _END = " -->"
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    async def save(self, manifest: dict[str, Any]) -> None:
+        run_id = _run_id_from_trace_manifest(manifest)
+        if not run_id:
+            raise ValueError("trace manifest is missing run.run_id")
+        records = {_run_id_from_trace_manifest(item): dict(item) for item in await self.records()}
+        records[run_id] = dict(manifest)
+        self._write(tuple(sorted(records.values(), key=_trace_sort_key)))
+
+    async def load(self, run_id: str) -> dict[str, Any] | None:
+        for record in await self.records():
+            if _run_id_from_trace_manifest(record) == run_id:
+                return dict(record)
+        return None
+
+    async def records(self) -> tuple[dict[str, Any], ...]:
+        if not self.path.exists():
+            return ()
+        text = self.path.read_text(encoding="utf-8")
+        records: list[dict[str, Any]] = []
+        for match in _RUN_TRACE_MARKDOWN_RE.finditer(text):
+            try:
+                value = json.loads(_decode_trace_payload(match.group(1)))
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(value, dict):
+                records.append(dict(value))
+        return tuple(sorted(records, key=_trace_sort_key))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-markdown-run-trace-store/v1",
+            "path": str(self.path),
+        }
+
+    def _write(self, records: tuple[dict[str, Any], ...]) -> None:
+        lines = [
+            "# Run Trace Records",
+            "",
+            "This file is managed by raven_heart. Trace payloads are stored in comments.",
+            "",
+        ]
+        for record in records:
+            raw = _encode_trace_payload(record)
+            summary = _trace_record_summary(record)
+            lines.append(f"{self._START}{raw}{self._END}")
+            lines.append(f"- run_id: `{summary['run_id']}`")
+            lines.append(f"- status: `{summary['status']}`")
+            lines.append(f"- provider_calls: `{summary['provider_call_count']}`")
+            lines.append("")
+        self.path.write_text("\n".join(lines), encoding="utf-8")
 
 
 @dataclass(frozen=True)
@@ -334,4 +533,51 @@ def _snapshot_from_manifest(manifest: dict[str, Any]) -> AgentJournalSnapshot:
         errors=tuple(dict(item) for item in manifest.get("errors", ())),
         finished=tuple(dict(item) for item in manifest.get("finished", ())),
     )
+
+
+_RUN_TRACE_MARKDOWN_RE = re.compile(
+    r"<!--\s*run-trace-record\s+([A-Za-z0-9+/=]+)\s*-->",
+    re.DOTALL,
+)
+
+
+def _run_id_from_trace_manifest(manifest: dict[str, Any]) -> str:
+    run = manifest.get("run")
+    if not isinstance(run, dict):
+        return ""
+    return str(run.get("run_id") or "")
+
+
+def _trace_status(manifest: dict[str, Any]) -> str:
+    run = manifest.get("run")
+    if not isinstance(run, dict):
+        return ""
+    return str(run.get("status") or "")
+
+
+def _trace_sort_key(manifest: dict[str, Any]) -> tuple[str, str]:
+    return (_run_id_from_trace_manifest(manifest), _trace_status(manifest))
+
+
+def _trace_record_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    run = manifest.get("run") if isinstance(manifest.get("run"), dict) else {}
+    summary = manifest.get("summary") if isinstance(manifest.get("summary"), dict) else {}
+    return {
+        "run_id": str(run.get("run_id") or ""),
+        "status": str(run.get("status") or ""),
+        "iterations": int(run.get("iterations") or 0),
+        "provider_call_count": int(summary.get("provider_call_count") or 0),
+        "tool_replay_record_count": int(summary.get("tool_replay_record_count") or 0),
+        "approval_record_count": int(summary.get("approval_record_count") or 0),
+        "event_log_count": int(summary.get("event_log_count") or 0),
+    }
+
+
+def _encode_trace_payload(manifest: dict[str, Any]) -> str:
+    raw = json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _decode_trace_payload(encoded: str) -> str:
+    return base64.b64decode(encoded.encode("ascii")).decode("utf-8")
 

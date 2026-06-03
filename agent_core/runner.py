@@ -27,7 +27,7 @@ from agent_core.reducer import ContextReducerPort, ReducerRequest, apply_reducti
 from agent_core.skills import SkillsContext
 from agent_core.timeline import TimelineBudget, TimelineStore
 from agent_core.tools import NullToolReplay, ToolReplayPort, ToolRuntimePort
-from agent_core.trace import AgentJournalReplay, AgentRunTraceBundle
+from agent_core.trace import AgentJournalReplay, AgentRunTraceBundle, NullRunTraceStore, RunTraceStorePort
 
 
 @dataclass
@@ -48,6 +48,7 @@ class AgentSession:
     policy: PolicyPort | None = None
     approval_store: ApprovalStorePort = field(default_factory=NullApprovalStore)
     tool_replay: ToolReplayPort = field(default_factory=NullToolReplay)
+    trace_store: RunTraceStorePort = field(default_factory=NullRunTraceStore)
     action_verifier: ActionVerifierPort | None = None
     loop_guard: LoopGuard | None = None
     artifact_store: ArtifactStorePort | None = None
@@ -70,6 +71,7 @@ class AgentSession:
         provider_manifest = getattr(self.provider, "manifest", None)
         memory_manifest = getattr(self.memory, "manifest", None)
         approval_manifest = getattr(self.approval_store, "manifest", None)
+        trace_store_manifest = getattr(self.trace_store, "manifest", None)
         return {
             "schema_version": "agent-core-session/v1",
             "profile": {
@@ -89,6 +91,7 @@ class AgentSession:
             "capabilities": self.capability_catalog().manifest(),
             "memory": memory_manifest() if callable(memory_manifest) else {},
             "approvals": approval_manifest() if callable(approval_manifest) else {},
+            "trace_store": trace_store_manifest() if callable(trace_store_manifest) else {},
             "context_reducer": _context_reducer_manifest(self.context_reducer),
             "timeline_items": len(self.timeline.items),
             "metadata": dict(self.metadata),
@@ -185,6 +188,7 @@ class AgentRunner:
             timeline_reduction_manifest=timeline_reduction_manifest,
             request=run_request,
         )
+        await self.session.trace_store.save(trace_manifest)
         return AgentRunOutcome(
             result=result,
             session_manifest=session_manifest,
