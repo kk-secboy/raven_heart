@@ -54,6 +54,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "ApprovalRecord",
         "ApprovalResumeContext",
         "ApprovalStorePort",
+        "AgentRunTraceBundle",
         "ContextInjection",
         "ContextReducerPort",
         "DefaultContextReducer",

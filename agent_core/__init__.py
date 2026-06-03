@@ -143,6 +143,7 @@ from agent_core.skills import (
 from agent_core.trace import (
     AgentJournalReplay,
     AgentReplayEvent,
+    AgentRunTraceBundle,
     CapabilityTrace,
     CostTrace,
     PromptTrace,
@@ -190,6 +191,7 @@ __all__ = [
     "AgentRunOutcome",
     "AgentRunRequest",
     "AgentReplayEvent",
+    "AgentRunTraceBundle",
     "AgentSession",
     "AgentSessionManager",
     "ArtifactRecord",

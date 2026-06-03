@@ -26,6 +26,7 @@ ops agents, research agents, and future automation systems.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Journal replay manifests and snapshot consistency audit.
+- Run trace bundle for provider/tool/approval/journal/event audit aggregation.
 - Sequenced event stream and event log manifests.
 - Planner protocol and lightweight in-memory plan state.
 - Human-in-loop approval request and decision queue primitives.
@@ -86,6 +87,8 @@ agent_core never imports runtime
 - Terminal status checks.
 - Policy terminal statuses: `denied` and `approval_required`.
 - `AgentJournalReplay` for replayable event timelines and journal consistency audit.
+- `AgentRunTraceBundle` for per-run prompt, provider, approval, replay,
+  journal, and event manifests.
 
 ### ReAct
 
@@ -104,6 +107,15 @@ agent_core never imports runtime
 - Monotonic event sequencing inside `ReActExecutor`.
 - `ListEventSink` for lightweight event capture and manifest export.
 - `approval_requested` events when policy requires human approval.
+
+### Trace Bundle
+
+- `AgentRunTraceBundle` aggregates one run's provider-neutral audit materials.
+- `AgentRunOutcome.trace_manifest` includes session, prompt, journal replay,
+  provider call audit, tool replay, approvals, event log, resume, and timeline
+  reduction manifests when available.
+- Runtime code can persist the bundle in PG, object storage, logs, or a workflow
+  database without changing SDK execution semantics.
 
 ### Human-In-Loop Approvals
 

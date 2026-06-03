@@ -27,6 +27,7 @@ agent_core
 | MCP center | MCP server deployment, credentials, process lifecycle |
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
+| Run trace bundle | Durable trace export, observability pipeline, retention |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
 | Context reducer protocol and reduction manifests | Domain summarizers, archive stores, retrieval policy |
 | Planner protocol and plan state | Domain-specific plan generation and workflow policy |
@@ -55,6 +56,12 @@ same ports.
 `AgentJournalReplay` turns a journal snapshot into a replayable event manifest
 and reports consistency issues before a runtime depends on that state for UI,
 debugging, audit, or resume decisions.
+
+`AgentRunTraceBundle` aggregates per-run session, prompt, journal replay,
+provider audit, tool replay, approvals, event log, resume, and timeline reduction
+manifests. The SDK owns the shape and summary counters. Runtime code owns where
+the bundle is stored, how long it is retained, and how it is queried for product
+observability or incident review.
 
 `LLMProviderCenter` records provider-neutral call manifests for completed and
 failed attempts. The core records provider name, model, attempt, streamed flag,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -26,6 +27,7 @@ from agent_core.reducer import ContextReducerPort, ReducerRequest, apply_reducti
 from agent_core.skills import SkillsContext
 from agent_core.timeline import TimelineBudget, TimelineStore
 from agent_core.tools import NullToolReplay, ToolReplayPort, ToolRuntimePort
+from agent_core.trace import AgentJournalReplay, AgentRunTraceBundle
 
 
 @dataclass
@@ -110,6 +112,7 @@ class AgentRunOutcome:
     prompt_manifest: dict[str, Any]
     resume_manifest: dict[str, Any] = field(default_factory=dict)
     timeline_reduction_manifest: dict[str, Any] = field(default_factory=dict)
+    trace_manifest: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -173,12 +176,22 @@ class AgentRunner:
         )
         executor = self._executor(run_request.approval_resume)
         result = await executor.run(run_request.task, prompt)
-        return AgentRunOutcome(
-            result=result,
-            session_manifest=self.session.manifest(),
+        session_manifest = self.session.manifest()
+        trace_manifest = await self._trace_manifest(
+            result,
+            session_manifest=session_manifest,
             prompt_manifest=prompt.manifest(),
             resume_manifest=resume_manifest,
             timeline_reduction_manifest=timeline_reduction_manifest,
+            request=run_request,
+        )
+        return AgentRunOutcome(
+            result=result,
+            session_manifest=session_manifest,
+            prompt_manifest=prompt.manifest(),
+            resume_manifest=resume_manifest,
+            timeline_reduction_manifest=timeline_reduction_manifest,
+            trace_manifest=trace_manifest,
         )
 
     def _prompt_builder(self) -> AgentPromptBuilder:
@@ -355,6 +368,43 @@ class AgentRunner:
                 budget=budget,
             ),
         )
+
+    async def _trace_manifest(
+        self,
+        result: ReActResult,
+        *,
+        session_manifest: dict[str, Any],
+        prompt_manifest: dict[str, Any],
+        resume_manifest: dict[str, Any],
+        timeline_reduction_manifest: dict[str, Any],
+        request: AgentRunRequest,
+    ) -> dict[str, Any]:
+        bundle = AgentRunTraceBundle(
+            run_id=result.run_id,
+            status=result.status,
+            iterations=result.iterations,
+            output_bytes=len(result.output.encode("utf-8")),
+            session=session_manifest,
+            prompt=prompt_manifest,
+            journal_replay=self._journal_replay_manifest(result.run_id),
+            provider=await _component_manifest(self.session.provider),
+            tool_replay=await _component_manifest(self.session.tool_replay),
+            approvals=await _component_manifest(self.session.approval_store),
+            event_log=await _component_manifest(self.session.event_sink),
+            resume=resume_manifest,
+            timeline_reduction=timeline_reduction_manifest,
+            metadata={
+                "profile": self.session.profile.name,
+                "request_metadata": dict(request.metadata),
+            },
+        )
+        return bundle.manifest()
+
+    def _journal_replay_manifest(self, run_id: str) -> dict[str, Any]:
+        snapshot = getattr(self.session.harness, "snapshot", None)
+        if not callable(snapshot):
+            return {}
+        return AgentJournalReplay.from_snapshot(snapshot(), run_id=run_id).manifest()
 
 
 class AgentSessionManager:
@@ -548,6 +598,18 @@ def _approval_resume_manifest(resume: ApprovalResumeContext | None) -> dict[str,
     if resume is None or resume.empty:
         return {}
     return resume.manifest()
+
+
+async def _component_manifest(component: Any) -> dict[str, Any]:
+    if component is None:
+        return {}
+    manifest = getattr(component, "manifest", None)
+    if not callable(manifest):
+        return {}
+    value = manifest()
+    if inspect.isawaitable(value):
+        value = await value
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _resume_context_block(manifest: dict[str, Any]) -> str:

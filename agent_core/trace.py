@@ -58,6 +58,58 @@ class CapabilityTrace:
 
 
 @dataclass(frozen=True)
+class AgentRunTraceBundle:
+    """One run's provider-neutral trace materials."""
+
+    run_id: str
+    status: str
+    iterations: int = 0
+    output_bytes: int = 0
+    session: dict[str, Any] = field(default_factory=dict)
+    prompt: dict[str, Any] = field(default_factory=dict)
+    journal_replay: dict[str, Any] = field(default_factory=dict)
+    provider: dict[str, Any] = field(default_factory=dict)
+    tool_replay: dict[str, Any] = field(default_factory=dict)
+    approvals: dict[str, Any] = field(default_factory=dict)
+    event_log: dict[str, Any] = field(default_factory=dict)
+    resume: dict[str, Any] = field(default_factory=dict)
+    timeline_reduction: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        journal_ok = self.journal_replay.get("ok")
+        return {
+            "schema_version": "agent-core-run-trace-bundle/v1",
+            "run": {
+                "run_id": self.run_id,
+                "status": self.status,
+                "iterations": self.iterations,
+                "output_bytes": self.output_bytes,
+            },
+            "summary": {
+                "journal_ok": journal_ok,
+                "journal_event_count": int(self.journal_replay.get("event_count") or 0),
+                "provider_call_count": int(self.provider.get("call_count") or 0),
+                "tool_replay_record_count": int(self.tool_replay.get("record_count") or 0),
+                "approval_record_count": int(self.approvals.get("record_count") or 0),
+                "event_log_count": int(self.event_log.get("event_count") or 0),
+                "has_resume": bool(self.resume),
+                "has_timeline_reduction": bool(self.timeline_reduction),
+            },
+            "session": dict(self.session),
+            "prompt": dict(self.prompt),
+            "journal_replay": dict(self.journal_replay),
+            "provider": dict(self.provider),
+            "tool_replay": dict(self.tool_replay),
+            "approvals": dict(self.approvals),
+            "event_log": dict(self.event_log),
+            "resume": dict(self.resume),
+            "timeline_reduction": dict(self.timeline_reduction),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class ReplayIssue:
     severity: str
     code: str
