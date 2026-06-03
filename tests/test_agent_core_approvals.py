@@ -5,6 +5,7 @@ import pytest
 from agent_core import (
     ApprovalDecisionRecord,
     ApprovalRequest,
+    ApprovalResumeContext,
     InMemoryApprovalStore,
     ListEventSink,
 )
@@ -51,6 +52,39 @@ async def test_in_memory_approval_store_tracks_pending_and_decision_manifest() -
 
 
 @pytest.mark.asyncio
+async def test_approval_resume_context_exports_approved_subject_grants() -> None:
+    store = InMemoryApprovalStore()
+    request = ApprovalRequest(
+        reason="release requires approval",
+        subject="tool:deploy",
+        metadata={"rule": "release"},
+    )
+    record = await store.submit(request, run_id="run-1", turn_id="turn-1")
+    resolved = await store.decide(
+        record.approval_id,
+        ApprovalDecisionRecord(
+            status="approved",
+            actor="operator",
+            reason="ship it",
+            metadata={"ticket": "APP-1"},
+        ),
+    )
+
+    resume = ApprovalResumeContext.from_records((resolved,), metadata={"source": "test"})
+    grant = resume.approved_for(request)
+    manifest = resume.manifest()
+
+    assert grant is not None
+    assert grant.approval_id == record.approval_id
+    assert grant.subject == "tool:deploy"
+    assert grant.actor == "operator"
+    assert manifest["grant_count"] == 1
+    assert manifest["approved_count"] == 1
+    assert manifest["grants"][0]["decision_metadata"]["ticket"] == "APP-1"
+    assert manifest["metadata"]["source"] == "test"
+
+
+@pytest.mark.asyncio
 async def test_react_records_tool_approval_request_in_store_and_event_stream() -> None:
     registry = ToolRegistry()
     registry.register(ToolSpec(name="deploy", tags=("release",)), _handler)
@@ -93,3 +127,56 @@ async def test_react_records_tool_approval_request_in_store_and_event_stream() -
     assert pending[0].metadata == {"kind": "tool", "tool_name": "deploy"}
     assert harness.tool_calls[0]["metadata"]["approval_record"]["approval_id"] == pending[0].approval_id
     assert any(event["type"] == "approval_requested" for event in event_manifest["events"])
+
+
+@pytest.mark.asyncio
+async def test_react_uses_approved_resume_context_to_execute_tool_gate() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolSpec(name="deploy", tags=("release",)), _handler)
+    approval_store = InMemoryApprovalStore()
+    request = ApprovalRequest(
+        reason="deployment requires approval",
+        subject="tool:deploy",
+        metadata={"rule": "release-approval"},
+    )
+    record = await approval_store.submit(request)
+    resolved = await approval_store.decide(
+        record.approval_id,
+        ApprovalDecisionRecord(status="approved", actor="operator"),
+    )
+    events = ListEventSink()
+    provider = MockLLMProvider(
+        [
+            {"action": "deploy", "arguments": {}},
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=registry,
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        event_sink=events,
+        approval_store=approval_store,
+        approval_resume=ApprovalResumeContext.from_records((resolved,)),
+        policy=RuleBasedPolicy(
+            [
+                PolicyRule(
+                    name="release-approval",
+                    status="approval_required",
+                    tool_names=("deploy",),
+                    reason="deployment requires approval",
+                )
+            ]
+        ),
+        config=ReActConfig(max_iterations=3),
+    )
+
+    result = await executor.run("deploy", PromptIR.from_parts(dynamic="task"))
+    event_manifest = events.manifest()
+
+    assert result.status == "completed"
+    assert result.output == "done"
+    assert provider.requests[1].messages[-1].content == "executed"
+    assert len(await approval_store.pending()) == 0
+    assert any(event["type"] == "approval_resumed" for event in event_manifest["events"])

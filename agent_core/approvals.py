@@ -65,6 +65,92 @@ class ApprovalRecord:
         }
 
 
+@dataclass(frozen=True)
+class ApprovalGrant:
+    """Resolved approval material that can unlock one matching policy gate."""
+
+    approval_id: str
+    subject: str
+    status: ApprovalDecisionStatus
+    reason: str = ""
+    actor: str = ""
+    decided_at: str = ""
+    request_metadata: dict[str, Any] = field(default_factory=dict)
+    decision_metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def approved(self) -> bool:
+        return self.status == "approved"
+
+    @classmethod
+    def from_record(cls, record: ApprovalRecord) -> "ApprovalGrant":
+        if record.decision is None:
+            raise ValueError(f"approval has no decision: {record.approval_id}")
+        return cls(
+            approval_id=record.approval_id,
+            subject=record.request.subject,
+            status=record.decision.status,
+            reason=record.decision.reason,
+            actor=record.decision.actor,
+            decided_at=record.decision.decided_at,
+            request_metadata=dict(record.request.metadata),
+            decision_metadata=dict(record.decision.metadata),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "approval_id": self.approval_id,
+            "subject": self.subject,
+            "status": self.status,
+            "reason": self.reason,
+            "actor": self.actor,
+            "decided_at": self.decided_at,
+            "request_metadata": dict(self.request_metadata),
+            "decision_metadata": dict(self.decision_metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ApprovalResumeContext:
+    """Approved decisions supplied to a resumed run."""
+
+    grants: tuple[ApprovalGrant, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_records(
+        cls,
+        records: tuple[ApprovalRecord, ...],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> "ApprovalResumeContext":
+        return cls(
+            grants=tuple(ApprovalGrant.from_record(record) for record in records),
+            metadata=dict(metadata or {}),
+        )
+
+    @property
+    def empty(self) -> bool:
+        return not self.grants
+
+    def approved_for(self, request: ApprovalRequest | None) -> ApprovalGrant | None:
+        if request is None:
+            return None
+        for grant in self.grants:
+            if grant.approved and grant.subject == request.subject:
+                return grant
+        return None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-approval-resume/v1",
+            "grant_count": len(self.grants),
+            "approved_count": sum(1 for grant in self.grants if grant.approved),
+            "grants": [grant.manifest() for grant in self.grants],
+            "metadata": dict(self.metadata),
+        }
+
+
 class ApprovalStorePort(Protocol):
     async def submit(
         self,

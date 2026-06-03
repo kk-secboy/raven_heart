@@ -29,6 +29,7 @@ ops agents, research agents, and future automation systems.
 - Sequenced event stream and event log manifests.
 - Planner protocol and lightweight in-memory plan state.
 - Human-in-loop approval request and decision queue primitives.
+- Approval resume context for approved action/tool gate continuation.
 - Policy gates, budget metadata, loop guards, and capability manifests.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
@@ -111,6 +112,9 @@ agent_core never imports runtime
 - `InMemoryApprovalStore` for tests and lightweight runtimes.
 - `NullApprovalStore` for runtimes that only need per-run approval metadata.
 - `ApprovalRecord` and `ApprovalDecisionRecord` manifests for audit/replay.
+- `ApprovalResumeContext` for passing approved decisions into resumed runs.
+- `approval_resumed` events when a matching approved subject unlocks an
+  action/tool policy gate.
 
 The SDK owns approval state contracts and event emission. Runtimes own the
 operator UI, identity, authorization, notification routing, SLA policy, and

@@ -13,7 +13,13 @@ from agent_core.actions import (
     NullActionVerifier,
     ParsedAction,
 )
-from agent_core.approvals import ApprovalRecord, ApprovalStorePort, NullApprovalStore
+from agent_core.approvals import (
+    ApprovalGrant,
+    ApprovalRecord,
+    ApprovalResumeContext,
+    ApprovalStorePort,
+    NullApprovalStore,
+)
 from agent_core.artifacts import ArtifactStorePort
 from agent_core.config import RuntimeBudget
 from agent_core.errors import ActionError, ProviderError
@@ -74,6 +80,7 @@ class ReActExecutor:
         event_sink: EventSinkPort | None = None,
         policy: PolicyPort | None = None,
         approval_store: ApprovalStorePort | None = None,
+        approval_resume: ApprovalResumeContext | None = None,
         memory: MemoryPort | None = None,
         skills: SkillsContext | None = None,
         timeline: TimelineStore | None = None,
@@ -91,6 +98,7 @@ class ReActExecutor:
         self.event_sink = event_sink or NullEventSink()
         self.policy = policy or AllowAllPolicy()
         self.approval_store = approval_store or NullApprovalStore()
+        self.approval_resume = approval_resume or ApprovalResumeContext()
         self.memory = memory or NullMemory()
         self.skills = skills
         self.timeline = timeline
@@ -204,47 +212,51 @@ class ReActExecutor:
 
             decision = await self.policy.check_action(action)
             if not decision.allowed:
-                result_output = decision.reason or f"action denied: {action.name}"
-                status = "approval_required" if decision.status == "approval_required" else "denied"
-                approval_record = await self._submit_approval(
-                    decision.approval,
-                    run,
-                    turn.turn_id,
-                    metadata={"kind": "action", "action": action.name},
-                )
-                await self.harness.checkpoint(
-                    turn,
-                    {
-                        "status": status,
-                        "reason": result_output,
-                        "approval": _approval_request_manifest(decision.approval),
-                        "approval_record": approval_record.manifest() if approval_record else None,
-                        "iteration": index,
-                    },
-                )
-                await self.harness.finish_run(
-                    run,
-                    status,
-                    {
-                        "output": result_output,
-                        "approval": _approval_request_manifest(decision.approval),
-                        "approval_record": approval_record.manifest() if approval_record else None,
-                    },
-                )
-                await self._emit(
-                    "run_finished",
-                    run,
-                    turn_id=turn.turn_id,
-                    payload={"status": status},
-                )
-                return ReActResult(
-                    run_id=run.run_id,
-                    status=status,
-                    output=result_output,
-                    iterations=index + 1,
-                    final_action=action,
-                    metadata=_approval_metadata(decision.approval, approval_record),
-                )
+                approval_grant = self.approval_resume.approved_for(decision.approval)
+                if decision.status == "approval_required" and approval_grant is not None:
+                    await self._emit_approval_resumed(run, turn.turn_id, approval_grant)
+                else:
+                    result_output = decision.reason or f"action denied: {action.name}"
+                    status = "approval_required" if decision.status == "approval_required" else "denied"
+                    approval_record = await self._submit_approval(
+                        decision.approval,
+                        run,
+                        turn.turn_id,
+                        metadata={"kind": "action", "action": action.name},
+                    )
+                    await self.harness.checkpoint(
+                        turn,
+                        {
+                            "status": status,
+                            "reason": result_output,
+                            "approval": _approval_request_manifest(decision.approval),
+                            "approval_record": approval_record.manifest() if approval_record else None,
+                            "iteration": index,
+                        },
+                    )
+                    await self.harness.finish_run(
+                        run,
+                        status,
+                        {
+                            "output": result_output,
+                            "approval": _approval_request_manifest(decision.approval),
+                            "approval_record": approval_record.manifest() if approval_record else None,
+                        },
+                    )
+                    await self._emit(
+                        "run_finished",
+                        run,
+                        turn_id=turn.turn_id,
+                        payload={"status": status},
+                    )
+                    return ReActResult(
+                        run_id=run.run_id,
+                        status=status,
+                        output=result_output,
+                        iterations=index + 1,
+                        final_action=action,
+                        metadata=_approval_metadata(decision.approval, approval_record),
+                    )
 
             verification = await self.action_verifier.verify(action)
             if not verification.ok:
@@ -605,20 +617,24 @@ class ReActExecutor:
         invocation = self._with_tool_spec_metadata(invocation)
         decision = await self.policy.check_tool(invocation)
         if not decision.allowed:
-            status = "approval_required" if decision.status == "approval_required" else "denied"
-            approval_record = await self._submit_approval(
-                decision.approval,
-                run,
-                turn_id,
-                metadata={"kind": "tool", "tool_name": invocation.tool_name},
-            )
-            return ToolResult(
-                call_id=invocation.call_id,
-                tool_name=invocation.tool_name,
-                status=status,
-                error=decision.reason or f"tool denied: {invocation.tool_name}",
-                metadata=_approval_metadata(decision.approval, approval_record),
-            )
+            approval_grant = self.approval_resume.approved_for(decision.approval)
+            if decision.status == "approval_required" and approval_grant is not None:
+                await self._emit_approval_resumed(run, turn_id, approval_grant)
+            else:
+                status = "approval_required" if decision.status == "approval_required" else "denied"
+                approval_record = await self._submit_approval(
+                    decision.approval,
+                    run,
+                    turn_id,
+                    metadata={"kind": "tool", "tool_name": invocation.tool_name},
+                )
+                return ToolResult(
+                    call_id=invocation.call_id,
+                    tool_name=invocation.tool_name,
+                    status=status,
+                    error=decision.reason or f"tool denied: {invocation.tool_name}",
+                    metadata=_approval_metadata(decision.approval, approval_record),
+                )
         replayed = await self.tool_replay.get(invocation)
         if replayed is not None:
             await self._emit(
@@ -837,6 +853,19 @@ class ReActExecutor:
             payload=record.manifest(),
         )
         return record
+
+    async def _emit_approval_resumed(
+        self,
+        run: RunState,
+        turn_id: str,
+        grant: ApprovalGrant,
+    ) -> None:
+        await self._emit(
+            "approval_resumed",
+            run,
+            turn_id=turn_id,
+            payload={"grant": grant.manifest()},
+        )
 
     @staticmethod
     def _feedback(kind: str, message: str) -> LLMMessage:

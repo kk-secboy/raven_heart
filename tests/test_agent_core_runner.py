@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from agent_core.approvals import ApprovalDecisionRecord, ApprovalResumeContext, InMemoryApprovalStore
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack
 from agent_core.harness import InMemoryAgentJournal
@@ -17,6 +18,7 @@ from agent_core.skills import SkillRegistry, SkillsContext, SkillSpec
 from agent_core.testing import MockLLMProvider, MockToolRuntime
 from agent_core.timeline import TimelineStore
 from agent_core.tools import ToolInvocation, ToolRegistry, ToolResult, ToolSpec
+from agent_core.policy import ApprovalRequest, PolicyRule, RuleBasedPolicy
 
 
 class _BlockingProvider:
@@ -231,6 +233,69 @@ async def test_agent_runner_injects_resume_checkpoint_context() -> None:
     assert "== Resumed Checkpoint ==" in prompt_text
     assert "admin UI found" in prompt_text
     assert "last_tool: lookup" in prompt_text
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_passes_approval_resume_context_to_executor_and_prompt() -> None:
+    registry = ToolRegistry()
+
+    async def deploy(invocation: ToolInvocation) -> ToolResult:
+        return ToolResult(call_id=invocation.call_id, tool_name=invocation.tool_name, content="deployed")
+
+    registry.register(ToolSpec(name="deploy", tags=("release",)), deploy)
+    approval_store = InMemoryApprovalStore()
+    approval = await approval_store.submit(
+        ApprovalRequest(
+            reason="deployment requires approval",
+            subject="tool:deploy",
+            metadata={"rule": "release-approval"},
+        )
+    )
+    resolved = await approval_store.decide(
+        approval.approval_id,
+        ApprovalDecisionRecord(status="approved", actor="operator"),
+    )
+    provider = MockLLMProvider(
+        [
+            {"action": "deploy", "arguments": {}},
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="approval-runner"),
+        provider=provider,
+        tools=registry,
+        approval_store=approval_store,
+        policy=RuleBasedPolicy(
+            [
+                PolicyRule(
+                    name="release-approval",
+                    status="approval_required",
+                    tool_names=("deploy",),
+                    reason="deployment requires approval",
+                )
+            ]
+        ),
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="deploy",
+            approval_resume=ApprovalResumeContext.from_records((resolved,)),
+        )
+    )
+
+    prompt_text = provider.requests[0].messages[0].content
+    injection = outcome.prompt_manifest["metadata"]["context_injections"][0]
+
+    assert outcome.result.status == "completed"
+    assert outcome.result.output == "done"
+    assert provider.requests[1].messages[-1].content == "deployed"
+    assert "== Approval Resume ==" in prompt_text
+    assert "tool:deploy" in prompt_text
+    assert outcome.prompt_manifest["metadata"]["approval_resume"]["approved_count"] == 1
+    assert injection["name"] == "approval_resume"
+    assert injection["source"] == "approval"
 
 
 @pytest.mark.asyncio

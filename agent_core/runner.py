@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent_core.actions import ActionRegistry, ActionVerifierPort
-from agent_core.approvals import ApprovalStorePort, NullApprovalStore
+from agent_core.approvals import ApprovalResumeContext, ApprovalStorePort, NullApprovalStore
 from agent_core.artifacts import ArtifactStorePort
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, RuntimeBudget
@@ -100,6 +100,7 @@ class AgentRunRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
     refresh: bool = False
     resume_token: ResumeToken | None = None
+    approval_resume: ApprovalResumeContext | None = None
 
 
 @dataclass(frozen=True)
@@ -170,7 +171,7 @@ class AgentRunner:
         prompt = self._prompt_builder().build(context).trim_to_budget(
             self.session.profile.budget.max_prompt_bytes
         )
-        executor = self._executor()
+        executor = self._executor(run_request.approval_resume)
         result = await executor.run(run_request.task, prompt)
         return AgentRunOutcome(
             result=result,
@@ -237,6 +238,22 @@ class AgentRunner:
                     },
                 ),
             )
+        approval_resume_manifest = _approval_resume_manifest(request.approval_resume)
+        if approval_resume_manifest:
+            context_injections = (
+                *context_injections,
+                ContextInjection(
+                    name="approval_resume",
+                    content=_approval_resume_context_block(approval_resume_manifest),
+                    target=PromptBucketRole.TIMELINE_OPEN,
+                    source="approval",
+                    priority=95,
+                    metadata={
+                        "grant_count": approval_resume_manifest.get("grant_count"),
+                        "approved_count": approval_resume_manifest.get("approved_count"),
+                    },
+                ),
+            )
         metadata = {
             **base.metadata,
             **request.metadata,
@@ -244,6 +261,8 @@ class AgentRunner:
         }
         if resume_manifest:
             metadata["resume"] = resume_manifest
+        if approval_resume_manifest:
+            metadata["approval_resume"] = approval_resume_manifest
         if timeline_reduction_manifest:
             metadata["timeline_reduction"] = timeline_reduction_manifest
         return AgentContextPack(
@@ -311,7 +330,7 @@ class AgentRunner:
             ),
         )
 
-    def _executor(self) -> ReActExecutor:
+    def _executor(self, approval_resume: ApprovalResumeContext | None = None) -> ReActExecutor:
         budget = self.session.profile.budget
         return ReActExecutor(
             provider=self.session.provider,
@@ -321,6 +340,7 @@ class AgentRunner:
             event_sink=self.session.event_sink,
             policy=self.session.policy,
             approval_store=self.session.approval_store,
+            approval_resume=approval_resume,
             memory=NullMemory(),
             skills=self.session.skills,
             timeline=self.session.timeline,
@@ -524,6 +544,12 @@ def _context_reducer_manifest(reducer: ContextReducerPort | None) -> dict[str, A
     }
 
 
+def _approval_resume_manifest(resume: ApprovalResumeContext | None) -> dict[str, Any]:
+    if resume is None or resume.empty:
+        return {}
+    return resume.manifest()
+
+
 def _resume_context_block(manifest: dict[str, Any]) -> str:
     state = manifest.get("state") if isinstance(manifest.get("state"), dict) else {}
     state_lines = []
@@ -539,6 +565,25 @@ def _resume_context_block(manifest: dict[str, Any]) -> str:
         "state:\n"
         f"{rendered_state}"
     )
+
+
+def _approval_resume_context_block(manifest: dict[str, Any]) -> str:
+    lines = [
+        "== Approval Resume ==",
+        f"grant_count: {manifest.get('grant_count')}",
+        f"approved_count: {manifest.get('approved_count')}",
+    ]
+    for grant in manifest.get("grants") or ():
+        if not isinstance(grant, dict):
+            continue
+        lines.append(
+            "- "
+            f"{grant.get('subject')} "
+            f"status={grant.get('status')} "
+            f"approval_id={grant.get('approval_id')} "
+            f"actor={grant.get('actor')}"
+        )
+    return "\n".join(lines)
 
 
 def _memory_context_block(hits: tuple[MemoryHit, ...]) -> str:

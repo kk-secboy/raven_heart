@@ -94,6 +94,14 @@ produce `ApprovalRequest` manifests; ReAct execution records them as
 `ApprovalRecord` entries and emits `approval_requested` events. Runtime code owns
 the approval UI, identity checks, notifications, and durable workflow backend.
 
+`ApprovalResumeContext` is the core continuation contract. A runtime can resolve
+an approval through any backend, convert the resulting `ApprovalRecord` into a
+grant, and pass that context into `AgentRunRequest`. `ReActExecutor` only uses
+approved grants whose subject matches the current policy gate, then emits
+`approval_resumed`. This keeps approval-aware resume, replay, and policy
+semantics in the SDK while leaving people, permissions, and workflow routing to
+the runtime.
+
 ## Adapter Policy
 
 Adapters are useful, but they should not live in this repository while the SDK

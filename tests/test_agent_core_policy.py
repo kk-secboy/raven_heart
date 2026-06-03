@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from agent_core.actions import ActionRegistry, ParsedAction
+from agent_core.approvals import ApprovalDecisionRecord, ApprovalResumeContext, InMemoryApprovalStore
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.mcp import MCPCenter, MCPServerSpec, MCPToolReference, MCPToolSpec
 from agent_core.policy import CompositePolicy, PolicyRule, RuleBasedPolicy
@@ -216,6 +217,66 @@ async def test_approval_required_action_policy_stops_run_with_approval_metadata(
     assert result.output == "final answer needs approval"
     assert result.metadata["approval"]["subject"] == "action:finish"
     assert harness.finished[-1]["status"] == "approval_required"
+
+
+@pytest.mark.asyncio
+async def test_approved_resume_context_allows_action_policy_gate() -> None:
+    approval_store = InMemoryApprovalStore()
+    policy = RuleBasedPolicy(
+        [
+            PolicyRule(
+                name="finish-approval",
+                status="approval_required",
+                action_names=("finish",),
+                reason="final answer needs approval",
+            )
+        ]
+    )
+    first_provider = MockLLMProvider(
+        [
+            {"action": "finish", "arguments": {"output": "pending answer"}},
+        ]
+    )
+    first_harness = InMemoryHarness()
+    first_executor = ReActExecutor(
+        provider=first_provider,
+        tool_runtime=ToolRegistry(),
+        action_registry=ActionRegistry(),
+        harness=first_harness,
+        approval_store=approval_store,
+        policy=policy,
+        config=ReActConfig(max_iterations=2),
+    )
+    first = await first_executor.run("needs approval", PromptIR.from_parts(dynamic="task"))
+    pending = await approval_store.pending()
+    resolved = await approval_store.decide(
+        pending[0].approval_id,
+        ApprovalDecisionRecord(status="approved", actor="operator"),
+    )
+    second_provider = MockLLMProvider(
+        [
+            {"action": "finish", "arguments": {"output": "approved answer"}},
+        ]
+    )
+    second_harness = InMemoryHarness()
+    second_executor = ReActExecutor(
+        provider=second_provider,
+        tool_runtime=ToolRegistry(),
+        action_registry=ActionRegistry(),
+        harness=second_harness,
+        approval_store=approval_store,
+        approval_resume=ApprovalResumeContext.from_records((resolved,)),
+        policy=policy,
+        config=ReActConfig(max_iterations=2),
+    )
+
+    second = await second_executor.run("resume approved answer", PromptIR.from_parts(dynamic="task"))
+
+    assert first.status == "approval_required"
+    assert pending[0].request.subject == "action:finish"
+    assert second.status == "completed"
+    assert second.output == "approved answer"
+    assert second_harness.finished[-1]["status"] == "completed"
 
 
 @pytest.mark.asyncio
