@@ -544,6 +544,15 @@ current task, and a security runtime can cap capability inventory while keeping
 high-static rules protected. The result is recorded in prompt and run trace
 manifests as `agent-core-prompt-bucket-budget-result/v1`.
 
+`PromptSemanticReducerPort` is the runtime-time semantic trimming hook. It runs
+after bucket-local budgets and before the final byte-budget trim. The SDK
+provides `PromptSemanticTrimRequest`, `PromptSemanticTrimResult`, and
+`DefaultPromptSemanticReducer` for deterministic local behavior; production
+runtimes can swap in embedding-backed, LLM-backed, or domain-specific reducers
+without changing `AgentRunner`. Prompt and trace manifests record the reducer
+request hash, per-bucket decisions, selected/dropped unit counts, convergence,
+and trimmed count without storing hidden raw context outside the prompt itself.
+
 `ContextInjection` lets runtimes or core services place structured material into
 a target bucket without rewriting the prompt builder. Resume checkpoints use this
 path today. `AgentRunner` also injects memory recall through this path when
@@ -671,6 +680,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Approval core | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |
 | Prompt bucket budget policy | MVP implemented |
+| Runtime semantic prompt reducer | MVP implemented |
 | Context injection policy | MVP implemented |
 | Context reducer | runner-integrated MVP |
 | Runtime adapter code | intentionally excluded |

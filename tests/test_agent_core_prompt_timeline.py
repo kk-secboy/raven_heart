@@ -4,10 +4,12 @@ import pytest
 
 from agent_core import apply_reduction_to_timeline
 from agent_core.prompt import (
+    DefaultPromptSemanticReducer,
     PromptBucketBudgetPolicy,
     PromptBucketBudgetRule,
     PromptBucketRole,
     PromptIR,
+    PromptSemanticTrimRequest,
     PromptTrimRule,
 )
 from agent_core.reducer import DefaultContextReducer, ReducerRequest
@@ -184,6 +186,43 @@ def test_prompt_bucket_budget_policy_trims_declared_semantic_buckets() -> None:
     assert budgeted.bucket(PromptBucketRole.SEMI_DYNAMIC_1).metadata[
         "bucket_budget_trimmed"
     ] is True
+
+
+@pytest.mark.asyncio
+async def test_default_prompt_semantic_reducer_keeps_task_relevant_units() -> None:
+    prompt = PromptIR.from_parts(
+        high_static="stable system rules",
+        timeline_open="\n\n".join(
+            (
+                "database backup completed successfully " + ("b" * 120),
+                "admin login failed on control plane with token mismatch " + ("a" * 120),
+                "asset inventory synced cleanly " + ("i" * 120),
+                "control plane admin session recovered after retry " + ("c" * 120),
+            )
+        ),
+        dynamic="investigate admin control plane login failure",
+    )
+
+    result = await DefaultPromptSemanticReducer().reduce(
+        PromptSemanticTrimRequest(
+            prompt=prompt,
+            task="investigate admin control plane login failure",
+            target_bytes=700,
+        )
+    )
+    manifest = result.prompt.manifest()
+    semantic = manifest["metadata"]["semantic_trim"]
+    timeline = result.prompt.bucket(PromptBucketRole.TIMELINE_OPEN)
+
+    assert result.final_bytes <= 700
+    assert semantic["schema_version"] == "agent-core-prompt-semantic-trim-result/v1"
+    assert semantic["trimmed_count"] == 1
+    assert timeline.metadata["semantic_trimmed"] is True
+    assert "admin login failed" in timeline.content
+    assert "control plane admin session" in timeline.content
+    assert "database backup" not in timeline.content
+    assert "asset inventory" not in timeline.content
+    assert "investigate admin control plane login failure" in result.prompt.render()
 
 
 def test_timeline_splits_frozen_and_open_when_over_budget() -> None:

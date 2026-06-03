@@ -432,6 +432,17 @@ before the global prompt trim. The SDK records the policy, per-bucket decisions,
 trimmed count, protected count, and any over-budget buckets in prompt and trace
 manifests. Runtimes own the actual budget numbers and rollout policy.
 
+`PromptSemanticReducerPort` is the runtime-time semantic trimming boundary for
+already assembled `PromptIR`. `AgentRunner` calls
+`AgentSession.prompt_semantic_reducer` after bucket budgets and before the final
+byte trim. The built-in `DefaultPromptSemanticReducer` is deterministic and
+query-overlap based for tests and lightweight agents; Raven, code agents, or
+ops agents can replace it with embedding-backed, LLM-backed, or domain-specific
+reducers. `PromptSemanticTrimRequest` and `PromptSemanticTrimResult` keep the
+audit provider-neutral by recording hashes, roles, per-bucket decisions,
+selected/dropped unit counts, and convergence without introducing a concrete
+semantic model into core.
+
 `ContextInjection` is the SDK-level insertion record for resumable state, memory
 continuity, operator hints, and runtime-supplied context. It declares the target
 bucket, source, priority, and metadata. The runtime still owns the actual content

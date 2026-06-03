@@ -44,7 +44,13 @@ from agent_core.memory import MemoryHit, MemoryPort, MemoryQuery, NullMemory
 from agent_core.mcp import MCPCenter
 from agent_core.policy import NullPolicyDecisionStore, PolicyDecisionStorePort, PolicyPort
 from agent_core.providers import LLMProviderPort
-from agent_core.prompt import PromptBucketBudgetPolicy, PromptBucketRole
+from agent_core.prompt import (
+    PromptBucketBudgetPolicy,
+    PromptBucketRole,
+    PromptIR,
+    PromptSemanticReducerPort,
+    PromptSemanticTrimRequest,
+)
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
 from agent_core.reducer import ContextReducerPort, ReducerRequest, apply_reduction_to_timeline
 from agent_core.skills import SkillsContext
@@ -70,6 +76,7 @@ class AgentSession:
     context_reducer: ContextReducerPort | None = None
     context_injection_policy: ContextInjectionPolicy = field(default_factory=ContextInjectionPolicy)
     prompt_bucket_budget_policy: PromptBucketBudgetPolicy | None = None
+    prompt_semantic_reducer: PromptSemanticReducerPort | None = None
     event_sink: EventSinkPort | None = None
     policy: PolicyPort | None = None
     policy_decision_store: PolicyDecisionStorePort = field(default_factory=NullPolicyDecisionStore)
@@ -129,6 +136,9 @@ class AgentSession:
             "context_injection_policy": self.context_injection_policy.manifest(),
             "prompt_bucket_budget_policy": _prompt_bucket_budget_policy_manifest(
                 self.prompt_bucket_budget_policy
+            ),
+            "prompt_semantic_reducer": _prompt_semantic_reducer_manifest(
+                self.prompt_semantic_reducer
             ),
             "timeline_items": len(self.timeline.items),
             "metadata": dict(self.metadata),
@@ -576,6 +586,7 @@ class AgentRunner:
             prompt = self._prompt_builder().build(context)
             if self.session.prompt_bucket_budget_policy is not None:
                 prompt = self.session.prompt_bucket_budget_policy.apply(prompt)
+            prompt = await self._semantic_trim_prompt_if_needed(run_request, prompt)
             prompt = prompt.trim_to_budget(self.session.profile.budget.max_prompt_bytes)
             executor = self._executor(
                 run_request.approval_resume,
@@ -920,6 +931,9 @@ class AgentRunner:
                 "profile": self.session.profile.name,
                 "request_metadata": dict(request.metadata),
                 "prompt_trim": dict(prompt_manifest.get("metadata", {}).get("trim") or {}),
+                "prompt_semantic_trim": dict(
+                    prompt_manifest.get("metadata", {}).get("semantic_trim") or {}
+                ),
                 "native_tool_calls": self._native_tool_calls_for_request(request),
             },
         )
@@ -935,6 +949,26 @@ class AgentRunner:
         if not callable(snapshot):
             return {}
         return AgentJournalReplay.from_snapshot(snapshot(), run_id=run_id).manifest()
+
+    async def _semantic_trim_prompt_if_needed(
+        self,
+        request: AgentRunRequest,
+        prompt: PromptIR,
+    ) -> PromptIR:
+        reducer = self.session.prompt_semantic_reducer
+        if reducer is None:
+            return prompt
+        reducer_request = PromptSemanticTrimRequest(
+            prompt=prompt,
+            task=request.task,
+            target_bytes=self.session.profile.budget.max_prompt_bytes,
+            metadata={
+                "profile": self.session.profile.name,
+                "request_metadata": dict(request.metadata),
+            },
+        )
+        result = await reducer.reduce(reducer_request)
+        return result.prompt
 
 
 class AgentSessionManager:
@@ -1378,6 +1412,21 @@ def _prompt_bucket_budget_policy_manifest(
     if policy is None:
         return {"enabled": False}
     return {"enabled": True, **policy.manifest()}
+
+
+def _prompt_semantic_reducer_manifest(
+    reducer: PromptSemanticReducerPort | None,
+) -> dict[str, Any]:
+    if reducer is None:
+        return {"enabled": False}
+    reducer_manifest = getattr(reducer, "manifest", None)
+    if callable(reducer_manifest):
+        manifest = reducer_manifest()
+        return {"enabled": True, **dict(manifest)}
+    return {
+        "enabled": True,
+        "type": type(reducer).__name__,
+    }
 
 
 def _approval_resume_manifest(resume: ApprovalResumeContext | None) -> dict[str, Any]:

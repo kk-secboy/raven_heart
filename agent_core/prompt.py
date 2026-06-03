@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 
 class PromptBucketRole(StrEnum):
@@ -145,6 +146,248 @@ class PromptTrimResult:
                 for step in self.steps
                 if step.final_bytes < step.original_bytes
             ],
+        }
+
+
+@dataclass(frozen=True)
+class PromptSemanticTrimRequest:
+    """Runtime-time semantic prompt reduction request.
+
+    The SDK owns the request/result shape and audit manifest. Runtime code can
+    provide a smarter reducer backed by embeddings, retrieval, or a small model.
+    """
+
+    prompt: "PromptIR"
+    task: str = ""
+    target_bytes: int | None = None
+    roles: tuple[PromptBucketRole, ...] = DEFAULT_PROMPT_TRIM_ORDER
+    protected_roles: tuple[PromptBucketRole, ...] = (
+        PromptBucketRole.HIGH_STATIC,
+        PromptBucketRole.DYNAMIC,
+    )
+    min_keep_bytes: int = 0
+    marker: str = "\n[...semantic context trimmed...]\n"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def normalized(self) -> "PromptSemanticTrimRequest":
+        target = None if self.target_bytes is None else max(1, int(self.target_bytes))
+        return PromptSemanticTrimRequest(
+            prompt=self.prompt,
+            task=str(self.task or ""),
+            target_bytes=target,
+            roles=tuple(self.roles),
+            protected_roles=tuple(self.protected_roles),
+            min_keep_bytes=max(0, int(self.min_keep_bytes)),
+            marker=str(self.marker or "\n[...semantic context trimmed...]\n"),
+            metadata=dict(self.metadata),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        prompt_manifest = self.prompt.manifest()
+        task_bytes = len(self.task.encode("utf-8"))
+        return {
+            "schema_version": "agent-core-prompt-semantic-trim-request/v1",
+            "target_bytes": self.target_bytes,
+            "prompt_bytes": prompt_manifest["prompt_bytes"],
+            "prompt_sha256": prompt_manifest["prompt_sha256"],
+            "task_bytes": task_bytes,
+            "task_sha256": hashlib.sha256(self.task.encode("utf-8")).hexdigest()
+            if self.task
+            else "",
+            "roles": [role.value for role in self.roles],
+            "protected_roles": [role.value for role in self.protected_roles],
+            "min_keep_bytes": self.min_keep_bytes,
+            "marker_bytes": len(self.marker.encode("utf-8")),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class PromptSemanticTrimDecision:
+    role: PromptBucketRole
+    status: str
+    original_bytes: int
+    final_bytes: int
+    reason: str = ""
+    selected_units: int = 0
+    dropped_units: int = 0
+    protected: bool = False
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "role": self.role.value,
+            "status": self.status,
+            "original_bytes": self.original_bytes,
+            "final_bytes": self.final_bytes,
+            "removed_bytes": max(0, self.original_bytes - self.final_bytes),
+            "reason": self.reason,
+            "selected_units": self.selected_units,
+            "dropped_units": self.dropped_units,
+            "protected": self.protected,
+        }
+
+
+@dataclass(frozen=True)
+class PromptSemanticTrimResult:
+    request: PromptSemanticTrimRequest
+    prompt: "PromptIR"
+    decisions: tuple[PromptSemanticTrimDecision, ...]
+    original_bytes: int
+    final_bytes: int
+    converged: bool
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-prompt-semantic-trim-result/v1",
+            "target_bytes": self.request.target_bytes,
+            "original_bytes": self.original_bytes,
+            "final_bytes": self.final_bytes,
+            "converged": self.converged,
+            "trimmed_count": sum(1 for item in self.decisions if item.status == "trimmed"),
+            "protected_count": sum(1 for item in self.decisions if item.protected),
+            "request": self.request.manifest(),
+            "decisions": [decision.manifest() for decision in self.decisions],
+            "metadata": dict(self.metadata),
+        }
+
+
+class PromptSemanticReducerPort(Protocol):
+    async def reduce(self, request: PromptSemanticTrimRequest) -> PromptSemanticTrimResult:
+        """Reduce a bucketed prompt using runtime-specific semantic strategy."""
+
+
+class DefaultPromptSemanticReducer:
+    """Deterministic semantic-ish reducer for tests and lightweight agents."""
+
+    async def reduce(self, request: PromptSemanticTrimRequest) -> PromptSemanticTrimResult:
+        request = request.normalized()
+        prompt = request.prompt
+        original_bytes = len(prompt.render().encode("utf-8"))
+        target = request.target_bytes
+        if target is None or original_bytes <= target:
+            result = PromptSemanticTrimResult(
+                request=request,
+                prompt=prompt,
+                decisions=tuple(
+                    PromptSemanticTrimDecision(
+                        role=bucket.role,
+                        status="within_budget" if bucket.content else "empty",
+                        original_bytes=bucket.bytes,
+                        final_bytes=bucket.bytes,
+                    )
+                    for bucket in prompt.ordered_buckets()
+                ),
+                original_bytes=original_bytes,
+                final_bytes=original_bytes,
+                converged=True,
+                metadata=self.manifest(),
+            )
+            return _with_semantic_trim_metadata(result)
+
+        by_role = {bucket.role: bucket for bucket in prompt.ordered_buckets()}
+        decisions: list[PromptSemanticTrimDecision] = []
+        protected = set(request.protected_roles)
+        query_terms = _semantic_terms(request.task)
+
+        for role in request.roles:
+            current_prompt = PromptIR(
+                buckets=tuple(by_role.get(item, PromptBucket(item)) for item in PROMPT_BUCKET_ORDER),
+                metadata=dict(prompt.metadata),
+            )
+            current_bytes = len(current_prompt.render().encode("utf-8"))
+            if current_bytes <= target:
+                break
+            bucket = by_role.get(role, PromptBucket(role))
+            if not bucket.content:
+                decisions.append(
+                    PromptSemanticTrimDecision(
+                        role=role,
+                        status="empty",
+                        original_bytes=0,
+                        final_bytes=0,
+                    )
+                )
+                continue
+            if role in protected:
+                decisions.append(
+                    PromptSemanticTrimDecision(
+                        role=role,
+                        status="protected",
+                        original_bytes=bucket.bytes,
+                        final_bytes=bucket.bytes,
+                        reason="role is protected from semantic trimming",
+                        protected=True,
+                    )
+                )
+                continue
+            overage = current_bytes - target
+            new_content, stats = _semantic_trim_bucket_content(
+                bucket.content,
+                query_terms=query_terms,
+                overage=overage,
+                marker=request.marker,
+                min_keep_bytes=request.min_keep_bytes,
+            )
+            if new_content == bucket.content:
+                decisions.append(
+                    PromptSemanticTrimDecision(
+                        role=role,
+                        status="unchanged",
+                        original_bytes=bucket.bytes,
+                        final_bytes=bucket.bytes,
+                        reason=stats["reason"],
+                        selected_units=stats["selected_units"],
+                        dropped_units=stats["dropped_units"],
+                    )
+                )
+                continue
+            new_bytes = len(new_content.encode("utf-8"))
+            by_role[role] = bucket.with_content(
+                new_content,
+                {
+                    **bucket.metadata,
+                    "semantic_trimmed": True,
+                    "semantic_original_bytes": bucket.bytes,
+                    "semantic_final_bytes": new_bytes,
+                    "semantic_trim_reason": stats["reason"],
+                    "semantic_selected_units": stats["selected_units"],
+                    "semantic_dropped_units": stats["dropped_units"],
+                },
+            )
+            decisions.append(
+                PromptSemanticTrimDecision(
+                    role=role,
+                    status="trimmed",
+                    original_bytes=bucket.bytes,
+                    final_bytes=new_bytes,
+                    reason=stats["reason"],
+                    selected_units=stats["selected_units"],
+                    dropped_units=stats["dropped_units"],
+                )
+            )
+
+        final_prompt = PromptIR(
+            buckets=tuple(by_role.get(role, PromptBucket(role)) for role in PROMPT_BUCKET_ORDER),
+            metadata=dict(prompt.metadata),
+        )
+        final_bytes = len(final_prompt.render().encode("utf-8"))
+        result = PromptSemanticTrimResult(
+            request=request,
+            prompt=final_prompt,
+            decisions=tuple(decisions),
+            original_bytes=original_bytes,
+            final_bytes=final_bytes,
+            converged=final_bytes <= target,
+            metadata=self.manifest(),
+        )
+        return _with_semantic_trim_metadata(result)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-prompt-semantic-reducer/v1",
+            "type": type(self).__name__,
+            "strategy": "deterministic_query_overlap",
         }
 
 
@@ -737,4 +980,167 @@ def _take_utf8_suffix(text: str, max_bytes: int) -> str:
         parts.append(char)
         used += char_bytes
     return "".join(reversed(parts))
+
+
+def _with_semantic_trim_metadata(result: PromptSemanticTrimResult) -> PromptSemanticTrimResult:
+    prompt = PromptIR(
+        buckets=result.prompt.buckets,
+        metadata={
+            **result.prompt.metadata,
+            "semantic_trim": result.manifest(),
+        },
+    )
+    return PromptSemanticTrimResult(
+        request=result.request,
+        prompt=prompt,
+        decisions=result.decisions,
+        original_bytes=result.original_bytes,
+        final_bytes=len(prompt.render().encode("utf-8")),
+        converged=result.converged,
+        metadata=dict(result.metadata),
+    )
+
+
+def _semantic_terms(text: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for token in re.findall(r"[a-zA-Z0-9_]{3,}", text.lower())
+        if token not in _SEMANTIC_STOP_WORDS
+    )
+
+
+_SEMANTIC_STOP_WORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "this",
+        "that",
+        "from",
+        "into",
+        "current",
+        "task",
+        "please",
+    }
+)
+
+
+def _semantic_trim_bucket_content(
+    content: str,
+    *,
+    query_terms: frozenset[str],
+    overage: int,
+    marker: str,
+    min_keep_bytes: int,
+) -> tuple[str, dict[str, Any]]:
+    text = content.strip()
+    if not text:
+        return "", {
+            "reason": "empty",
+            "selected_units": 0,
+            "dropped_units": 0,
+        }
+    units = _semantic_units(text)
+    if len(units) <= 1 or not query_terms:
+        trimmed = _trim_bucket_content(
+            text,
+            overage,
+            marker=marker,
+            min_keep_bytes=min_keep_bytes,
+            preserve_head_ratio=0.2,
+        )
+        return trimmed, {
+            "reason": "fallback_byte_trim" if not query_terms else "single_unit_byte_trim",
+            "selected_units": 1 if trimmed else 0,
+            "dropped_units": 0 if trimmed == text else max(0, len(units) - 1),
+        }
+
+    marker_bytes = len(marker.encode("utf-8"))
+    current_bytes = len(text.encode("utf-8"))
+    target_bytes = current_bytes - max(1, overage) - marker_bytes
+    if min_keep_bytes:
+        target_bytes = max(target_bytes, min_keep_bytes)
+    if target_bytes <= 0:
+        return "", {
+            "reason": "semantic_budget_exhausted",
+            "selected_units": 0,
+            "dropped_units": len(units),
+        }
+
+    scored = [
+        (_semantic_unit_score(unit, query_terms, index, len(units)), index, unit)
+        for index, unit in enumerate(units)
+    ]
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    selected: set[int] = set()
+    used = 0
+    for _score, index, unit in scored:
+        unit_bytes = len(unit.encode("utf-8"))
+        if not selected or used + unit_bytes <= target_bytes:
+            selected.add(index)
+            used += unit_bytes
+        if used >= target_bytes:
+            break
+    if not selected:
+        selected.add(scored[0][1])
+
+    rendered = _render_semantic_units(units, selected, marker)
+    if len(rendered.encode("utf-8")) > current_bytes:
+        rendered = _trim_bucket_content(
+            text,
+            overage,
+            marker=marker,
+            min_keep_bytes=min_keep_bytes,
+            preserve_head_ratio=0.2,
+        )
+    if len(rendered.encode("utf-8")) > target_bytes + marker_bytes:
+        rendered = _trim_bucket_content(
+            rendered,
+            len(rendered.encode("utf-8")) - max(1, target_bytes),
+            marker=marker,
+            min_keep_bytes=min_keep_bytes,
+            preserve_head_ratio=0.2,
+        )
+    return rendered, {
+        "reason": "semantic_query_overlap",
+        "selected_units": len(selected),
+        "dropped_units": max(0, len(units) - len(selected)),
+    }
+
+
+def _semantic_units(text: str) -> tuple[str, ...]:
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if len(paragraphs) > 1:
+        return tuple(paragraphs)
+    lines = [part.strip() for part in text.splitlines() if part.strip()]
+    if len(lines) > 1:
+        return tuple(lines)
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?。！？])\s+", text) if part.strip()]
+    return tuple(sentences or (text,))
+
+
+def _semantic_unit_score(unit: str, query_terms: frozenset[str], index: int, total: int) -> float:
+    unit_terms = _semantic_terms(unit)
+    overlap = len(unit_terms & query_terms)
+    density = overlap / max(1, len(unit_terms))
+    recency = index / max(1, total - 1)
+    heading_bonus = 0.25 if unit.lstrip().startswith(("#", "-", "*", "[")) else 0.0
+    return overlap * 10.0 + density * 3.0 + recency + heading_bonus
+
+
+def _render_semantic_units(units: tuple[str, ...], selected: set[int], marker: str) -> str:
+    parts: list[str] = []
+    omitted = False
+    for index, unit in enumerate(units):
+        if index in selected:
+            if omitted and parts and parts[-1] != marker.strip():
+                parts.append(marker.strip())
+            parts.append(unit)
+            omitted = False
+        else:
+            omitted = True
+    if omitted and parts and parts[-1] != marker.strip():
+        parts.append(marker.strip())
+    return "\n\n".join(part for part in parts if part).strip()
 

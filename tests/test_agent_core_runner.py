@@ -14,7 +14,12 @@ from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
 from agent_core.mcp import MCPCenter, MCPServerSpec
 from agent_core.providers import LLMProviderCenter
 from agent_core.providers import LLMRequest, LLMResponse, LLMToolCall
-from agent_core.prompt import PromptBucketBudgetPolicy, PromptBucketBudgetRule, PromptBucketRole
+from agent_core.prompt import (
+    DefaultPromptSemanticReducer,
+    PromptBucketBudgetPolicy,
+    PromptBucketBudgetRule,
+    PromptBucketRole,
+)
 from agent_core.reducer import DefaultContextReducer
 from agent_core.runner import (
     AgentManagerCapacityError,
@@ -403,6 +408,50 @@ async def test_agent_runner_applies_prompt_bucket_budget_policy_before_global_tr
     assert outcome.trace_manifest["summary"]["has_prompt_bucket_budget"] is True
     assert outcome.trace_manifest["summary"]["prompt_bucket_budget_trimmed_count"] == 1
     assert outcome.trace_manifest["prompt_bucket_budget"]["trimmed_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_applies_prompt_semantic_reducer_before_global_trim() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    session = AgentSession(
+        profile=AgentProfile(
+            name="semantic-trimmed",
+            instructions="stable rules",
+            budget=RuntimeBudget(max_prompt_bytes=720),
+        ),
+        provider=provider,
+        tools=MockToolRuntime(),
+        prompt_semantic_reducer=DefaultPromptSemanticReducer(),
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="investigate admin control plane login failure",
+            context=AgentContextPack(
+                workspace="\n\n".join(
+                    (
+                        "database backup completed successfully " + ("b" * 180),
+                        "admin login failed on control plane with token mismatch " + ("a" * 180),
+                        "asset inventory synced cleanly " + ("i" * 180),
+                        "control plane admin session recovered after retry " + ("c" * 180),
+                    )
+                )
+            ),
+        )
+    )
+
+    prompt_text = provider.requests[0].messages[0].content
+    semantic = outcome.prompt_manifest["metadata"]["semantic_trim"]
+
+    assert outcome.result.status == "completed"
+    assert len(prompt_text.encode("utf-8")) <= 720
+    assert "stable rules" in prompt_text
+    assert "investigate admin control plane login failure" in prompt_text
+    assert semantic["trimmed_count"] == 1
+    assert outcome.session_manifest["prompt_semantic_reducer"]["enabled"] is True
+    assert outcome.trace_manifest["summary"]["has_prompt_semantic_trim"] is True
+    assert outcome.trace_manifest["summary"]["prompt_semantic_trimmed_count"] == 1
+    assert outcome.trace_manifest["metadata"]["prompt_semantic_trim"]["trimmed_count"] == 1
 
 
 @pytest.mark.asyncio
