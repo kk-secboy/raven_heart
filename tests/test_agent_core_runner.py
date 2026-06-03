@@ -11,9 +11,11 @@ from agent_core.memory import InMemoryMemoryStore, MemoryRecord
 from agent_core.mcp import MCPCenter, MCPServerSpec
 from agent_core.providers import LLMProviderCenter
 from agent_core.providers import LLMRequest, LLMResponse
+from agent_core.reducer import DefaultContextReducer
 from agent_core.runner import AgentRunner, AgentRunRequest, AgentSession, AgentSessionManager
 from agent_core.skills import SkillRegistry, SkillsContext, SkillSpec
 from agent_core.testing import MockLLMProvider, MockToolRuntime
+from agent_core.timeline import TimelineStore
 from agent_core.tools import ToolInvocation, ToolRegistry, ToolResult, ToolSpec
 
 
@@ -146,6 +148,47 @@ async def test_agent_runner_trims_prompt_to_profile_budget() -> None:
     assert "current task" in prompt_text
     assert "[...trimmed...]" in prompt_text
     assert trim["target_bytes"] == 900
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_applies_optional_timeline_reducer_before_prompt_build() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    timeline = TimelineStore()
+    old = timeline.add("old observation " + ("a" * 500), kind="observation")
+    middle = timeline.add("middle observation " + ("b" * 500), kind="observation")
+    latest = timeline.add("latest observation should remain visible", kind="observation")
+    session = AgentSession(
+        profile=AgentProfile(
+            name="timeline-reduced",
+            budget=RuntimeBudget(max_timeline_bytes=320),
+        ),
+        provider=provider,
+        tools=MockToolRuntime(),
+        timeline=timeline,
+        context_reducer=DefaultContextReducer(),
+    )
+
+    outcome = await AgentRunner(session).run("summarize timeline")
+
+    prompt_text = provider.requests[0].messages[0].content
+    reduction = outcome.timeline_reduction_manifest
+
+    assert outcome.result.status == "completed"
+    assert reduction["metadata"]["compressed_item_count"] == 2
+    assert reduction["request"]["max_bytes"] == 320
+    assert reduction["view"]["open_item_count"] == 1
+    assert timeline.items[0].deleted is True
+    assert timeline.items[1].deleted is True
+    assert timeline.items[2].item_id == latest.item_id
+    assert "[compressed_head]" in prompt_text
+    assert f"timeline:{old.item_id}" in prompt_text
+    assert f"timeline:{middle.item_id}" in prompt_text
+    assert "latest observation should remain visible" in prompt_text
+    assert outcome.prompt_manifest["metadata"]["timeline_reduction"]["metadata"][
+        "compressed_item_count"
+    ] == 2
+    assert outcome.session_manifest["context_reducer"]["enabled"] is True
+    assert outcome.session_manifest["context_reducer"]["type"] == "DefaultContextReducer"
 
 
 @pytest.mark.asyncio

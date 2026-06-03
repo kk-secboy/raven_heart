@@ -21,6 +21,7 @@ ops agents, research agents, and future automation systems.
 - Prompt buckets and context trimming.
 - Provider-neutral prompt IR with semantic bucket trimming.
 - Context reducer port and deterministic timeline reduction.
+- Runner-level automatic timeline reduction before prompt assembly.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Pluggable journal stores for harness checkpoint/resume persistence.
@@ -123,6 +124,10 @@ durable workflow storage.
 - Pinned item retention plus recent-window retention.
 - `apply_reduction_to_timeline()` for updating a `TimelineStore` with compressed
   head text and archive refs.
+- Optional `AgentSession.context_reducer` integration. When configured,
+  `AgentRunner` reduces over-budget timeline state before building `PromptIR`,
+  then exposes the reduction manifest on both `AgentRunOutcome` and prompt
+  metadata.
 
 The SDK owns reduction mechanics and manifests. Runtimes may replace the reducer
 with an LLM summarizer, vector/archive backed compressor, or domain-specific
@@ -223,6 +228,11 @@ context injection, trimming, hashing, and replay manifests.
 records trim metadata in the prompt manifest. `AgentRunner` applies this against
 `RuntimeBudget.max_prompt_bytes` before calling the provider.
 
+If `AgentSession.context_reducer` is configured, `AgentRunner` first applies
+timeline reduction against `RuntimeBudget.max_timeline_bytes`. This gives the SDK
+Yaklang-style automatic context compaction without forcing a Raven-specific
+summarizer or storage backend into core.
+
 `ContextInjection` lets runtimes or core services place structured material into
 a target bucket without rewriting the prompt builder. Resume checkpoints use this
 path today. `AgentRunner` also injects memory recall through this path when
@@ -319,7 +329,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |
 | Prompt buckets/trimming | MVP implemented |
-| Context reducer | MVP implemented |
+| Context reducer | runner-integrated MVP |
 | Runtime adapter code | intentionally excluded |
 | Full OpenAI Agents SDK replacement | in progress |
 

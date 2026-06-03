@@ -22,6 +22,7 @@ from agent_core.policy import PolicyPort
 from agent_core.providers import LLMProviderPort
 from agent_core.prompt import PromptBucketRole
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
+from agent_core.reducer import ContextReducerPort, ReducerRequest, apply_reduction_to_timeline
 from agent_core.skills import SkillsContext
 from agent_core.timeline import TimelineBudget, TimelineStore
 from agent_core.tools import NullToolReplay, ToolReplayPort, ToolRuntimePort
@@ -40,6 +41,7 @@ class AgentSession:
     mcp: MCPCenter | None = None
     memory: MemoryPort = field(default_factory=NullMemory)
     timeline: TimelineStore = field(default_factory=TimelineStore)
+    context_reducer: ContextReducerPort | None = None
     event_sink: EventSinkPort | None = None
     policy: PolicyPort | None = None
     approval_store: ApprovalStorePort = field(default_factory=NullApprovalStore)
@@ -85,6 +87,7 @@ class AgentSession:
             "capabilities": self.capability_catalog().manifest(),
             "memory": memory_manifest() if callable(memory_manifest) else {},
             "approvals": approval_manifest() if callable(approval_manifest) else {},
+            "context_reducer": _context_reducer_manifest(self.context_reducer),
             "timeline_items": len(self.timeline.items),
             "metadata": dict(self.metadata),
         }
@@ -105,6 +108,7 @@ class AgentRunOutcome:
     session_manifest: dict[str, Any]
     prompt_manifest: dict[str, Any]
     resume_manifest: dict[str, Any] = field(default_factory=dict)
+    timeline_reduction_manifest: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -156,10 +160,12 @@ class AgentRunner:
             await self.refresh()
         resume_manifest = await self._resume_manifest(run_request.resume_token)
         memory_injections = await self._memory_injections(run_request)
+        timeline_reduction_manifest = await self._reduce_timeline_if_needed(run_request)
         context = self._context_for(
             run_request,
             resume_manifest=resume_manifest,
             injections=memory_injections,
+            timeline_reduction_manifest=timeline_reduction_manifest,
         )
         prompt = self._prompt_builder().build(context).trim_to_budget(
             self.session.profile.budget.max_prompt_bytes
@@ -171,6 +177,7 @@ class AgentRunner:
             session_manifest=self.session.manifest(),
             prompt_manifest=prompt.manifest(),
             resume_manifest=resume_manifest,
+            timeline_reduction_manifest=timeline_reduction_manifest,
         )
 
     def _prompt_builder(self) -> AgentPromptBuilder:
@@ -178,11 +185,12 @@ class AgentRunner:
             tools=self.session.tools,
             skills=self.session.skills,
             timeline=self.session.timeline,
-            timeline_budget=TimelineBudget(
-                max_bytes=self.session.profile.budget.max_timeline_bytes,
-            ),
+            timeline_budget=self._timeline_budget(),
             capabilities=self.session.capability_catalog(),
         )
+
+    def _timeline_budget(self) -> TimelineBudget:
+        return TimelineBudget(max_bytes=self.session.profile.budget.max_timeline_bytes)
 
     async def _resume_manifest(self, token: ResumeToken | None) -> dict[str, Any]:
         if token is None:
@@ -205,11 +213,13 @@ class AgentRunner:
         *,
         resume_manifest: dict[str, Any] | None = None,
         injections: tuple[ContextInjection, ...] = (),
+        timeline_reduction_manifest: dict[str, Any] | None = None,
     ) -> AgentContextPack:
         base = request.context or AgentContextPack()
         system = base.system or self.session.profile.instructions
         dynamic_task = base.dynamic_task or request.task
         resume_manifest = resume_manifest or {}
+        timeline_reduction_manifest = timeline_reduction_manifest or {}
         context_injections = (*base.injections, *injections)
         if resume_manifest:
             context_injections = (
@@ -234,6 +244,8 @@ class AgentRunner:
         }
         if resume_manifest:
             metadata["resume"] = resume_manifest
+        if timeline_reduction_manifest:
+            metadata["timeline_reduction"] = timeline_reduction_manifest
         return AgentContextPack(
             system=system,
             task_instruction=base.task_instruction,
@@ -247,6 +259,34 @@ class AgentRunner:
             injections=context_injections,
             metadata=metadata,
         )
+
+    async def _reduce_timeline_if_needed(self, request: AgentRunRequest) -> dict[str, Any]:
+        reducer = self.session.context_reducer
+        if reducer is None:
+            return {}
+        budget = self._timeline_budget()
+        total_bytes = self.session.timeline.total_bytes()
+        if total_bytes <= budget.max_bytes:
+            return {}
+        reducer_request = ReducerRequest(
+            items=self.session.timeline.items,
+            max_bytes=budget.max_bytes,
+            recent_keep_ratio=budget.recent_keep_ratio,
+            metadata={
+                "profile": self.session.profile.name,
+                "request_metadata": dict(request.metadata),
+            },
+        )
+        result = await reducer.reduce(reducer_request)
+        view = apply_reduction_to_timeline(self.session.timeline, result)
+        manifest = result.manifest()
+        manifest["request"] = reducer_request.manifest()
+        manifest["view"] = {
+            "open_item_count": len(view.open_items),
+            "compressed_head_bytes": len(view.compressed_head.encode("utf-8")),
+            "archive_refs": list(view.archive_refs),
+        }
+        return manifest
 
     async def _memory_injections(self, request: AgentRunRequest) -> tuple[ContextInjection, ...]:
         if not self.session.profile.capabilities.memory_enabled:
@@ -468,6 +508,19 @@ def _budget_manifest(budget: RuntimeBudget) -> dict[str, Any]:
         "max_timeline_bytes": budget.max_timeline_bytes,
         "max_tool_result_bytes": budget.max_tool_result_bytes,
         "max_cost_usd": budget.max_cost_usd,
+    }
+
+
+def _context_reducer_manifest(reducer: ContextReducerPort | None) -> dict[str, Any]:
+    if reducer is None:
+        return {"enabled": False}
+    reducer_manifest = getattr(reducer, "manifest", None)
+    if callable(reducer_manifest):
+        manifest = reducer_manifest()
+        return {"enabled": True, **dict(manifest)}
+    return {
+        "enabled": True,
+        "type": type(reducer).__name__,
     }
 
 

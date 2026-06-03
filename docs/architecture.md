@@ -76,6 +76,13 @@ production runtimes can implement the same port with model-backed summaries,
 archive storage, vector indexes, or graph memory. The reducer returns manifests
 so compression can be audited and replayed.
 
+`AgentSession.context_reducer` lets the runner apply that reducer as part of the
+core execution path. When the active timeline exceeds
+`RuntimeBudget.max_timeline_bytes`, `AgentRunner` reduces the timeline before
+prompt assembly, updates the `TimelineStore` with compressed head text and
+archive refs, and attaches the reduction manifest to both `AgentRunOutcome` and
+prompt metadata.
+
 `PlannerPort` is a core contract because plan state, dependency readiness,
 updates, and manifests are reusable across agent domains. The core only ships a
 lightweight `InMemoryPlanner`; Raven-specific decomposition, code repair plans,
@@ -115,6 +122,9 @@ the actual instructions, task contracts, examples, and domain language.
 `AgentRunner` applies `PromptIR.trim_to_budget()` with
 `RuntimeBudget.max_prompt_bytes` before provider calls, so automatic trimming is
 part of the core execution path rather than a Raven-specific adapter behavior.
+If `AgentSession.context_reducer` is configured, the runner also applies
+timeline reduction before prompt assembly using
+`RuntimeBudget.max_timeline_bytes`.
 
 `ContextInjection` is the SDK-level insertion record for resumable state, memory
 continuity, operator hints, and runtime-supplied context. It declares the target
