@@ -131,8 +131,8 @@ systems can ingest the index, but the SDK owns the correlation schema.
 trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
-streaming calls using prompt-safe summaries, embedding calls, and lifecycle hook
-records. The core
+streaming calls using prompt-safe summaries, prompt bucket budget, semantic
+prompt trim, global prompt trim, embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, required events, required tools,

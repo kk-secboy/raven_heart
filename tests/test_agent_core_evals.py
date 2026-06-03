@@ -313,12 +313,19 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "run_finished",
         "tool_started",
         "tool_finished",
+        "prompt_bucket_budget_applied",
+        "prompt_semantic_trim_applied",
+        "prompt_trim_applied",
         "provider_call_completed",
         "provider_call_completed",
     )
     assert manifest["steps"][2]["source"] == "event_log"
-    assert manifest["steps"][4]["source"] == "provider"
-    assert manifest["steps"][4]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][4]["source"] == "prompt_bucket_budget"
+    assert manifest["steps"][5]["source"] == "prompt_semantic_trim"
+    assert manifest["steps"][5]["payload"]["roles"] == ["dynamic", "timeline_open"]
+    assert manifest["steps"][5]["payload"]["dropped_units"] == 3
+    assert manifest["steps"][7]["source"] == "provider"
+    assert manifest["steps"][7]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1619,7 +1626,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 6
+    assert report.summary["baseline_step_count"] == 9
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -1650,6 +1657,9 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "run_finished",
         "tool_finished",
         "tool_started",
+        "prompt_bucket_budget_applied",
+        "prompt_semantic_trim_applied",
+        "prompt_trim_applied",
         "provider_call_completed",
         "provider_call_completed",
     ]

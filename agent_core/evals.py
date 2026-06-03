@@ -481,6 +481,16 @@ class TraceReplayHarness:
                     payload=_payload(item),
                 )
             )
+        for item in _prompt_shaping_replay_steps(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source=str(item.get("source") or "prompt"),
+                    event_type=str(item.get("event_type") or ""),
+                    run_id=run_id,
+                    payload=dict(item.get("payload") or {}),
+                )
+            )
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
         for item in _provider_call_records(provider):
             steps.append(
@@ -2086,6 +2096,79 @@ def _event_sequence_monotonic(sequences: tuple[int, ...]) -> bool:
 def _payload(item: dict[str, Any]) -> dict[str, Any]:
     payload = item.get("payload")
     return dict(payload) if isinstance(payload, dict) else dict(item)
+
+
+def _prompt_shaping_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    steps: list[dict[str, Any]] = []
+    bucket_budget = _prompt_bucket_budget(trace)
+    if bucket_budget:
+        steps.append(
+            {
+                "source": "prompt_bucket_budget",
+                "event_type": "prompt_bucket_budget_applied",
+                "payload": _prompt_bucket_budget_replay_payload(bucket_budget),
+            }
+        )
+    semantic_trim = _prompt_semantic_trim(trace)
+    if semantic_trim:
+        steps.append(
+            {
+                "source": "prompt_semantic_trim",
+                "event_type": "prompt_semantic_trim_applied",
+                "payload": _prompt_semantic_trim_replay_payload(semantic_trim),
+            }
+        )
+    trim = _prompt_trim(trace)
+    if trim:
+        steps.append(
+            {
+                "source": "prompt_trim",
+                "event_type": "prompt_trim_applied",
+                "payload": _prompt_trim_replay_payload(trim),
+            }
+        )
+    return tuple(steps)
+
+
+def _prompt_bucket_budget_replay_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+    decisions = _prompt_bucket_budget_decisions(manifest)
+    return {
+        "schema_version": str(manifest.get("schema_version") or ""),
+        "trimmed_count": _safe_int(manifest.get("trimmed_count")),
+        "protected_count": _safe_int(manifest.get("protected_count")),
+        "over_budget_count": _safe_int(manifest.get("over_budget_count")),
+        "roles": sorted(_prompt_bucket_budget_values(decisions, "role")),
+        "statuses": sorted(_prompt_bucket_budget_values(decisions, "status")),
+        "decision_count": len(decisions),
+    }
+
+
+def _prompt_semantic_trim_replay_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+    decisions = _prompt_semantic_trim_decisions(manifest)
+    return {
+        "schema_version": str(manifest.get("schema_version") or ""),
+        "target_bytes": _safe_int(manifest.get("target_bytes")),
+        "original_bytes": _safe_int(manifest.get("original_bytes")),
+        "final_bytes": _safe_int(manifest.get("final_bytes")),
+        "converged": bool(manifest.get("converged", True)),
+        "trimmed_count": _safe_int(manifest.get("trimmed_count")),
+        "roles": sorted(_prompt_semantic_trim_values(decisions, "role")),
+        "statuses": sorted(_prompt_semantic_trim_values(decisions, "status")),
+        "dropped_units": sum(_safe_int(decision.get("dropped_units")) for decision in decisions),
+        "decision_count": len(decisions),
+    }
+
+
+def _prompt_trim_replay_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": str(manifest.get("schema_version") or ""),
+        "target_bytes": _safe_int(manifest.get("target_bytes")),
+        "original_bytes": _safe_int(manifest.get("original_bytes")),
+        "final_bytes": _safe_int(manifest.get("final_bytes")),
+        "converged": bool(manifest.get("converged", True)),
+        "roles": sorted(_prompt_trim_roles(manifest)),
+        "trimmed_role_count": len(_prompt_trim_roles(manifest)),
+    }
 
 
 def _filtered_steps(
