@@ -204,6 +204,15 @@ the standard stream summary in provider call metadata. Trace evals can require
 streaming calls, required or forbidden stream event types, and maximum stream
 error counts while keeping streamed content out of the trace.
 
+`EmbeddingProviderPort` and `EmbeddingProviderCenter` give semantic retrieval a
+separate provider-neutral boundary from chat/completion models. The core records
+embedding request, response, route, provider spec, and call manifests without
+depending on OpenAI, Gemini, local model, or vector-service clients.
+`DeterministicEmbeddingProvider` exists only for tests and lightweight local
+ranking. Production embedding clients, batch policy, vector-store upserts,
+tenant credentials, and vendor rate limits remain runtime or adapter
+responsibilities.
+
 `ToolReplayStorePort` gives tool replay the same port-based shape as memory and
 journals. Core replay manifests include replay keys, invocation argument hashes,
 and prompt-safe result manifests. Runtime code owns durable storage, retention,
@@ -355,7 +364,9 @@ path without adding Raven-specific prompt content to core.
 When memory is enabled on an `AgentSession`, `AgentRunner` recalls memory through
 `MemoryPort` and injects the rendered hits as `ContextInjection(source="memory")`.
 Standalone `ReActExecutor` still supports direct memory messages for tests and
-small embeddings that do not use the full runner.
+small embeddings that do not use the full runner. `InMemoryMemoryStore` can
+optionally use an `EmbeddingProviderPort` for semantic and hybrid ranking, while
+SQLite and Markdown remain dependency-free keyword stores.
 
 `MemorySearchPlan` is intentionally separate from the storage implementation.
 It proves which stores were selected, which route filters were consumed by the

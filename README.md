@@ -27,6 +27,7 @@ ops agents, research agents, and future automation systems.
 - Runner-level automatic timeline reduction before prompt assembly.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - Context injection policy for bucket allow-lists, per-injection trimming, total injection budget, and audit manifests.
+- Provider-neutral embedding request/response, provider routing, and semantic ranking contracts.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Memory governance decisions for allow/rewrite/deny write auditing.
 - Unified storage backend manifests for core stores and runtime-owned backends.
@@ -273,6 +274,23 @@ routing, SLA policy, SIEM export, and durable workflow storage.
 The SDK owns reduction mechanics and manifests. Runtimes may replace the reducer
 with an LLM summarizer, vector/archive backed compressor, or domain-specific
 reducer while keeping the same core contract.
+
+### Embeddings And Semantic Ranking
+
+- `EmbeddingProviderPort` protocol.
+- `EmbeddingProviderCenter` for provider-neutral embedding routing and call audit.
+- `EmbeddingRequest`, `EmbeddingResponse`, `EmbeddingVector`, and
+  `EmbeddingRoute` manifests.
+- `DeterministicEmbeddingProvider` for dependency-free tests and lightweight
+  local semantic ranking.
+- `rank_semantic_documents()` for embedding-backed ranking over SDK search documents.
+- `InMemoryMemoryStore` can optionally use an embedding provider for
+  `semantic` and `hybrid` memory search.
+
+Concrete embedding clients for OpenAI, Gemini, local models, vector services, or
+product gateways live in runtimes or adapter packages. The SDK owns the portable
+request/response/route shape, call manifests, deterministic fallback, and the
+ranking contract used by lightweight core stores.
 
 ### LLM Providers
 
@@ -555,6 +573,8 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider call audit | MVP implemented |
 | Provider transport contract | MVP implemented |
 | Provider model capabilities | MVP implemented |
+| Embedding provider center | MVP implemented |
+| Semantic ranking contract | MVP implemented |
 | Schema validation contracts | MVP implemented |
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |

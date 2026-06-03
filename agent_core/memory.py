@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
 from agent_core.backends import StorageBackendKind, storage_backend_manifest
+from agent_core.embeddings import EmbeddingProviderPort, rank_semantic_documents
 from agent_core.search import SearchDocument, rank_documents
 
 
@@ -638,11 +639,30 @@ class MemoryRecord:
 
 
 class InMemoryMemoryStore(MemoryPort):
-    def __init__(self, records: tuple[MemoryRecord, ...] = ()) -> None:
+    def __init__(
+        self,
+        records: tuple[MemoryRecord, ...] = (),
+        *,
+        embedding_provider: EmbeddingProviderPort | None = None,
+        embedding_model: str = "",
+        embedding_dimensions: int = 0,
+    ) -> None:
         self.records: list[MemoryRecord] = list(records)
+        self.embedding_provider = embedding_provider
+        self.embedding_model = embedding_model
+        self.embedding_dimensions = embedding_dimensions
 
     async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
         records = [record for record in self.records if _matches_filters(record, query.filters)]
+        if self.embedding_provider is not None and query.mode in {"semantic", "hybrid"}:
+            return await _rank_memory_records_semantic(
+                query.query,
+                records,
+                provider=self.embedding_provider,
+                model=self.embedding_model,
+                dimensions=self.embedding_dimensions or len(query.vector),
+                limit=query.limit,
+            )
         return _rank_memory_records(query.query, records, limit=query.limit)
 
     async def write(self, item: MemoryWrite) -> None:
@@ -661,6 +681,7 @@ class InMemoryMemoryStore(MemoryPort):
             "backend_kind": "in_memory",
             "backend": storage_backend_manifest(role="memory", kind="in_memory"),
             "record_count": len(self.records),
+            "semantic_ranking": self.embedding_provider is not None,
         }
 
 
@@ -954,6 +975,42 @@ def _rank_memory_records(query: str, records: list[MemoryRecord], *, limit: int)
     ranked = rank_documents(query, documents, limit=limit)
     if query.strip():
         return tuple(record.hit(score=max(0.001, 1.0 / (index + 1))) for index, record in enumerate(ranked))
+    return tuple(record.hit(score=0.0) for record in records[:limit])
+
+
+async def _rank_memory_records_semantic(
+    query: str,
+    records: list[MemoryRecord],
+    *,
+    provider: EmbeddingProviderPort,
+    model: str = "",
+    dimensions: int = 0,
+    limit: int,
+) -> tuple[MemoryHit, ...]:
+    documents = tuple(
+        SearchDocument(
+            item=record,
+            text=" ".join(
+                (
+                    record.content,
+                    record.source,
+                    " ".join(str(value) for value in record.metadata.values()),
+                )
+            ),
+            name=record.source,
+        )
+        for record in records
+    )
+    ranked = await rank_semantic_documents(
+        query,
+        documents,
+        provider=provider,
+        model=model,
+        dimensions=dimensions,
+        limit=limit,
+    )
+    if query.strip():
+        return tuple(hit.item.hit(score=hit.score) for hit in ranked)
     return tuple(record.hit(score=0.0) for record in records[:limit])
 
 
