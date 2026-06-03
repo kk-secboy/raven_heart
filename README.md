@@ -32,7 +32,7 @@ ops agents, research agents, and future automation systems.
 - Trace replay and evaluation harness for provider-neutral run audits.
 - Manager run state store port plus in-memory, SQLite, and Markdown stores.
 - Sequenced event stream and event log manifests.
-- Planner protocol and lightweight in-memory plan state.
+- Planner protocol plus in-memory, SQLite, and Markdown plan state stores.
 - Multi-agent handoff specs, routing decisions, and lightweight coordination.
 - Human-in-loop approval request and decision queue primitives.
 - Approval resume context for approved action/tool gate continuation.
@@ -279,6 +279,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, workflow replay DB |
 | Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, observability pipeline |
 | Manager runs | `AgentRunStorePort` | In-memory, SQLite, Markdown | Postgres, workflow DB, scheduler state |
+| Planner state | `PlannerStorePort` | In-memory, SQLite, Markdown | Postgres, workflow DB, planner audit store |
 | Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
@@ -292,6 +293,8 @@ PG, graph memory, multi-tenant isolation, retention policy, or product audit.
 - `PlannerPort` for plan-and-execute agents.
 - `Plan`, `PlanStep`, and `PlanUpdate` state contracts.
 - `InMemoryPlanner` for tests, examples, and lightweight embeddings.
+- `PersistentPlanner` backed by `PlannerStorePort`.
+- `InMemoryPlannerStore`, `SQLitePlannerStore`, and `MarkdownPlannerStore`.
 - Dependency-aware ready-step selection.
 - `PlanExecutor` for sequential ready-step execution through `AgentSessionManager`.
 - `PlanExecutionReport` and `PlanExecutionStep` manifests for audit.

@@ -51,6 +51,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | PG, object storage, workflow replay DB |
 | Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | PG, object storage, observability pipeline |
 | Manager runs | `AgentRunStorePort` | In-memory, SQLite, Markdown | PG, workflow DB, scheduler state |
+| Planner state | `PlannerStorePort` | In-memory, SQLite, Markdown | PG, workflow DB, planner audit store |
 | Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, CI/build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
@@ -139,12 +140,13 @@ archive refs, and attaches the reduction manifest to both `AgentRunOutcome` and
 prompt metadata.
 
 `PlannerPort` is a core contract because plan state, dependency readiness,
-updates, and manifests are reusable across agent domains. The core only ships a
-lightweight `InMemoryPlanner` plus `PlanExecutor` for sequential ready-step
-execution through `AgentSessionManager`. Raven-specific decomposition, code
-repair plans, approval flows, concurrent/distributed scheduling, and durable
-planner storage should live in a runtime or adapter package that implements the
-same ports.
+updates, and manifests are reusable across agent domains. The core ships
+`InMemoryPlanner`, `PersistentPlanner`, lightweight in-memory/SQLite/Markdown
+planner stores, and `PlanExecutor` for sequential ready-step execution through
+`AgentSessionManager`. Raven-specific decomposition, code repair plans, approval
+flows, concurrent/distributed scheduling, PG-backed workflow state, and product
+planner audit policy should live in a runtime or adapter package that implements
+the same ports.
 
 `ApprovalStorePort` is a core contract for human-in-loop pauses. Policies can
 produce `ApprovalRequest` manifests; ReAct execution records them as

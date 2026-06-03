@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import re
+import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -90,6 +95,169 @@ class PlannerPort(Protocol):
 
     async def update_plan(self, update: PlanUpdate) -> Plan:
         """Apply a plan update and return the latest plan."""
+
+
+class PlannerStorePort(Protocol):
+    """Persistence boundary for planner state."""
+
+    def save(self, plan: Plan) -> None:
+        """Persist or replace one plan."""
+
+    def load(self, plan_id: str) -> Plan | None:
+        """Load one plan by id."""
+
+    def list(self) -> tuple[Plan, ...]:
+        """Return all persisted plans."""
+
+    def delete(self, plan_id: str) -> bool:
+        """Delete one plan."""
+
+    def manifest(self) -> dict[str, Any]:
+        """Return prompt-safe store metadata."""
+
+
+class InMemoryPlannerStore:
+    def __init__(self, plans: tuple[Plan, ...] = ()) -> None:
+        self._plans = {plan.plan_id: plan for plan in plans}
+
+    def save(self, plan: Plan) -> None:
+        self._plans[plan.plan_id] = plan
+
+    def load(self, plan_id: str) -> Plan | None:
+        return self._plans.get(plan_id)
+
+    def list(self) -> tuple[Plan, ...]:
+        return tuple(sorted(self._plans.values(), key=lambda item: item.plan_id))
+
+    def delete(self, plan_id: str) -> bool:
+        return self._plans.pop(plan_id, None) is not None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-in-memory-planner-store/v1",
+            "plan_count": len(self._plans),
+        }
+
+
+class SQLitePlannerStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init()
+
+    def save(self, plan: Plan) -> None:
+        raw = json.dumps(plan.manifest(), ensure_ascii=False, sort_keys=True)
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                INSERT INTO plans(plan_id, manifest_json)
+                VALUES(?, ?)
+                ON CONFLICT(plan_id) DO UPDATE SET
+                    manifest_json=excluded.manifest_json
+                """,
+                (plan.plan_id, raw),
+            )
+
+    def load(self, plan_id: str) -> Plan | None:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                "SELECT manifest_json FROM plans WHERE plan_id = ?",
+                (plan_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _plan_from_manifest(json.loads(str(row[0] or "{}")))
+
+    def list(self) -> tuple[Plan, ...]:
+        with sqlite3.connect(self.path) as conn:
+            rows = conn.execute("SELECT manifest_json FROM plans ORDER BY plan_id ASC").fetchall()
+        return tuple(_plan_from_manifest(json.loads(str(row[0] or "{}"))) for row in rows)
+
+    def delete(self, plan_id: str) -> bool:
+        with sqlite3.connect(self.path) as conn:
+            cursor = conn.execute("DELETE FROM plans WHERE plan_id = ?", (plan_id,))
+            return cursor.rowcount > 0
+
+    def manifest(self) -> dict[str, Any]:
+        with sqlite3.connect(self.path) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM plans").fetchone()[0]
+        return {
+            "schema_version": "agent-core-sqlite-planner-store/v1",
+            "path": str(self.path),
+            "plan_count": int(count),
+        }
+
+    def _init(self) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS plans (
+                    plan_id TEXT PRIMARY KEY,
+                    manifest_json TEXT NOT NULL
+                )
+                """
+            )
+
+
+class MarkdownPlannerStore:
+    _START = "<!-- planner-record "
+    _END = " -->"
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.write_text("# Planner Store\n\n", encoding="utf-8")
+
+    def save(self, plan: Plan) -> None:
+        plans = {item.plan_id: item for item in self.list()}
+        plans[plan.plan_id] = plan
+        self._write(tuple(sorted(plans.values(), key=lambda item: item.plan_id)))
+
+    def load(self, plan_id: str) -> Plan | None:
+        for plan in self.list():
+            if plan.plan_id == plan_id:
+                return plan
+        return None
+
+    def list(self) -> tuple[Plan, ...]:
+        if not self.path.exists():
+            return ()
+        text = self.path.read_text(encoding="utf-8")
+        plans = []
+        for match in _PLAN_MARKDOWN_RE.finditer(text):
+            plans.append(_plan_from_manifest(_decode_plan_payload(match.group(1))))
+        return tuple(sorted(plans, key=lambda item: item.plan_id))
+
+    def delete(self, plan_id: str) -> bool:
+        current = self.list()
+        plans = tuple(plan for plan in current if plan.plan_id != plan_id)
+        existed = len(plans) != len(current)
+        if existed:
+            self._write(plans)
+        return existed
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-markdown-planner-store/v1",
+            "path": str(self.path),
+            "plan_count": len(self.list()),
+        }
+
+    def _write(self, plans: tuple[Plan, ...]) -> None:
+        lines = ["# Planner Store", ""]
+        for plan in plans:
+            lines.extend(
+                [
+                    f"## Plan {plan.plan_id}",
+                    "",
+                    f"- terminal: {str(plan.terminal()).lower()}",
+                    f"- step_count: {len(plan.steps)}",
+                    f"{self._START}{_encode_plan_payload(plan.manifest())}{self._END}",
+                    "",
+                ]
+            )
+        self.path.write_text("\n".join(lines), encoding="utf-8")
 
 
 @dataclass(frozen=True)
@@ -256,62 +424,13 @@ class InMemoryPlanner(PlannerPort):
         self._plans: dict[str, Plan] = {plan.plan_id: plan for plan in plans}
 
     async def create_plan(self, goal: str, context: dict[str, Any] | None = None) -> Plan:
-        text = str(goal or "").strip()
-        if not text:
-            raise ValueError("plan goal is required")
-        context = dict(context or {})
-        step_specs = _normalize_step_specs(context.get("steps"), fallback=text)
-        steps = tuple(_step_from_spec(item, index=index) for index, item in enumerate(step_specs))
-        plan = Plan(
-            plan_id=str(context.get("plan_id") or uuid4().hex),
-            goal=text,
-            steps=steps,
-            metadata={key: value for key, value in context.items() if key not in {"steps", "plan_id"}},
-        )
+        plan = _create_plan(goal, context)
         self._plans[plan.plan_id] = plan
         return plan
 
     async def update_plan(self, update: PlanUpdate) -> Plan:
         current = self.get(update.plan_id)
-        if not update.step_id:
-            metadata = {**current.metadata, **dict(update.metadata)}
-            plan = Plan(
-                plan_id=current.plan_id,
-                goal=current.goal,
-                steps=current.steps,
-                metadata={**metadata, "note": update.note} if update.note else metadata,
-            )
-            self._plans[plan.plan_id] = plan
-            return plan
-        steps = []
-        found = False
-        for step in current.steps:
-            if step.step_id != update.step_id:
-                steps.append(step)
-                continue
-            found = True
-            status = _step_status(str(update.status)) if update.status else step.status
-            steps.append(
-                PlanStep(
-                    step_id=step.step_id,
-                    goal=step.goal,
-                    status=status,
-                    depends_on=step.depends_on,
-                    metadata={
-                        **step.metadata,
-                        **dict(update.metadata),
-                        **({"note": update.note} if update.note else {}),
-                    },
-                )
-            )
-        if not found:
-            raise KeyError(f"unknown plan step: {update.step_id}")
-        plan = Plan(
-            plan_id=current.plan_id,
-            goal=current.goal,
-            steps=tuple(steps),
-            metadata=dict(current.metadata),
-        )
+        plan = _apply_plan_update(current, update)
         self._plans[plan.plan_id] = plan
         return plan
 
@@ -329,6 +448,95 @@ class InMemoryPlanner(PlannerPort):
             "schema_version": "agent-core-in-memory-planner/v1",
             "plans": [plan.manifest() for plan in self.plans()],
         }
+
+
+class PersistentPlanner(PlannerPort):
+    """Planner backed by a pluggable `PlannerStorePort`."""
+
+    def __init__(self, store: PlannerStorePort) -> None:
+        self.store = store
+
+    async def create_plan(self, goal: str, context: dict[str, Any] | None = None) -> Plan:
+        plan = _create_plan(goal, context)
+        self.store.save(plan)
+        return plan
+
+    async def update_plan(self, update: PlanUpdate) -> Plan:
+        current = self.get(update.plan_id)
+        plan = _apply_plan_update(current, update)
+        self.store.save(plan)
+        return plan
+
+    def get(self, plan_id: str) -> Plan:
+        plan = self.store.load(plan_id)
+        if plan is None:
+            raise KeyError(f"unknown plan: {plan_id}")
+        return plan
+
+    def plans(self) -> tuple[Plan, ...]:
+        return self.store.list()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-persistent-planner/v1",
+            "store": self.store.manifest(),
+            "plans": [plan.manifest() for plan in self.plans()],
+        }
+
+
+def _create_plan(goal: str, context: dict[str, Any] | None = None) -> Plan:
+    text = str(goal or "").strip()
+    if not text:
+        raise ValueError("plan goal is required")
+    context = dict(context or {})
+    step_specs = _normalize_step_specs(context.get("steps"), fallback=text)
+    steps = tuple(_step_from_spec(item, index=index) for index, item in enumerate(step_specs))
+    return Plan(
+        plan_id=str(context.get("plan_id") or uuid4().hex),
+        goal=text,
+        steps=steps,
+        metadata={key: value for key, value in context.items() if key not in {"steps", "plan_id"}},
+    )
+
+
+def _apply_plan_update(current: Plan, update: PlanUpdate) -> Plan:
+    if not update.step_id:
+        metadata = {**current.metadata, **dict(update.metadata)}
+        return Plan(
+            plan_id=current.plan_id,
+            goal=current.goal,
+            steps=current.steps,
+            metadata={**metadata, "note": update.note} if update.note else metadata,
+        )
+    steps = []
+    found = False
+    for step in current.steps:
+        if step.step_id != update.step_id:
+            steps.append(step)
+            continue
+        found = True
+        status = _step_status(str(update.status)) if update.status else step.status
+        steps.append(
+            PlanStep(
+                step_id=step.step_id,
+                goal=step.goal,
+                status=status,
+                depends_on=step.depends_on,
+                metadata={
+                    **step.metadata,
+                    **dict(update.metadata),
+                    **({"note": update.note} if update.note else {}),
+                },
+            )
+        )
+    if not found:
+        raise KeyError(f"unknown plan step: {update.step_id}")
+    return Plan(
+        plan_id=current.plan_id,
+        goal=current.goal,
+        steps=tuple(steps),
+        metadata=dict(current.metadata),
+    )
 
 
 def _normalize_step_specs(value: Any, *, fallback: str) -> tuple[Any, ...]:
@@ -389,4 +597,41 @@ def _execution_step_from_outcome(
             "trace_run_id": outcome.trace_manifest.get("run", {}).get("run_id", ""),
         },
     )
+
+
+_PLAN_MARKDOWN_RE = re.compile(r"<!--\s*planner-record\s+([A-Za-z0-9+/=]+)\s*-->")
+
+
+def _plan_from_manifest(manifest: dict[str, Any]) -> Plan:
+    return Plan(
+        plan_id=str(manifest.get("plan_id") or ""),
+        goal=str(manifest.get("goal") or ""),
+        steps=tuple(
+            _plan_step_from_manifest(item)
+            for item in manifest.get("steps", ())
+            if isinstance(item, dict)
+        ),
+        metadata=dict(manifest.get("metadata") or {}),
+    )
+
+
+def _plan_step_from_manifest(manifest: dict[str, Any]) -> PlanStep:
+    return PlanStep(
+        step_id=str(manifest.get("step_id") or ""),
+        goal=str(manifest.get("goal") or ""),
+        status=_step_status(str(manifest.get("status") or "pending")),
+        depends_on=tuple(str(item) for item in manifest.get("depends_on") or ()),
+        metadata=dict(manifest.get("metadata") or {}),
+    )
+
+
+def _encode_plan_payload(manifest: dict[str, Any]) -> str:
+    raw = json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _decode_plan_payload(encoded: str) -> dict[str, Any]:
+    raw = base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+    value = json.loads(raw)
+    return dict(value) if isinstance(value, dict) else {}
 

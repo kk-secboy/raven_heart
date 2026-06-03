@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from agent_core import InMemoryPlanner, PlanExecutor, PlanUpdate
+from agent_core import (
+    InMemoryPlanner,
+    InMemoryPlannerStore,
+    MarkdownPlannerStore,
+    PersistentPlanner,
+    PlanExecutor,
+    PlanUpdate,
+    SQLitePlannerStore,
+)
 from agent_core.config import AgentProfile
 from agent_core.runner import AgentSession, AgentSessionManager
 from agent_core.testing import MockLLMProvider, MockToolRuntime
@@ -86,6 +94,56 @@ async def test_in_memory_planner_rejects_invalid_inputs() -> None:
 
     with pytest.raises(KeyError, match="unknown plan"):
         planner.get("missing")
+
+
+@pytest.mark.asyncio
+async def test_persistent_planner_uses_in_memory_store_manifest() -> None:
+    planner = PersistentPlanner(InMemoryPlannerStore())
+
+    plan = await planner.create_plan(
+        "persistent goal",
+        {"plan_id": "plan-1", "steps": [{"step_id": "s1", "goal": "step"}]},
+    )
+    updated = await planner.update_plan(PlanUpdate(plan.plan_id, "s1", status="completed"))
+
+    assert updated.status_counts() == {"completed": 1}
+    assert planner.get("plan-1").steps[0].status == "completed"
+    assert planner.manifest()["store"]["schema_version"] == "agent-core-in-memory-planner-store/v1"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_planner_store_persists_plans_across_instances(tmp_path) -> None:
+    path = tmp_path / "plans.sqlite"
+    first = PersistentPlanner(SQLitePlannerStore(path))
+
+    plan = await first.create_plan("sqlite goal", {"plan_id": "plan-1", "steps": ["step"]})
+    await first.update_plan(PlanUpdate(plan.plan_id, "step-1", status="completed"))
+
+    second = PersistentPlanner(SQLitePlannerStore(path))
+    restored = second.get("plan-1")
+
+    assert restored.goal == "sqlite goal"
+    assert restored.steps[0].status == "completed"
+    assert second.manifest()["store"]["schema_version"] == "agent-core-sqlite-planner-store/v1"
+
+
+@pytest.mark.asyncio
+async def test_markdown_planner_store_persists_without_visible_goal_payload(tmp_path) -> None:
+    path = tmp_path / "plans.md"
+    first = PersistentPlanner(MarkdownPlannerStore(path))
+
+    plan = await first.create_plan(
+        "sensitive goal",
+        {"plan_id": "plan-1", "steps": [{"step_id": "s1", "goal": "sensitive step"}]},
+    )
+    await first.update_plan(PlanUpdate(plan.plan_id, "s1", status="completed"))
+    text = path.read_text(encoding="utf-8")
+    second = PersistentPlanner(MarkdownPlannerStore(path))
+
+    assert second.get("plan-1").steps[0].status == "completed"
+    assert "sensitive goal" not in text
+    assert "sensitive step" not in text
+    assert "<!-- planner-record " in text
 
 
 @pytest.mark.asyncio
