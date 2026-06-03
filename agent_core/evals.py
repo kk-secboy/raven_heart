@@ -372,6 +372,17 @@ class TraceReplayHarness:
                     payload=_payload(item),
                 )
             )
+        provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
+        for item in _provider_call_records(provider):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="provider",
+                    event_type=_provider_replay_event_type(item),
+                    run_id=run_id,
+                    payload=_provider_call_replay_payload(item),
+                )
+            )
         return TraceReplayResult(
             run_id=run_id,
             steps=tuple(steps),
@@ -1414,6 +1425,39 @@ def _provider_call_records(provider: dict[str, Any]) -> tuple[dict[str, Any], ..
     if not isinstance(calls, (list, tuple)):
         return ()
     return tuple(dict(item) for item in calls if isinstance(item, dict))
+
+
+def _provider_replay_event_type(call: dict[str, Any]) -> str:
+    status = str(call.get("status") or "completed")
+    if call.get("streamed") is True:
+        return "provider_stream_failed" if status == "failed" else "provider_stream_completed"
+    return "provider_call_failed" if status == "failed" else "provider_call_completed"
+
+
+def _provider_call_replay_payload(call: dict[str, Any]) -> dict[str, Any]:
+    metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
+    stream_summary = metadata.get("stream_summary") if isinstance(metadata, dict) else None
+    request = metadata.get("request") if isinstance(metadata, dict) else None
+    request_metadata = request.get("metadata") if isinstance(request, dict) else {}
+    payload = {
+        "provider_name": str(call.get("provider_name") or ""),
+        "model": str(call.get("model") or ""),
+        "attempt": _safe_int(call.get("attempt") or 0),
+        "status": str(call.get("status") or "completed"),
+        "streamed": bool(call.get("streamed")),
+        "retryable": bool(call.get("retryable")),
+        "usage": dict(call.get("usage")) if isinstance(call.get("usage"), dict) else {},
+        "requested_model": str(request.get("model") or "") if isinstance(request, dict) else "",
+        "model_capabilities": dict(request_metadata.get("model_capabilities"))
+        if isinstance(request_metadata, dict)
+        and isinstance(request_metadata.get("model_capabilities"), dict)
+        else {},
+    }
+    if isinstance(stream_summary, dict):
+        payload["stream_summary"] = dict(stream_summary)
+    if call.get("error"):
+        payload["error"] = str(call.get("error") or "")
+    return payload
 
 
 def _provider_call_values(calls: tuple[dict[str, Any], ...], key: str) -> set[str]:

@@ -120,9 +120,12 @@ systems can ingest the index, but the SDK owns the correlation schema.
 
 `TraceReplayHarness`, `TraceReplayComparator`, and `TraceEvalHarness` turn run
 trace manifests into deterministic replay steps, baseline diff reports, and
-provider-neutral evaluation reports. The core checks generic contracts such as
-final status, iteration limits, provider call limits, required events, required
-tools, cost ceilings, event ordering, journal integrity, resume-plan presence,
+provider-neutral evaluation reports. Replay steps include resume selection,
+checkpoint loading, journal events, event-log entries, provider calls, and
+provider streaming calls using prompt-safe summaries. The core checks generic
+contracts such as final status, iteration limits, provider call limits, required
+events, required tools, cost ceilings, event ordering, journal integrity,
+resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, tool execution presence,
 tool retry, minimum tool attempt counts, required storage backend roles/kinds,
 forbidden backend kinds, external-backend limits, required context injection

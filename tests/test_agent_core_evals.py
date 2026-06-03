@@ -239,8 +239,12 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "run_finished",
         "tool_started",
         "tool_finished",
+        "provider_call_completed",
+        "provider_call_completed",
     )
     assert manifest["steps"][2]["source"] == "event_log"
+    assert manifest["steps"][4]["source"] == "provider"
+    assert manifest["steps"][4]["payload"]["provider_name"] == "mock"
 
 
 def test_default_trace_evaluator_accepts_expected_trace() -> None:
@@ -389,6 +393,51 @@ def test_trace_eval_validates_provider_stream_contracts() -> None:
         "usage",
     ]
     assert report.summary["provider_stream_error_count"] == 0
+
+
+def test_trace_replay_harness_includes_provider_stream_steps() -> None:
+    trace = {
+        **_trace_manifest(),
+        "provider": {
+            "call_count": 2,
+            "calls": [
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "attempt": 1,
+                    "status": "failed",
+                    "streamed": True,
+                    "retryable": True,
+                    "error": "stream failed",
+                },
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "attempt": 2,
+                    "status": "completed",
+                    "streamed": True,
+                    "metadata": {
+                        "stream_summary": {
+                            "schema_version": "agent-core-llm-stream-summary/v1",
+                            "event_types": ["delta", "message_end"],
+                            "content_bytes": 6,
+                        }
+                    },
+                },
+            ],
+        },
+    }
+
+    replay = TraceReplayHarness().replay(trace)
+    provider_steps = [step for step in replay.steps if step.source == "provider"]
+
+    assert [step.event_type for step in provider_steps] == [
+        "provider_stream_failed",
+        "provider_stream_completed",
+    ]
+    assert provider_steps[0].payload["retryable"] is True
+    assert provider_steps[0].payload["error"] == "stream failed"
+    assert provider_steps[1].payload["stream_summary"]["event_types"] == ["delta", "message_end"]
 
 
 def test_trace_eval_reports_provider_stream_contract_failures() -> None:
@@ -867,7 +916,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 4
+    assert report.summary["baseline_step_count"] == 6
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -898,6 +947,8 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "run_finished",
         "tool_finished",
         "tool_started",
+        "provider_call_completed",
+        "provider_call_completed",
     ]
 
 
