@@ -64,6 +64,47 @@ class CapabilityTrace:
 
 
 @dataclass(frozen=True)
+class StorageBackendTrace:
+    """Run-level inventory of storage backends visible in trace manifests."""
+
+    backends: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_trace_components(
+        cls,
+        **components: dict[str, Any],
+    ) -> "StorageBackendTrace":
+        entries: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+        for source, manifest in components.items():
+            for backend, path in _iter_storage_backend_manifests(manifest, source):
+                key = _storage_backend_key(backend)
+                current = entries.get(key)
+                if current is None:
+                    current = dict(backend)
+                    current["sources"] = []
+                    entries[key] = current
+                current["sources"] = sorted({*current.get("sources", ()), path})
+        ordered = tuple(sorted(entries.values(), key=_storage_backend_sort_key))
+        return cls(backends=ordered)
+
+    def manifest(self) -> dict[str, Any]:
+        backends = tuple(dict(item) for item in self.backends)
+        role_counts = _count_backend_field(backends, "role")
+        kind_counts = _count_backend_field(backends, "kind")
+        return {
+            "schema_version": "agent-core-storage-backend-trace/v1",
+            "backend_count": len(backends),
+            "core_builtin_count": sum(1 for item in backends if item.get("core_builtin") is True),
+            "external_backend_count": sum(1 for item in backends if item.get("core_builtin") is False),
+            "roles": role_counts,
+            "kinds": kind_counts,
+            "backends": list(backends),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class TraceCorrelationEntry:
     """One normalized pointer into trace materials."""
 
@@ -183,11 +224,21 @@ class AgentRunTraceBundle:
     timeline_reduction: dict[str, Any] = field(default_factory=dict)
     capability_discovery: dict[str, Any] = field(default_factory=dict)
     memory_search: dict[str, Any] = field(default_factory=dict)
+    storage_backends: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def manifest(self) -> dict[str, Any]:
         journal_ok = self.journal_replay.get("ok")
+        storage_backends = self.storage_backends or StorageBackendTrace.from_trace_components(
+            session=self.session,
+            provider=self.provider,
+            tool_replay=self.tool_replay,
+            policy_decisions=self.policy_decisions,
+            approvals=self.approvals,
+            event_log=self.event_log,
+            memory_search=self.memory_search,
+        ).manifest()
         correlation = self.correlation or TraceCorrelationIndex.from_trace_components(
             run_id=self.run_id,
             journal_replay=self.journal_replay,
@@ -225,6 +276,10 @@ class AgentRunTraceBundle:
                     self.capability_discovery.get("match_count") or 0
                 ),
                 "memory_search_hit_count": int(self.memory_search.get("hit_count") or 0),
+                "storage_backend_count": int(storage_backends.get("backend_count") or 0),
+                "external_storage_backend_count": int(
+                    storage_backends.get("external_backend_count") or 0
+                ),
                 "has_prompt_trim": bool(self.prompt.get("metadata", {}).get("trim")),
             },
             "session": dict(self.session),
@@ -240,9 +295,55 @@ class AgentRunTraceBundle:
             "timeline_reduction": dict(self.timeline_reduction),
             "capability_discovery": dict(self.capability_discovery),
             "memory_search": dict(self.memory_search),
+            "storage_backends": dict(storage_backends),
             "correlation": dict(correlation),
             "metadata": dict(self.metadata),
         }
+
+
+def _iter_storage_backend_manifests(
+    value: Any,
+    source: str,
+) -> tuple[tuple[dict[str, Any], str], ...]:
+    found: list[tuple[dict[str, Any], str]] = []
+
+    def walk(item: Any, path: str) -> None:
+        if isinstance(item, dict):
+            if item.get("schema_version") == "agent-core-storage-backend/v1":
+                found.append((dict(item), path))
+                return
+            for key, child in item.items():
+                walk(child, f"{path}.{key}" if path else str(key))
+        elif isinstance(item, (list, tuple)):
+            for index, child in enumerate(item):
+                walk(child, f"{path}[{index}]")
+
+    walk(value, source)
+    return tuple(found)
+
+
+def _storage_backend_key(backend: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    return (
+        str(backend.get("role") or ""),
+        str(backend.get("kind") or ""),
+        str(backend.get("name") or ""),
+        str(backend.get("namespace") or ""),
+        str(backend.get("location") or ""),
+    )
+
+
+def _storage_backend_sort_key(backend: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    return _storage_backend_key(backend)
+
+
+def _count_backend_field(backends: tuple[dict[str, Any], ...], field_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for backend in backends:
+        value = str(backend.get(field_name) or "")
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 class RunTraceStorePort(Protocol):

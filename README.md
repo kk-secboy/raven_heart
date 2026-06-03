@@ -179,7 +179,10 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   resume, timeline reduction, capability discovery, memory recall/search, and
   prompt trim manifests when available.
 - Summary counters include capability discovery matches, memory hits, and
-  whether the prompt was semantically trimmed.
+  storage backend counts, plus whether the prompt was semantically trimmed.
+- `StorageBackendTrace` collects backend manifests from session, memory,
+  replay, approval, policy, event, artifact, and trace components into one
+  run-level backend inventory.
 - `TraceCorrelationIndex` cross-references provider calls, tool replay records,
   policy decisions, approvals, event log entries, and journal replay events by
   run, turn, call id, approval id, decision id, and subject.

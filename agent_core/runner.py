@@ -88,11 +88,6 @@ class AgentSession:
         )
 
     def manifest(self) -> dict[str, Any]:
-        provider_manifest = getattr(self.provider, "manifest", None)
-        memory_manifest = getattr(self.memory, "manifest", None)
-        approval_manifest = getattr(self.approval_store, "manifest", None)
-        policy_decision_manifest = getattr(self.policy_decision_store, "manifest", None)
-        trace_store_manifest = getattr(self.trace_store, "manifest", None)
         return {
             "schema_version": "agent-core-session/v1",
             "profile": {
@@ -108,12 +103,16 @@ class AgentSession:
                     "human_in_loop_enabled": self.profile.capabilities.human_in_loop_enabled,
                 },
             },
-            "provider": provider_manifest() if callable(provider_manifest) else {},
+            "provider": _component_manifest_sync(self.provider),
+            "harness": _component_manifest_sync(self.harness),
             "capabilities": self.capability_catalog().manifest(),
-            "memory": memory_manifest() if callable(memory_manifest) else {},
-            "policy_decisions": policy_decision_manifest() if callable(policy_decision_manifest) else {},
-            "approvals": approval_manifest() if callable(approval_manifest) else {},
-            "trace_store": trace_store_manifest() if callable(trace_store_manifest) else {},
+            "memory": _component_manifest_sync(self.memory),
+            "tool_replay": _component_manifest_sync(self.tool_replay),
+            "policy_decisions": _component_manifest_sync(self.policy_decision_store),
+            "approvals": _component_manifest_sync(self.approval_store),
+            "event_log": _component_manifest_sync(self.event_sink),
+            "trace_store": _component_manifest_sync(self.trace_store),
+            "artifact_store": _component_manifest_sync(self.artifact_store),
             "context_reducer": _context_reducer_manifest(self.context_reducer),
             "timeline_items": len(self.timeline.items),
             "metadata": dict(self.metadata),
@@ -1277,6 +1276,14 @@ async def _component_manifest(component: Any) -> dict[str, Any]:
     value = manifest()
     if inspect.isawaitable(value):
         value = await value
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _component_manifest_sync(component: Any) -> dict[str, Any]:
+    manifest = getattr(component, "manifest", None)
+    if not callable(manifest) or inspect.iscoroutinefunction(manifest):
+        return {}
+    value = manifest()
     return dict(value) if isinstance(value, dict) else {}
 
 

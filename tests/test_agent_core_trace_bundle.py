@@ -4,19 +4,30 @@ import pytest
 
 from agent_core.config import AgentProfile
 from agent_core.events import ListEventSink
-from agent_core.harness import InMemoryAgentJournal
+from agent_core.harness import InMemoryAgentJournal, InMemoryJournalStore, PersistentAgentJournal
+from agent_core.memory import InMemoryMemoryStore
 from agent_core.policy import InMemoryPolicyDecisionStore
 from agent_core.providers import LLMProviderCenter
 from agent_core.runner import AgentRunner, AgentSession
 from agent_core.testing import MockLLMProvider
-from agent_core.tools import InMemoryToolReplay, ToolInvocation, ToolRegistry, ToolResult, ToolSpec
+from agent_core.tools import (
+    InMemoryToolReplayStore,
+    PersistentToolReplay,
+    ToolInvocation,
+    ToolRegistry,
+    ToolResult,
+    ToolSpec,
+)
 from agent_core.trace import (
     AgentRunTraceBundle,
     InMemoryRunTraceStore,
     MarkdownRunTraceStore,
     SQLiteRunTraceStore,
+    StorageBackendTrace,
     TraceCorrelationIndex,
 )
+from agent_core.artifacts import InMemoryArtifactStore
+from agent_core.backends import storage_backend_manifest
 
 
 async def _lookup(invocation: ToolInvocation) -> ToolResult:
@@ -146,6 +157,33 @@ def test_trace_correlation_index_cross_references_trace_materials() -> None:
     assert manifest["groups"]["policy_decisions"]["decision-1"]
 
 
+def test_storage_backend_trace_collects_and_deduplicates_component_backends() -> None:
+    memory_backend = storage_backend_manifest(
+        role="memory",
+        kind="postgres",
+        name="tenant-memory",
+        core_builtin=False,
+    )
+    duplicate_memory_backend = dict(memory_backend)
+    trace = StorageBackendTrace.from_trace_components(
+        session={
+            "memory": {"stores": [{"backend": memory_backend}]},
+            "trace_store": {"backend": storage_backend_manifest(role="run_trace", kind="sqlite")},
+        },
+        memory_search={"plan": {"selected_stores": [{"backend": duplicate_memory_backend}]}},
+        event_log={"backend": storage_backend_manifest(role="event_log", kind="markdown")},
+    ).manifest()
+
+    assert trace["schema_version"] == "agent-core-storage-backend-trace/v1"
+    assert trace["backend_count"] == 3
+    assert trace["external_backend_count"] == 1
+    assert trace["roles"] == {"event_log": 1, "memory": 1, "run_trace": 1}
+    assert trace["kinds"] == {"markdown": 1, "postgres": 1, "sqlite": 1}
+    memory = next(item for item in trace["backends"] if item["role"] == "memory")
+    assert memory["core_builtin"] is False
+    assert len(memory["sources"]) == 2
+
+
 @pytest.mark.asyncio
 async def test_run_trace_stores_persist_bundle_manifests(tmp_path) -> None:
     bundle = AgentRunTraceBundle(
@@ -190,9 +228,12 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
         profile=AgentProfile(name="traceable", model="mock-mini"),
         provider=center,
         tools=tools,
-        harness=InMemoryAgentJournal(),
+        harness=PersistentAgentJournal(InMemoryJournalStore()),
+        memory=InMemoryMemoryStore(),
         event_sink=event_sink,
-        tool_replay=InMemoryToolReplay(),
+        tool_replay=PersistentToolReplay(InMemoryToolReplayStore()),
+        trace_store=InMemoryRunTraceStore(),
+        artifact_store=InMemoryArtifactStore(),
         policy_decision_store=InMemoryPolicyDecisionStore(),
     )
 
@@ -222,6 +263,14 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     assert trace["prompt"]["metadata"]["profile"] == "traceable"
     assert trace["summary"]["capability_discovery_match_count"] == trace["capability_discovery"]["match_count"]
     assert trace["summary"]["memory_search_hit_count"] == 0
+    assert trace["summary"]["storage_backend_count"] >= 7
+    assert trace["storage_backends"]["roles"]["memory"] == 1
+    assert trace["storage_backends"]["roles"]["journal"] == 1
+    assert trace["storage_backends"]["roles"]["tool_replay"] == 1
+    assert trace["storage_backends"]["roles"]["run_trace"] == 1
+    assert trace["storage_backends"]["roles"]["event_log"] == 1
+    assert trace["storage_backends"]["roles"]["artifact"] == 1
+    assert trace["storage_backends"]["roles"]["policy_decision"] == 1
     assert trace["capability_discovery"]["schema_version"] == "agent-core-capability-discovery/v1"
     assert trace["memory_search"]["enabled"] is True
 

@@ -95,7 +95,10 @@ distributed resume scheduling.
 provider audit, tool replay, approvals, event log, resume, timeline reduction,
 capability discovery, memory recall/search, and prompt trim manifests. The SDK
 owns the shape and summary counters, including discovery match counts, memory
-hit counts, and prompt-trim presence. Runtime code owns where the bundle is
+hit counts, storage backend counts, and prompt-trim presence. `StorageBackendTrace`
+deduplicates the backend manifests visible across those components so a runtime
+can audit which state lived in core builtins and which state lived in external
+PG/vector/graph/object-store adapters. Runtime code owns where the bundle is
 stored, how long it is retained, and how it is queried for product observability
 or incident review.
 
