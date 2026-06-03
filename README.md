@@ -426,6 +426,9 @@ calling any concrete model client.
 - `MemoryCenter` and `MemoryPort`.
 - `ExternalMemoryStore` and `MemoryCenter.register_spec()` for runtime-owned
   PG/vector/graph/product memory adapters without adding database drivers to core.
+- `ExternalMemoryCallRecord` for prompt-safe audit of runtime-owned memory
+  adapter search/write calls, including backend kind, query/write manifests,
+  hit counts, status, and errors.
 - `MemoryQuery.mode` for keyword, semantic, vector, graph, and hybrid recall.
 - `MemoryStoreSpec.backend_kind`, namespace, and capability flags for
   Postgres/vector/graph/product stores implemented outside core.
@@ -434,7 +437,8 @@ calling any concrete model client.
 - SQLite memory store.
 - Markdown memory store.
 - Postgres, vector DB, graph, or product memory can implement `MemoryPort`
-  outside core and publish backend metadata through `ExternalMemoryStore`.
+  outside core and publish backend metadata plus call audit through
+  `ExternalMemoryStore`.
 - Runner-level memory recall injection through `ContextInjection`.
 - Memory governance hooks.
 - Leak scanning and global bucket checks.
@@ -641,6 +645,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Capability discovery | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
 | Memory backend routing/specs | MVP implemented |
+| External memory call audit | MVP implemented |
 | Memory governance trace/eval | MVP implemented |
 | Unified storage backend manifests | MVP implemented |
 | Planner core | MVP implemented |

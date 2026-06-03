@@ -129,12 +129,35 @@ class MemoryHit:
     source: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-hit/v1",
+            "content_bytes": len(self.content.encode("utf-8")),
+            "content_sha256": sha256(self.content.encode("utf-8")).hexdigest()
+            if self.content
+            else "",
+            "score": self.score,
+            "source": self.source,
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass(frozen=True)
 class MemoryWrite:
     content: str
     source: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-write/v1",
+            "content_bytes": len(self.content.encode("utf-8")),
+            "content_sha256": sha256(self.content.encode("utf-8")).hexdigest()
+            if self.content
+            else "",
+            "source": self.source,
+            "metadata": dict(self.metadata),
+        }
 
 
 class MemoryPort(Protocol):
@@ -214,6 +237,33 @@ class MemoryStoreSpec:
 class _MemoryStoreMount:
     spec: MemoryStoreSpec
     store: MemoryPort
+
+
+@dataclass(frozen=True)
+class ExternalMemoryCallRecord:
+    operation: Literal["search", "write"]
+    status: Literal["completed", "failed"]
+    store_name: str
+    backend_kind: MemoryBackendKind
+    query: dict[str, Any] = field(default_factory=dict)
+    write: dict[str, Any] = field(default_factory=dict)
+    hit_count: int = 0
+    error: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-external-memory-call-record/v1",
+            "operation": self.operation,
+            "status": self.status,
+            "store_name": self.store_name,
+            "backend_kind": self.backend_kind,
+            "query": dict(self.query),
+            "write": dict(self.write),
+            "hit_count": self.hit_count,
+            "error": self.error,
+            "metadata": dict(self.metadata),
+        }
 
 
 class MemoryStoreNotFoundError(KeyError):
@@ -714,6 +764,7 @@ class ExternalMemoryStore(MemoryPort):
         if not name:
             raise ValueError("external memory store name is required")
         self.adapter = adapter
+        self.calls: list[ExternalMemoryCallRecord] = []
         self._spec = MemoryStoreSpec(
             name=name,
             priority=priority,
@@ -736,10 +787,59 @@ class ExternalMemoryStore(MemoryPort):
         return self._spec
 
     async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
-        return await self.adapter.search(query)
+        try:
+            hits = await self.adapter.search(query)
+        except Exception as exc:
+            self._record_call(
+                ExternalMemoryCallRecord(
+                    operation="search",
+                    status="failed",
+                    store_name=self._spec.name,
+                    backend_kind=self._spec.backend_kind,
+                    query=_memory_query_audit_manifest(query),
+                    error=str(exc),
+                )
+            )
+            raise
+        self._record_call(
+            ExternalMemoryCallRecord(
+                operation="search",
+                status="completed",
+                store_name=self._spec.name,
+                backend_kind=self._spec.backend_kind,
+                query=_memory_query_audit_manifest(query),
+                hit_count=len(hits),
+            )
+        )
+        return hits
 
     async def write(self, item: MemoryWrite) -> None:
-        await self.adapter.write(item)
+        try:
+            await self.adapter.write(item)
+        except Exception as exc:
+            self._record_call(
+                ExternalMemoryCallRecord(
+                    operation="write",
+                    status="failed",
+                    store_name=self._spec.name,
+                    backend_kind=self._spec.backend_kind,
+                    write=item.manifest(),
+                    error=str(exc),
+                )
+            )
+            raise
+        self._record_call(
+            ExternalMemoryCallRecord(
+                operation="write",
+                status="completed",
+                store_name=self._spec.name,
+                backend_kind=self._spec.backend_kind,
+                write=item.manifest(),
+            )
+        )
+
+    def _record_call(self, record: ExternalMemoryCallRecord) -> None:
+        self.calls.append(record)
 
     def manifest(self) -> dict[str, Any]:
         adapter_manifest = getattr(self.adapter, "manifest", None)
@@ -747,6 +847,8 @@ class ExternalMemoryStore(MemoryPort):
             "schema_version": "agent-core-external-memory-store/v1",
             "backend_kind": self._spec.backend_kind,
             "store": self._spec.manifest(),
+            "call_count": len(self.calls),
+            "calls": [call.manifest() for call in self.calls],
             "adapter": adapter_manifest() if callable(adapter_manifest) else {},
         }
 
@@ -1042,6 +1144,24 @@ def _store_supports_route(spec: MemoryStoreSpec, route: MemoryRoute) -> bool:
     if mode == "hybrid":
         return spec.supports_keyword or spec.supports_semantic or spec.supports_vector or spec.supports_graph
     return True
+
+
+def _memory_query_audit_manifest(query: MemoryQuery) -> dict[str, Any]:
+    return {
+        "schema_version": "agent-core-memory-query-audit/v1",
+        "query_bytes": len(query.query.encode("utf-8")),
+        "query_sha256": sha256(query.query.encode("utf-8")).hexdigest()
+        if query.query
+        else "",
+        "limit": query.limit,
+        "filters": dict(query.filters),
+        "mode": query.mode,
+        "namespace": query.namespace,
+        "has_vector": bool(query.vector),
+        "vector_dimensions": len(query.vector),
+        "entities": list(query.entities),
+        "min_score": query.min_score,
+    }
 
 
 def _infer_memory_backend_kind(store: MemoryPort) -> MemoryBackendKind:

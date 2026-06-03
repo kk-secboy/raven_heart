@@ -37,6 +37,14 @@ class _RecordingMemoryStore:
         self.writes.append(item)
 
 
+class _FailingMemoryStore:
+    async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
+        raise RuntimeError("memory search failed")
+
+    async def write(self, item: MemoryWrite) -> None:
+        raise RuntimeError("memory write failed")
+
+
 @pytest.mark.asyncio
 async def test_sqlite_memory_store_writes_searches_filters_and_persists(tmp_path) -> None:
     path = tmp_path / "memory.sqlite"
@@ -370,7 +378,7 @@ async def test_external_memory_store_wraps_runtime_pg_adapter_with_manifest() ->
     await center.write(MemoryWrite(content="remember this", metadata={"store": "tenant-pg"}))
     hits = await center.search(
         MemoryQuery(
-            query="tenant",
+            query="private lookup",
             mode="vector",
             namespace="tenant-a",
             vector=(0.1, 0.2),
@@ -395,7 +403,42 @@ async def test_external_memory_store_wraps_runtime_pg_adapter_with_manifest() ->
     assert "graph" in manifest["backend"]["capabilities"]
     assert external_manifest["schema_version"] == "agent-core-external-memory-store/v1"
     assert external_manifest["store"]["name"] == "tenant-pg"
+    assert external_manifest["call_count"] == 2
+    assert [call["operation"] for call in external_manifest["calls"]] == ["write", "search"]
+    assert external_manifest["calls"][0]["write"]["content_bytes"] == len("remember this")
+    assert external_manifest["calls"][0]["write"]["content_sha256"]
+    assert "remember this" not in str(external_manifest)
+    assert external_manifest["calls"][1]["query"]["mode"] == "vector"
+    assert external_manifest["calls"][1]["query"]["query_bytes"] == len("private lookup")
+    assert external_manifest["calls"][1]["query"]["query_sha256"]
+    assert external_manifest["calls"][1]["hit_count"] == 1
+    assert "private lookup" not in str(external_manifest)
     assert external_manifest["adapter"] == {}
+
+
+@pytest.mark.asyncio
+async def test_external_memory_store_records_failed_runtime_adapter_calls() -> None:
+    external = ExternalMemoryStore(
+        _FailingMemoryStore(),
+        name="tenant-pg",
+        backend_kind="postgres",
+        location="postgres://memory",
+    )
+
+    with pytest.raises(RuntimeError):
+        await external.search(MemoryQuery(query="private lookup"))
+    with pytest.raises(RuntimeError):
+        await external.write(MemoryWrite(content="secret write"))
+
+    manifest = external.manifest()
+    assert manifest["call_count"] == 2
+    assert [call["status"] for call in manifest["calls"]] == ["failed", "failed"]
+    assert manifest["calls"][0]["operation"] == "search"
+    assert manifest["calls"][0]["error"] == "memory search failed"
+    assert "private lookup" not in str(manifest)
+    assert manifest["calls"][1]["operation"] == "write"
+    assert manifest["calls"][1]["error"] == "memory write failed"
+    assert "secret write" not in str(manifest)
 
 
 def test_memory_center_register_spec_requires_named_store() -> None:

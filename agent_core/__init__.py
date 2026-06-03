@@ -130,6 +130,7 @@ from agent_core.harness import (
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig, LoopGuardDecision
 from agent_core.memory import (
     AllowAllMemoryGovernance,
+    ExternalMemoryCallRecord,
     ExternalMemoryStore,
     InMemoryMemoryStore,
     MarkdownMemoryStore,
@@ -427,6 +428,7 @@ __all__ = [
     "EventLogPort",
     "EventStreamBatch",
     "EventStreamCursor",
+    "ExternalMemoryCallRecord",
     "ExternalMemoryStore",
     "HandoffDecision",
     "HandoffDecisionStatus",

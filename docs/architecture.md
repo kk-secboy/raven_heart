@@ -292,6 +292,10 @@ graph/RAG, or product-memory adapters with the same manifest shape as SDK-local
 stores without importing their drivers. This lets a runtime mount external
 memory adapters without changing runner/ReAct code, while the SDK still records
 a prompt-safe route and query plan for trace/replay.
+External memory adapters also emit `ExternalMemoryCallRecord` manifests for
+search and write calls. These records capture backend kind, status, errors,
+hit counts, query manifests, and write content hashes/byte counts without
+requiring a Postgres, vector DB, or graph driver inside `agent_core`.
 
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; inspectable or local durable runs can use
