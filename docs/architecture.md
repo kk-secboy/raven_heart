@@ -77,12 +77,13 @@ manifests. The SDK owns the shape and summary counters. Runtime code owns where
 the bundle is stored, how long it is retained, and how it is queried for product
 observability or incident review.
 
-`TraceReplayHarness` and `TraceEvalHarness` turn run trace manifests into
-deterministic replay steps and provider-neutral evaluation reports. The core
-checks generic contracts such as final status, iteration limits, provider call
-limits, required events, required tools, cost ceilings, and journal integrity.
-Runtime code owns domain-specific eval datasets, scoring policy, dashboards, and
-release gates.
+`TraceReplayHarness`, `TraceReplayComparator`, and `TraceEvalHarness` turn run
+trace manifests into deterministic replay steps, baseline diff reports, and
+provider-neutral evaluation reports. The core checks generic contracts such as
+final status, iteration limits, provider call limits, required events, required
+tools, cost ceilings, event ordering, and journal integrity. Runtime code owns
+domain-specific eval datasets, baseline selection, scoring policy, dashboards,
+and release gates.
 
 `AgentRunStorePort` persists manager-level run state such as queued, running,
 cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,

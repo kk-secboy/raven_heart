@@ -8,6 +8,8 @@ from agent_core.evals import (
     DefaultTraceEvaluator,
     TraceEvalHarness,
     TraceEvalSpec,
+    TraceReplayComparator,
+    TraceReplayDiffSpec,
     TraceReplayHarness,
 )
 from agent_core.runner import AgentRunner, AgentSession
@@ -133,6 +135,75 @@ def test_default_trace_evaluator_reports_contract_failures() -> None:
         "missing_tool_name",
         "forbidden_event_type",
     } <= codes
+
+
+def test_trace_replay_comparator_accepts_matching_trace() -> None:
+    trace = _trace_manifest()
+    report = TraceReplayComparator().compare(trace, trace)
+
+    assert report.ok
+    assert report.summary["baseline_step_count"] == 4
+    assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
+    assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
+
+
+def test_trace_replay_comparator_reports_ordered_differences() -> None:
+    baseline = _trace_manifest()
+    actual = _trace_manifest()
+    actual["run"] = {**actual["run"], "status": "failed"}
+    actual["summary"] = {**actual["summary"], "provider_call_count": 3}
+    actual["event_log"] = {
+        **actual["event_log"],
+        "events": [
+            {"type": "tool_finished", "run_id": "run-2", "payload": {"tool_name": "lookup"}},
+            {"type": "tool_started", "run_id": "run-2", "payload": {"tool_name": "lookup"}},
+        ],
+    }
+
+    report = TraceReplayComparator().compare(baseline, actual)
+    codes = [issue.code for issue in report.issues]
+
+    assert not report.ok
+    assert "run_field_mismatch" in codes
+    assert "summary_mismatch" in codes
+    assert "step_mismatch" in codes
+    assert report.issues[-1].index == 3
+    assert report.summary["actual_event_types"] == [
+        "run_started",
+        "run_finished",
+        "tool_finished",
+        "tool_started",
+    ]
+
+
+def test_trace_replay_comparator_can_ignore_order_and_payloads() -> None:
+    baseline = _trace_manifest()
+    actual = _trace_manifest()
+    actual["event_log"] = {
+        **actual["event_log"],
+        "events": [
+            {"type": "tool_finished", "run_id": "run-2", "payload": {"tool_name": "other"}},
+            {"type": "tool_started", "run_id": "run-2", "payload": {"tool_name": "other"}},
+        ],
+    }
+
+    unordered = TraceReplayComparator().compare(
+        baseline,
+        actual,
+        TraceReplayDiffSpec(compare_event_order=False),
+    )
+    with_payloads = TraceReplayComparator().compare(
+        baseline,
+        actual,
+        TraceReplayDiffSpec(compare_event_order=False, compare_payloads=True),
+    )
+
+    assert unordered.ok
+    assert not with_payloads.ok
+    assert {issue.code for issue in with_payloads.issues} == {
+        "missing_step_count",
+        "unexpected_step_count",
+    }
 
 
 @pytest.mark.asyncio

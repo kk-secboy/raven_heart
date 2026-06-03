@@ -167,15 +167,18 @@ and downstream persistence.
 
 - `TraceReplayHarness` builds a deterministic replay timeline from journal and
   event-log trace manifests.
+- `TraceReplayComparator` compares two trace manifests and reports deterministic
+  replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
   iteration limits, provider call limits, required events, and required tools.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
 
-The SDK owns trace replay shape and generic run-level evaluation mechanics.
-Runtimes own domain-specific eval suites, product dashboards, scoring policy,
-and regression data retention.
+The SDK owns trace replay shape, deterministic trace diffs, and generic
+run-level evaluation mechanics. Runtimes own domain-specific eval suites,
+baseline selection, product dashboards, scoring policy, and regression data
+retention.
 
 ### Human-In-Loop Approvals
 

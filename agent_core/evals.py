@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -114,6 +116,87 @@ class TraceEvalReport:
             "issue_count": len(self.issues),
             "issues": [issue.manifest() for issue in self.issues],
             "replay": dict(self.replay),
+            "summary": dict(self.summary),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class TraceReplayDiffSpec:
+    name: str = "trace-replay-diff"
+    compare_run_fields: tuple[str, ...] = ("status", "iterations")
+    compare_summary_keys: tuple[str, ...] = (
+        "provider_call_count",
+        "tool_replay_record_count",
+        "policy_decision_record_count",
+        "approval_record_count",
+        "event_log_count",
+    )
+    compare_event_order: bool = True
+    compare_sources: bool = True
+    compare_payloads: bool = False
+    ignore_event_types: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-trace-replay-diff-spec/v1",
+            "name": self.name,
+            "compare_run_fields": list(self.compare_run_fields),
+            "compare_summary_keys": list(self.compare_summary_keys),
+            "compare_event_order": self.compare_event_order,
+            "compare_sources": self.compare_sources,
+            "compare_payloads": self.compare_payloads,
+            "ignore_event_types": list(self.ignore_event_types),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class TraceReplayDiffIssue:
+    severity: EvalSeverity
+    code: str
+    message: str
+    index: int | None = None
+    expected: dict[str, Any] = field(default_factory=dict)
+    actual: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "severity": self.severity,
+            "code": self.code,
+            "message": self.message,
+            "index": self.index,
+            "expected": dict(self.expected),
+            "actual": dict(self.actual),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class TraceReplayDiffReport:
+    baseline_run_id: str
+    actual_run_id: str
+    spec_name: str
+    ok: bool
+    issues: tuple[TraceReplayDiffIssue, ...] = ()
+    baseline_replay: dict[str, Any] = field(default_factory=dict)
+    actual_replay: dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-trace-replay-diff-report/v1",
+            "baseline_run_id": self.baseline_run_id,
+            "actual_run_id": self.actual_run_id,
+            "spec_name": self.spec_name,
+            "ok": self.ok,
+            "issue_count": len(self.issues),
+            "issues": [issue.manifest() for issue in self.issues],
+            "baseline_replay": dict(self.baseline_replay),
+            "actual_replay": dict(self.actual_replay),
             "summary": dict(self.summary),
             "metadata": dict(self.metadata),
         }
@@ -261,6 +344,183 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         return {"schema_version": "agent-core-default-trace-evaluator/v1"}
 
 
+class TraceReplayComparator:
+    """Compare two run trace manifests through their deterministic replay shape."""
+
+    def __init__(self, replay_harness: TraceReplayHarness | None = None) -> None:
+        self.replay_harness = replay_harness or TraceReplayHarness()
+
+    def compare(
+        self,
+        baseline: dict[str, Any],
+        actual: dict[str, Any],
+        spec: TraceReplayDiffSpec | None = None,
+    ) -> TraceReplayDiffReport:
+        spec = spec or TraceReplayDiffSpec()
+        baseline_replay = self.replay_harness.replay(baseline)
+        actual_replay = self.replay_harness.replay(actual)
+        issues: list[TraceReplayDiffIssue] = []
+
+        self._compare_run_fields(baseline, actual, spec, issues)
+        self._compare_summary(baseline, actual, spec, issues)
+        self._compare_steps(baseline_replay, actual_replay, spec, issues)
+
+        baseline_steps = _filtered_steps(baseline_replay.steps, spec.ignore_event_types)
+        actual_steps = _filtered_steps(actual_replay.steps, spec.ignore_event_types)
+        return TraceReplayDiffReport(
+            baseline_run_id=baseline_replay.run_id,
+            actual_run_id=actual_replay.run_id,
+            spec_name=spec.name,
+            ok=not any(issue.severity == "error" for issue in issues),
+            issues=tuple(issues),
+            baseline_replay=baseline_replay.manifest(),
+            actual_replay=actual_replay.manifest(),
+            summary={
+                "baseline_step_count": len(baseline_steps),
+                "actual_step_count": len(actual_steps),
+                "baseline_event_types": [step.event_type for step in baseline_steps],
+                "actual_event_types": [step.event_type for step in actual_steps],
+            },
+            metadata={"spec": spec.manifest()},
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {"schema_version": "agent-core-trace-replay-comparator/v1"}
+
+    def _compare_run_fields(
+        self,
+        baseline: dict[str, Any],
+        actual: dict[str, Any],
+        spec: TraceReplayDiffSpec,
+        issues: list[TraceReplayDiffIssue],
+    ) -> None:
+        expected_run = baseline.get("run") if isinstance(baseline.get("run"), dict) else {}
+        actual_run = actual.get("run") if isinstance(actual.get("run"), dict) else {}
+        for field_name in spec.compare_run_fields:
+            expected_value = expected_run.get(field_name)
+            actual_value = actual_run.get(field_name)
+            if expected_value == actual_value:
+                continue
+            issues.append(
+                TraceReplayDiffIssue(
+                    "error",
+                    "run_field_mismatch",
+                    f"run field differs: {field_name}",
+                    expected={field_name: expected_value},
+                    actual={field_name: actual_value},
+                )
+            )
+
+    def _compare_summary(
+        self,
+        baseline: dict[str, Any],
+        actual: dict[str, Any],
+        spec: TraceReplayDiffSpec,
+        issues: list[TraceReplayDiffIssue],
+    ) -> None:
+        expected_summary = baseline.get("summary") if isinstance(baseline.get("summary"), dict) else {}
+        actual_summary = actual.get("summary") if isinstance(actual.get("summary"), dict) else {}
+        for key in spec.compare_summary_keys:
+            expected_value = expected_summary.get(key)
+            actual_value = actual_summary.get(key)
+            if expected_value == actual_value:
+                continue
+            issues.append(
+                TraceReplayDiffIssue(
+                    "error",
+                    "summary_mismatch",
+                    f"summary counter differs: {key}",
+                    expected={key: expected_value},
+                    actual={key: actual_value},
+                )
+            )
+
+    def _compare_steps(
+        self,
+        baseline_replay: TraceReplayResult,
+        actual_replay: TraceReplayResult,
+        spec: TraceReplayDiffSpec,
+        issues: list[TraceReplayDiffIssue],
+    ) -> None:
+        expected_steps = _filtered_steps(baseline_replay.steps, spec.ignore_event_types)
+        actual_steps = _filtered_steps(actual_replay.steps, spec.ignore_event_types)
+        if spec.compare_event_order:
+            self._compare_ordered_steps(expected_steps, actual_steps, spec, issues)
+            return
+        expected_counts = Counter(_step_signature(step, spec) for step in expected_steps)
+        actual_counts = Counter(_step_signature(step, spec) for step in actual_steps)
+        for signature, count in sorted((expected_counts - actual_counts).items()):
+            issues.append(
+                TraceReplayDiffIssue(
+                    "error",
+                    "missing_step_count",
+                    f"replay step count is missing: {signature}",
+                    expected={"signature": list(signature), "count": count},
+                    actual={"count": actual_counts.get(signature, 0)},
+                )
+            )
+        for signature, count in sorted((actual_counts - expected_counts).items()):
+            issues.append(
+                TraceReplayDiffIssue(
+                    "error",
+                    "unexpected_step_count",
+                    f"replay step count is unexpected: {signature}",
+                    expected={"count": expected_counts.get(signature, 0)},
+                    actual={"signature": list(signature), "count": count},
+                )
+            )
+
+    def _compare_ordered_steps(
+        self,
+        expected_steps: tuple[TraceReplayStep, ...],
+        actual_steps: tuple[TraceReplayStep, ...],
+        spec: TraceReplayDiffSpec,
+        issues: list[TraceReplayDiffIssue],
+    ) -> None:
+        max_len = max(len(expected_steps), len(actual_steps))
+        for index in range(max_len):
+            expected = expected_steps[index] if index < len(expected_steps) else None
+            actual = actual_steps[index] if index < len(actual_steps) else None
+            if expected is None and actual is not None:
+                issues.append(
+                    TraceReplayDiffIssue(
+                        "error",
+                        "unexpected_step",
+                        "actual replay has an extra step",
+                        index=index,
+                        actual=_step_comparison_manifest(actual, spec),
+                    )
+                )
+                continue
+            if actual is None and expected is not None:
+                issues.append(
+                    TraceReplayDiffIssue(
+                        "error",
+                        "missing_step",
+                        "actual replay is missing a step",
+                        index=index,
+                        expected=_step_comparison_manifest(expected, spec),
+                    )
+                )
+                continue
+            if expected is None or actual is None:
+                continue
+            expected_manifest = _step_comparison_manifest(expected, spec)
+            actual_manifest = _step_comparison_manifest(actual, spec)
+            if expected_manifest == actual_manifest:
+                continue
+            issues.append(
+                TraceReplayDiffIssue(
+                    "error",
+                    "step_mismatch",
+                    "replay step differs",
+                    index=index,
+                    expected=expected_manifest,
+                    actual=actual_manifest,
+                )
+            )
+
+
 class TraceEvalHarness:
     """Evaluate stored run traces without depending on a runtime."""
 
@@ -329,6 +589,53 @@ def _event_log_events(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 def _payload(item: dict[str, Any]) -> dict[str, Any]:
     payload = item.get("payload")
     return dict(payload) if isinstance(payload, dict) else dict(item)
+
+
+def _filtered_steps(
+    steps: tuple[TraceReplayStep, ...],
+    ignore_event_types: tuple[str, ...],
+) -> tuple[TraceReplayStep, ...]:
+    ignored = set(ignore_event_types)
+    return tuple(step for step in steps if step.event_type not in ignored)
+
+
+def _step_comparison_manifest(step: TraceReplayStep, spec: TraceReplayDiffSpec) -> dict[str, Any]:
+    manifest: dict[str, Any] = {"event_type": step.event_type}
+    if spec.compare_sources:
+        manifest["source"] = step.source
+    if spec.compare_payloads:
+        manifest["payload"] = _stable_payload(step.payload)
+    return manifest
+
+
+def _step_signature(step: TraceReplayStep, spec: TraceReplayDiffSpec) -> tuple[str, ...]:
+    parts = [step.event_type]
+    if spec.compare_sources:
+        parts.append(step.source)
+    if spec.compare_payloads:
+        parts.append(json.dumps(_stable_payload(step.payload), ensure_ascii=False, sort_keys=True))
+    return tuple(parts)
+
+
+def _stable_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return _json_safe_dict(payload)
+
+
+def _json_safe_dict(value: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, item in sorted(value.items(), key=lambda pair: str(pair[0])):
+        safe[str(key)] = _json_safe(item)
+    return safe
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _json_safe_dict(value)
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _provider_cost(provider: dict[str, Any]) -> float:
