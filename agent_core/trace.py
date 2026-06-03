@@ -236,6 +236,7 @@ class TraceCorrelationIndex:
         run_id: str,
         journal_replay: dict[str, Any] | None = None,
         provider: dict[str, Any] | None = None,
+        embedding: dict[str, Any] | None = None,
         tool_replay: dict[str, Any] | None = None,
         policy_decisions: dict[str, Any] | None = None,
         approvals: dict[str, Any] | None = None,
@@ -245,6 +246,7 @@ class TraceCorrelationIndex:
         entries: list[TraceCorrelationEntry] = []
         entries.extend(_correlate_journal(run_id, journal_replay or {}))
         entries.extend(_correlate_provider(run_id, provider or {}))
+        entries.extend(_correlate_embedding(run_id, embedding or {}))
         entries.extend(_correlate_tool_replay(run_id, tool_replay or {}))
         entries.extend(_correlate_policy_decisions(run_id, policy_decisions or {}))
         entries.extend(_correlate_approvals(run_id, approvals or {}))
@@ -283,6 +285,7 @@ class AgentRunTraceBundle:
     prompt: dict[str, Any] = field(default_factory=dict)
     journal_replay: dict[str, Any] = field(default_factory=dict)
     provider: dict[str, Any] = field(default_factory=dict)
+    embedding: dict[str, Any] = field(default_factory=dict)
     tool_replay: dict[str, Any] = field(default_factory=dict)
     policy_decisions: dict[str, Any] = field(default_factory=dict)
     approvals: dict[str, Any] = field(default_factory=dict)
@@ -303,6 +306,7 @@ class AgentRunTraceBundle:
         storage_backends = self.storage_backends or StorageBackendTrace.from_trace_components(
             session=self.session,
             provider=self.provider,
+            embedding=self.embedding,
             tool_replay=self.tool_replay,
             policy_decisions=self.policy_decisions,
             approvals=self.approvals,
@@ -320,6 +324,7 @@ class AgentRunTraceBundle:
             run_id=self.run_id,
             journal_replay=self.journal_replay,
             provider=self.provider,
+            embedding=self.embedding,
             tool_replay=self.tool_replay,
             policy_decisions=self.policy_decisions,
             approvals=self.approvals,
@@ -338,6 +343,7 @@ class AgentRunTraceBundle:
                 "journal_ok": journal_ok,
                 "journal_event_count": int(self.journal_replay.get("event_count") or 0),
                 "provider_call_count": int(self.provider.get("call_count") or 0),
+                "embedding_call_count": int(self.embedding.get("call_count") or 0),
                 "tool_replay_record_count": int(self.tool_replay.get("record_count") or 0),
                 "policy_decision_record_count": int(self.policy_decisions.get("record_count") or 0),
                 "approval_record_count": int(self.approvals.get("record_count") or 0),
@@ -386,6 +392,7 @@ class AgentRunTraceBundle:
             "prompt": dict(self.prompt),
             "journal_replay": dict(self.journal_replay),
             "provider": dict(self.provider),
+            "embedding": dict(self.embedding),
             "tool_replay": dict(self.tool_replay),
             "policy_decisions": dict(self.policy_decisions),
             "approvals": dict(self.approvals),
@@ -672,6 +679,7 @@ class MarkdownRunTraceStore(RunTraceStorePort):
             lines.append(f"- run_id: `{summary['run_id']}`")
             lines.append(f"- status: `{summary['status']}`")
             lines.append(f"- provider_calls: `{summary['provider_call_count']}`")
+            lines.append(f"- embedding_calls: `{summary['embedding_call_count']}`")
             lines.append("")
         self.path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -952,6 +960,33 @@ def _correlate_provider(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCor
     return tuple(entries)
 
 
+def _correlate_embedding(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorrelationEntry, ...]:
+    entries = []
+    for index, call in enumerate(_dict_items(manifest.get("calls")), start=1):
+        metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
+        request = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
+        request_metadata = request.get("metadata") if isinstance(request.get("metadata"), dict) else {}
+        provider_name = str(call.get("provider_name") or "")
+        model = str(call.get("model") or "")
+        entries.append(
+            TraceCorrelationEntry(
+                source="embedding",
+                kind="embedding_call",
+                run_id=str(request_metadata.get("run_id") or run_id),
+                turn_id=str(request_metadata.get("turn_id") or ""),
+                sequence=index,
+                status=str(call.get("status") or ""),
+                metadata={
+                    "provider_name": provider_name,
+                    "model": model,
+                    "input_count": int(call.get("input_count") or 0),
+                    "dimensions": int(call.get("dimensions") or 0),
+                },
+            )
+        )
+    return tuple(entries)
+
+
 def _correlate_tool_replay(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorrelationEntry, ...]:
     entries = []
     for record in _dict_items(manifest.get("records")):
@@ -1156,6 +1191,7 @@ def _trace_record_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "status": str(run.get("status") or ""),
         "iterations": int(run.get("iterations") or 0),
         "provider_call_count": int(summary.get("provider_call_count") or 0),
+        "embedding_call_count": int(summary.get("embedding_call_count") or 0),
         "tool_replay_record_count": int(summary.get("tool_replay_record_count") or 0),
         "policy_decision_record_count": int(summary.get("policy_decision_record_count") or 0),
         "approval_record_count": int(summary.get("approval_record_count") or 0),

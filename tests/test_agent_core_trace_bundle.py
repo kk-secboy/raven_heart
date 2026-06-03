@@ -224,6 +224,46 @@ def test_trace_correlation_index_cross_references_trace_materials() -> None:
     assert manifest["groups"]["policy_decisions"]["decision-1"]
 
 
+def test_trace_bundle_summarizes_and_correlates_embedding_calls() -> None:
+    bundle = AgentRunTraceBundle(
+        run_id="run-1",
+        status="completed",
+        embedding={
+            "schema_version": "agent-core-embedding-provider-center/v1",
+            "call_count": 1,
+            "calls": [
+                {
+                    "provider_name": "local",
+                    "model": "embed-small",
+                    "input_count": 3,
+                    "dimensions": 64,
+                    "status": "completed",
+                    "metadata": {
+                        "request": {
+                            "schema_version": "agent-core-embedding-request/v1",
+                            "model": "embed-small",
+                            "dimensions": 64,
+                            "input_count": 3,
+                            "metadata": {"run_id": "run-1", "turn_id": "turn-1"},
+                        }
+                    },
+                }
+            ],
+        },
+    )
+
+    manifest = bundle.manifest()
+
+    assert manifest["summary"]["embedding_call_count"] == 1
+    assert manifest["embedding"]["calls"][0]["provider_name"] == "local"
+    assert manifest["correlation"]["entry_count"] == 1
+    entry = manifest["correlation"]["entries"][0]
+    assert entry["source"] == "embedding"
+    assert entry["kind"] == "embedding_call"
+    assert entry["turn_id"] == "turn-1"
+    assert entry["metadata"]["dimensions"] == 64
+
+
 def test_storage_backend_trace_collects_and_deduplicates_component_backends() -> None:
     memory_backend = storage_backend_manifest(
         role="memory",

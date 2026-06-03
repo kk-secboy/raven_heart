@@ -36,7 +36,7 @@ ops agents, research agents, and future automation systems.
 - Journal replay manifests and snapshot consistency audit.
 - Run trace bundle for provider/tool/approval/journal/event audit aggregation.
 - Run trace store port plus in-memory, SQLite, and Markdown trace stores.
-- Trace replay and evaluation harness for provider-neutral run audits.
+- Trace replay and evaluation harness for provider-neutral run and embedding audits.
 - Manager run state store port plus in-memory, SQLite, and Markdown stores.
 - Sequenced event stream plus in-memory, SQLite, and Markdown event logs.
 - Planner protocol plus in-memory, SQLite, and Markdown plan state stores.
@@ -214,12 +214,13 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 
 - `TraceReplayHarness` builds a deterministic replay timeline from journal,
   event-log, and provider call manifests, including resume-plan,
-  checkpoint-loaded, provider-call, and provider-stream steps.
+  checkpoint-loaded, provider-call, provider-stream, and embedding-call steps.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
   iteration limits, provider call limits, required provider names/models,
   required provider model capabilities, provider stream event contracts,
+  embedding call limits, required embedding providers/models/dimensions,
   required events, required tools, resume-plan presence, resume-plan readiness,
   expected checkpoint id, tool execution presence, tool retry, tool schema
   validation, minimum tool attempt counts, and storage backend, context
@@ -281,6 +282,8 @@ reducer while keeping the same core contract.
 - `EmbeddingProviderCenter` for provider-neutral embedding routing and call audit.
 - `EmbeddingRequest`, `EmbeddingResponse`, `EmbeddingVector`, and
   `EmbeddingRoute` manifests.
+- Embedding call manifests can be attached to run traces and evaluated/replayed
+  with the same provider-neutral harness as LLM calls.
 - `DeterministicEmbeddingProvider` for dependency-free tests and lightweight
   local semantic ranking.
 - `rank_semantic_documents()` for embedding-backed ranking over SDK search documents.
@@ -575,6 +578,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider model capabilities | MVP implemented |
 | Embedding provider center | MVP implemented |
 | Semantic ranking contract | MVP implemented |
+| Embedding trace/eval contracts | MVP implemented |
 | Schema validation contracts | MVP implemented |
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |

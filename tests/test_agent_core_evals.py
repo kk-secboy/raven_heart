@@ -440,6 +440,99 @@ def test_trace_replay_harness_includes_provider_stream_steps() -> None:
     assert provider_steps[1].payload["stream_summary"]["event_types"] == ["delta", "message_end"]
 
 
+def test_trace_eval_validates_embedding_provider_contracts() -> None:
+    trace = {
+        **_trace_manifest(),
+        "summary": {**_trace_manifest()["summary"], "embedding_call_count": 1},
+        "embedding": {
+            "schema_version": "agent-core-embedding-provider-center/v1",
+            "call_count": 1,
+            "calls": [
+                {
+                    "provider_name": "local",
+                    "model": "embed-small",
+                    "input_count": 2,
+                    "dimensions": 32,
+                    "status": "completed",
+                    "metadata": {
+                        "request": {
+                            "schema_version": "agent-core-embedding-request/v1",
+                            "model": "embed-small",
+                            "dimensions": 32,
+                            "input_count": 2,
+                            "metadata": {"run_id": "run-1", "turn_id": "turn-1"},
+                        }
+                    },
+                }
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_embedding_calls=True,
+            max_embedding_calls=1,
+            required_embedding_provider_names=("local",),
+            required_embedding_models=("embed-small",),
+            required_embedding_dimensions=(32,),
+            required_event_types=("embedding_call_completed",),
+        ),
+    )
+    replay = TraceReplayHarness().replay(trace)
+    embedding_steps = [step for step in replay.steps if step.source == "embedding"]
+
+    assert report.ok
+    assert report.summary["embedding_call_count"] == 1
+    assert report.summary["embedding_provider_names"] == ["local"]
+    assert report.summary["embedding_models"] == ["embed-small"]
+    assert report.summary["embedding_dimensions"] == [32]
+    assert embedding_steps[0].event_type == "embedding_call_completed"
+    assert embedding_steps[0].payload["request_input_count"] == 2
+
+
+def test_trace_eval_reports_embedding_contract_failures() -> None:
+    trace = {
+        **_trace_manifest(),
+        "summary": {**_trace_manifest()["summary"], "embedding_call_count": 1},
+        "embedding": {
+            "call_count": 1,
+            "calls": [
+                {
+                    "provider_name": "local",
+                    "model": "embed-small",
+                    "input_count": 1,
+                    "dimensions": 16,
+                    "status": "failed",
+                }
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            max_embedding_calls=0,
+            required_embedding_provider_names=("remote",),
+            required_embedding_models=("embed-large",),
+            required_embedding_dimensions=(32,),
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(require_embedding_calls=True),
+    )
+
+    assert not report.ok
+    assert {
+        "embedding_calls_exceeded",
+        "missing_embedding_provider_name",
+        "missing_embedding_model",
+        "missing_embedding_dimensions",
+    } <= {issue.code for issue in report.issues}
+    assert {issue.code for issue in missing.issues} == {"embedding_calls_missing"}
+
+
 def test_trace_eval_reports_provider_stream_contract_failures() -> None:
     trace = {
         **_trace_manifest(),

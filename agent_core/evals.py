@@ -74,6 +74,7 @@ class TraceEvalSpec:
     expected_status: str = ""
     max_iterations: int | None = None
     max_provider_calls: int | None = None
+    max_embedding_calls: int | None = None
     max_cost_usd: float | None = None
     required_provider_names: tuple[str, ...] = ()
     required_provider_models: tuple[str, ...] = ()
@@ -84,6 +85,10 @@ class TraceEvalSpec:
     required_provider_stream_event_types: tuple[str, ...] = ()
     forbidden_provider_stream_event_types: tuple[str, ...] = ()
     max_provider_stream_errors: int | None = None
+    required_embedding_provider_names: tuple[str, ...] = ()
+    required_embedding_models: tuple[str, ...] = ()
+    required_embedding_dimensions: tuple[int, ...] = ()
+    require_embedding_calls: bool = False
     require_journal_ok: bool = True
     require_resume: bool = False
     require_resume_plan: bool = False
@@ -137,6 +142,7 @@ class TraceEvalSpec:
             "expected_status": self.expected_status,
             "max_iterations": self.max_iterations,
             "max_provider_calls": self.max_provider_calls,
+            "max_embedding_calls": self.max_embedding_calls,
             "max_cost_usd": self.max_cost_usd,
             "required_provider_names": list(self.required_provider_names),
             "required_provider_models": list(self.required_provider_models),
@@ -155,6 +161,10 @@ class TraceEvalSpec:
                 self.forbidden_provider_stream_event_types
             ),
             "max_provider_stream_errors": self.max_provider_stream_errors,
+            "required_embedding_provider_names": list(self.required_embedding_provider_names),
+            "required_embedding_models": list(self.required_embedding_models),
+            "required_embedding_dimensions": list(self.required_embedding_dimensions),
+            "require_embedding_calls": self.require_embedding_calls,
             "require_journal_ok": self.require_journal_ok,
             "require_resume": self.require_resume,
             "require_resume_plan": self.require_resume_plan,
@@ -241,6 +251,7 @@ class TraceReplayDiffSpec:
     compare_run_fields: tuple[str, ...] = ("status", "iterations")
     compare_summary_keys: tuple[str, ...] = (
         "provider_call_count",
+        "embedding_call_count",
         "tool_replay_record_count",
         "policy_decision_record_count",
         "approval_record_count",
@@ -383,6 +394,17 @@ class TraceReplayHarness:
                     payload=_provider_call_replay_payload(item),
                 )
             )
+        embedding = trace.get("embedding") if isinstance(trace.get("embedding"), dict) else {}
+        for item in _embedding_call_records(embedding):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="embedding",
+                    event_type=_embedding_replay_event_type(item),
+                    run_id=run_id,
+                    payload=_embedding_call_replay_payload(item),
+                )
+            )
         return TraceReplayResult(
             run_id=run_id,
             steps=tuple(steps),
@@ -401,9 +423,14 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         run = trace.get("run") if isinstance(trace.get("run"), dict) else {}
         summary = trace.get("summary") if isinstance(trace.get("summary"), dict) else {}
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
+        embedding = trace.get("embedding") if isinstance(trace.get("embedding"), dict) else {}
         provider_call_records = _provider_call_records(provider)
+        embedding_call_records = _embedding_call_records(embedding)
         provider_names = _provider_call_values(provider_call_records, "provider_name")
         provider_models = _provider_call_values(provider_call_records, "model")
+        embedding_provider_names = _embedding_call_values(embedding_call_records, "provider_name")
+        embedding_models = _embedding_call_values(embedding_call_records, "model")
+        embedding_dimensions = _embedding_call_dimensions(embedding_call_records)
         provider_model_capability_manifests = _provider_model_capability_manifests(
             provider_call_records
         )
@@ -495,6 +522,50 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     f"provider calls {provider_calls} exceeded limit {spec.max_provider_calls}",
                 )
             )
+        embedding_calls = int(summary.get("embedding_call_count") or len(embedding_call_records))
+        if spec.require_embedding_calls and not embedding_calls:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "embedding_calls_missing",
+                    "embedding calls are required",
+                )
+            )
+        if spec.max_embedding_calls is not None and embedding_calls > spec.max_embedding_calls:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "embedding_calls_exceeded",
+                    f"embedding calls {embedding_calls} exceeded limit {spec.max_embedding_calls}",
+                )
+            )
+        for provider_name in spec.required_embedding_provider_names:
+            if provider_name not in embedding_provider_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_embedding_provider_name",
+                        f"required embedding provider missing: {provider_name}",
+                    )
+                )
+        for model in spec.required_embedding_models:
+            if model not in embedding_models:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_embedding_model",
+                        f"required embedding model missing: {model}",
+                    )
+                )
+        for dimensions in spec.required_embedding_dimensions:
+            if int(dimensions) not in embedding_dimensions:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_embedding_dimensions",
+                        f"required embedding dimensions missing: {dimensions}",
+                    )
+                )
         cost = _provider_cost(provider)
         if spec.max_cost_usd is not None and cost > spec.max_cost_usd:
             issues.append(
@@ -1060,6 +1131,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "status": status,
                 "iterations": iterations,
                 "provider_call_count": provider_calls,
+                "embedding_call_count": embedding_calls,
+                "embedding_provider_names": sorted(embedding_provider_names),
+                "embedding_models": sorted(embedding_models),
+                "embedding_dimensions": sorted(embedding_dimensions),
                 "provider_names": sorted(provider_names),
                 "provider_models": sorted(provider_models),
                 "provider_model_capability_count": len(provider_model_capability_manifests),
@@ -1458,6 +1533,41 @@ def _provider_call_replay_payload(call: dict[str, Any]) -> dict[str, Any]:
     if call.get("error"):
         payload["error"] = str(call.get("error") or "")
     return payload
+
+
+def _embedding_call_records(embedding: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    calls = embedding.get("calls")
+    if not isinstance(calls, (list, tuple)):
+        return ()
+    return tuple(dict(item) for item in calls if isinstance(item, dict))
+
+
+def _embedding_replay_event_type(call: dict[str, Any]) -> str:
+    status = str(call.get("status") or "completed")
+    return "embedding_call_failed" if status == "failed" else "embedding_call_completed"
+
+
+def _embedding_call_replay_payload(call: dict[str, Any]) -> dict[str, Any]:
+    metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
+    request = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
+    return {
+        "provider_name": str(call.get("provider_name") or ""),
+        "model": str(call.get("model") or ""),
+        "status": str(call.get("status") or "completed"),
+        "input_count": _safe_int(call.get("input_count") or 0),
+        "dimensions": _safe_int(call.get("dimensions") or 0),
+        "requested_model": str(request.get("model") or ""),
+        "request_dimensions": _safe_int(request.get("dimensions") or 0),
+        "request_input_count": _safe_int(request.get("input_count") or 0),
+    }
+
+
+def _embedding_call_values(calls: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in calls if item.get(key)}
+
+
+def _embedding_call_dimensions(calls: tuple[dict[str, Any], ...]) -> set[int]:
+    return {_safe_int(item.get("dimensions") or 0) for item in calls if item.get("dimensions")}
 
 
 def _provider_call_values(calls: tuple[dict[str, Any], ...], key: str) -> set[str]:
