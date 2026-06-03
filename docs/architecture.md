@@ -123,9 +123,10 @@ resume-plan readiness, expected resume checkpoint ids, tool execution presence,
 tool retry, minimum tool attempt counts, required storage backend roles/kinds,
 forbidden backend kinds, external-backend limits, required context injection
 sources/targets, forbidden injection sources, and trimmed/excluded injection
-limits, plus memory governance allow/rewrite/deny and risk ceilings. Runtime
-code owns domain-specific eval datasets, baseline selection, scoring policy,
-dashboards, and release gates.
+limits, memory governance allow/rewrite/deny and risk ceilings, and prompt
+bucket budget roles/statuses/over-budget ceilings. Runtime code owns
+domain-specific eval datasets, baseline selection, scoring policy, dashboards,
+and release gates.
 
 `AgentRunStorePort` persists manager-level run state such as queued, running,
 cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,

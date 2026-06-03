@@ -106,6 +106,13 @@ class TraceEvalSpec:
     max_denied_memory_writes: int | None = None
     max_rewritten_memory_writes: int | None = None
     max_high_risk_memory_writes: int | None = None
+    require_prompt_bucket_budget: bool = False
+    required_prompt_bucket_budget_roles: tuple[str, ...] = ()
+    required_prompt_bucket_budget_statuses: tuple[str, ...] = ()
+    forbidden_prompt_bucket_budget_statuses: tuple[str, ...] = ()
+    forbid_over_budget_prompt_buckets: bool = False
+    max_prompt_bucket_budget_trimmed: int | None = None
+    max_prompt_bucket_budget_over_budget: int | None = None
     forbidden_event_types: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -148,6 +155,17 @@ class TraceEvalSpec:
             "max_denied_memory_writes": self.max_denied_memory_writes,
             "max_rewritten_memory_writes": self.max_rewritten_memory_writes,
             "max_high_risk_memory_writes": self.max_high_risk_memory_writes,
+            "require_prompt_bucket_budget": self.require_prompt_bucket_budget,
+            "required_prompt_bucket_budget_roles": list(self.required_prompt_bucket_budget_roles),
+            "required_prompt_bucket_budget_statuses": list(
+                self.required_prompt_bucket_budget_statuses
+            ),
+            "forbidden_prompt_bucket_budget_statuses": list(
+                self.forbidden_prompt_bucket_budget_statuses
+            ),
+            "forbid_over_budget_prompt_buckets": self.forbid_over_budget_prompt_buckets,
+            "max_prompt_bucket_budget_trimmed": self.max_prompt_bucket_budget_trimmed,
+            "max_prompt_bucket_budget_over_budget": self.max_prompt_bucket_budget_over_budget,
             "forbidden_event_types": list(self.forbidden_event_types),
             "metadata": dict(self.metadata),
         }
@@ -362,6 +380,26 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         )
         high_risk_memory_writes = tuple(
             decision for decision in memory_governance_decisions if decision.get("risk_level") == "high"
+        )
+        prompt_bucket_budget = _prompt_bucket_budget(trace)
+        prompt_bucket_budget_decisions = _prompt_bucket_budget_decisions(prompt_bucket_budget)
+        prompt_bucket_budget_roles = _prompt_bucket_budget_values(
+            prompt_bucket_budget_decisions,
+            "role",
+        )
+        prompt_bucket_budget_statuses = _prompt_bucket_budget_values(
+            prompt_bucket_budget_decisions,
+            "status",
+        )
+        trimmed_prompt_buckets = tuple(
+            decision
+            for decision in prompt_bucket_budget_decisions
+            if decision.get("status") == "trimmed"
+        )
+        over_budget_prompt_buckets = tuple(
+            decision
+            for decision in prompt_bucket_budget_decisions
+            if _prompt_bucket_budget_decision_over_budget(decision)
         )
 
         status = str(run.get("status") or "")
@@ -624,6 +662,81 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 )
             )
 
+        if spec.require_prompt_bucket_budget and not prompt_bucket_budget:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_bucket_budget_missing",
+                    "prompt bucket budget trace is required",
+                )
+            )
+        for role in spec.required_prompt_bucket_budget_roles:
+            if role not in prompt_bucket_budget_roles:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_prompt_bucket_budget_role",
+                        f"required prompt bucket budget role missing: {role}",
+                    )
+                )
+        for status in spec.required_prompt_bucket_budget_statuses:
+            if status not in prompt_bucket_budget_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_prompt_bucket_budget_status",
+                        f"required prompt bucket budget status missing: {status}",
+                    )
+                )
+        for status in spec.forbidden_prompt_bucket_budget_statuses:
+            if status in prompt_bucket_budget_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_prompt_bucket_budget_status",
+                        f"forbidden prompt bucket budget status present: {status}",
+                    )
+                )
+        if spec.forbid_over_budget_prompt_buckets and over_budget_prompt_buckets:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_bucket_budget_over_budget_forbidden",
+                    "over-budget prompt buckets are forbidden",
+                    metadata={"over_budget_count": len(over_budget_prompt_buckets)},
+                )
+            )
+        if (
+            spec.max_prompt_bucket_budget_trimmed is not None
+            and len(trimmed_prompt_buckets) > spec.max_prompt_bucket_budget_trimmed
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_bucket_budget_trimmed_limit_exceeded",
+                    "trimmed prompt bucket count exceeded limit",
+                    metadata={
+                        "actual": len(trimmed_prompt_buckets),
+                        "limit": spec.max_prompt_bucket_budget_trimmed,
+                    },
+                )
+            )
+        if (
+            spec.max_prompt_bucket_budget_over_budget is not None
+            and len(over_budget_prompt_buckets) > spec.max_prompt_bucket_budget_over_budget
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_bucket_budget_over_budget_limit_exceeded",
+                    "over-budget prompt bucket count exceeded limit",
+                    metadata={
+                        "actual": len(over_budget_prompt_buckets),
+                        "limit": spec.max_prompt_bucket_budget_over_budget,
+                    },
+                )
+            )
+
         tool_executions = _tool_execution_summaries(trace)
         if spec.require_tool_execution and not tool_executions:
             issues.append(
@@ -764,6 +877,12 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "denied_memory_write_count": len(denied_memory_writes),
                 "rewritten_memory_write_count": len(rewritten_memory_writes),
                 "high_risk_memory_write_count": len(high_risk_memory_writes),
+                "has_prompt_bucket_budget": bool(prompt_bucket_budget),
+                "prompt_bucket_budget_role_count": len(prompt_bucket_budget_roles),
+                "prompt_bucket_budget_roles": sorted(prompt_bucket_budget_roles),
+                "prompt_bucket_budget_statuses": sorted(prompt_bucket_budget_statuses),
+                "prompt_bucket_budget_trimmed_count": len(trimmed_prompt_buckets),
+                "prompt_bucket_budget_over_budget_count": len(over_budget_prompt_buckets),
             },
             metadata={"spec": spec.manifest()},
         )
@@ -1137,6 +1256,37 @@ def _memory_governance_decisions(trace: dict[str, Any]) -> tuple[dict[str, Any],
 
 def _memory_governance_values(decisions: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in decisions if item.get(key)}
+
+
+def _prompt_bucket_budget(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("prompt_bucket_budget")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    prompt = trace.get("prompt")
+    prompt_metadata = prompt.get("metadata") if isinstance(prompt, dict) else {}
+    budget = prompt_metadata.get("bucket_budget") if isinstance(prompt_metadata, dict) else {}
+    return dict(budget) if isinstance(budget, dict) else {}
+
+
+def _prompt_bucket_budget_decisions(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    raw = manifest.get("decisions") if isinstance(manifest, dict) else ()
+    if isinstance(raw, (list, tuple)):
+        return tuple(dict(item) for item in raw if isinstance(item, dict))
+    return ()
+
+
+def _prompt_bucket_budget_values(decisions: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in decisions if item.get(key)}
+
+
+def _prompt_bucket_budget_decision_over_budget(decision: dict[str, Any]) -> bool:
+    max_bytes = decision.get("max_bytes")
+    if max_bytes is None:
+        return False
+    try:
+        return int(decision.get("final_bytes") or 0) > int(max_bytes)
+    except (TypeError, ValueError):
+        return False
 
 
 def _tool_names(trace: dict[str, Any]) -> set[str]:

@@ -149,6 +149,29 @@ def _trace_manifest() -> dict[str, object]:
                 },
             ],
         },
+        "prompt_bucket_budget": {
+            "schema_version": "agent-core-prompt-bucket-budget-result/v1",
+            "trimmed_count": 1,
+            "protected_count": 1,
+            "over_budget_count": 1,
+            "decisions": [
+                {
+                    "role": "semi_dynamic_1",
+                    "status": "trimmed",
+                    "original_bytes": 500,
+                    "final_bytes": 140,
+                    "max_bytes": 160,
+                },
+                {
+                    "role": "dynamic",
+                    "status": "protected",
+                    "original_bytes": 220,
+                    "final_bytes": 220,
+                    "max_bytes": 80,
+                    "protected": True,
+                },
+            ],
+        },
     }
 
 
@@ -505,6 +528,58 @@ def test_trace_eval_reports_memory_governance_contract_failures() -> None:
     } <= codes
     assert not missing.ok
     assert {issue.code for issue in missing.issues} == {"memory_governance_missing"}
+
+
+def test_trace_eval_validates_prompt_bucket_budget_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_prompt_bucket_budget=True,
+            required_prompt_bucket_budget_roles=("semi_dynamic_1", "dynamic"),
+            required_prompt_bucket_budget_statuses=("trimmed", "protected"),
+            max_prompt_bucket_budget_trimmed=1,
+            max_prompt_bucket_budget_over_budget=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_prompt_bucket_budget"] is True
+    assert report.summary["prompt_bucket_budget_roles"] == ["dynamic", "semi_dynamic_1"]
+    assert report.summary["prompt_bucket_budget_statuses"] == ["protected", "trimmed"]
+    assert report.summary["prompt_bucket_budget_trimmed_count"] == 1
+    assert report.summary["prompt_bucket_budget_over_budget_count"] == 1
+    assert report.metadata["spec"]["require_prompt_bucket_budget"] is True
+
+
+def test_trace_eval_reports_prompt_bucket_budget_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_prompt_bucket_budget_roles=("timeline_open",),
+            required_prompt_bucket_budget_statuses=("within_budget",),
+            forbidden_prompt_bucket_budget_statuses=("protected",),
+            forbid_over_budget_prompt_buckets=True,
+            max_prompt_bucket_budget_trimmed=0,
+            max_prompt_bucket_budget_over_budget=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "prompt_bucket_budget"},
+        TraceEvalSpec(require_prompt_bucket_budget=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_prompt_bucket_budget_role",
+        "missing_prompt_bucket_budget_status",
+        "forbidden_prompt_bucket_budget_status",
+        "prompt_bucket_budget_over_budget_forbidden",
+        "prompt_bucket_budget_trimmed_limit_exceeded",
+        "prompt_bucket_budget_over_budget_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"prompt_bucket_budget_missing"}
 
 
 def test_trace_replay_comparator_accepts_matching_trace() -> None:
