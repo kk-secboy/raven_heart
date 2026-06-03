@@ -11,6 +11,7 @@ from agent_core.providers import (
     LLMCallRecord,
     LLMBudgetExceededError,
     LLMMessage,
+    LLMModelCapabilities,
     LLMProviderCenter,
     LLMProviderError,
     LLMProviderNotFoundError,
@@ -188,6 +189,91 @@ def test_provider_center_search_manifest_and_missing_provider() -> None:
 
     with pytest.raises(LLMProviderNotFoundError):
         center.select(LLMRequest(messages=[], metadata={"provider": "missing"}))
+
+
+@pytest.mark.asyncio
+async def test_provider_center_routes_by_declared_model_capabilities() -> None:
+    small = MockLLMProvider(["small"])
+    strong = MockLLMProvider(["strong"])
+    center = LLMProviderCenter(default_provider="small")
+    center.register(
+        "small",
+        small,
+        default_model="small-mini",
+        priority=10,
+        default_capabilities=LLMModelCapabilities(
+            context_window_tokens=512,
+            max_output_tokens=64,
+            supports_structured_output=False,
+        ),
+    )
+    center.register(
+        "strong",
+        strong,
+        default_model="strong-pro",
+        priority=1,
+        default_capabilities=LLMModelCapabilities(
+            context_window_tokens=8192,
+            max_output_tokens=1024,
+            supports_structured_output=True,
+            supports_json_mode=True,
+        ),
+    )
+
+    response = await center.complete(
+        LLMRequest(
+            messages=[],
+            max_output_tokens=256,
+            metadata={
+                "requires_structured_output": True,
+                "required_capabilities": ("json_mode",),
+                "estimated_total_tokens": 1000,
+            },
+        )
+    )
+    route = center.select(
+        LLMRequest(
+            messages=[],
+            metadata={"requires_structured_output": True},
+        )
+    )
+    manifest = center.manifest()
+
+    assert response.content == "strong"
+    assert not small.requests
+    assert strong.requests[0].model == "strong-pro"
+    assert strong.requests[0].metadata["model_capabilities"]["supports_structured_output"] is True
+    assert route.provider_name == "strong"
+    assert route.metadata["model_capabilities"]["supports_json_mode"] is True
+    assert manifest["providers"][0]["default_capabilities"]["context_window_tokens"] == 512
+
+
+@pytest.mark.asyncio
+async def test_provider_center_rejects_explicit_provider_when_capabilities_do_not_match() -> None:
+    center = LLMProviderCenter(default_provider="small")
+    center.register(
+        "small",
+        MockLLMProvider(["small"]),
+        default_model="small-mini",
+        default_capabilities=LLMModelCapabilities(
+            context_window_tokens=128,
+            max_output_tokens=32,
+            supports_tool_calls=False,
+        ),
+    )
+
+    with pytest.raises(LLMProviderNotFoundError):
+        await center.complete(
+            LLMRequest(
+                messages=[],
+                max_output_tokens=64,
+                metadata={
+                    "provider": "small",
+                    "requires_tool_calls": True,
+                    "estimated_total_tokens": 256,
+                },
+            )
+        )
 
 
 def test_llm_stream_accumulator_builds_response_and_prompt_safe_manifest() -> None:
@@ -460,6 +546,35 @@ async def test_provider_center_records_streaming_call_manifests() -> None:
         attempt=1,
         status="completed",
     ).manifest()["provider_name"] == "local"
+
+
+@pytest.mark.asyncio
+async def test_provider_center_routes_streaming_to_stream_capable_provider() -> None:
+    non_stream = _StreamingProvider()
+    stream_capable = _StreamingProvider()
+    center = LLMProviderCenter(default_provider="batch")
+    center.register(
+        "batch",
+        non_stream,
+        default_model="batch-mini",
+        priority=10,
+        default_capabilities=LLMModelCapabilities(supports_streaming=False),
+    )
+    center.register(
+        "stream",
+        stream_capable,
+        default_model="stream-mini",
+        priority=1,
+        default_capabilities=LLMModelCapabilities(supports_streaming=True),
+    )
+
+    events = [event async for event in center.stream(LLMRequest(messages=[]))]
+
+    assert [event.type for event in events] == ["delta", "usage", "message_end"]
+    assert not non_stream.requests
+    assert stream_capable.requests[0].model == "stream-mini"
+    assert stream_capable.requests[0].metadata["provider"] == "stream"
+    assert center.calls[0].provider_name == "stream"
 
 
 @pytest.mark.asyncio

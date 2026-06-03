@@ -398,16 +398,126 @@ class TransportLLMProvider(LLMProviderPort):
 
 
 @dataclass(frozen=True)
+class LLMModelCapabilities:
+    context_window_tokens: int = 0
+    max_output_tokens: int = 0
+    supports_streaming: bool = True
+    supports_tool_calls: bool = False
+    supports_structured_output: bool = False
+    supports_json_mode: bool = False
+    modalities: tuple[str, ...] = ("text",)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "context_window_tokens",
+            max(0, int(self.context_window_tokens)),
+        )
+        object.__setattr__(
+            self,
+            "max_output_tokens",
+            max(0, int(self.max_output_tokens)),
+        )
+        object.__setattr__(self, "modalities", tuple(str(item) for item in self.modalities))
+
+    def supports_request(self, request: LLMRequest, *, streamed: bool = False) -> bool:
+        if streamed and not self.supports_streaming:
+            return False
+        if _metadata_bool(request.metadata, "requires_streaming") and not self.supports_streaming:
+            return False
+        if _metadata_bool(request.metadata, "requires_tool_calls") and not self.supports_tool_calls:
+            return False
+        if (
+            _metadata_bool(request.metadata, "requires_structured_output")
+            and not self.supports_structured_output
+        ):
+            return False
+        if _metadata_bool(request.metadata, "requires_json_mode") and not self.supports_json_mode:
+            return False
+        required = _metadata_strings(request.metadata, "required_capabilities")
+        available = set(self.capability_names())
+        if required and not set(required) <= available:
+            return False
+        requested_output = request.max_output_tokens or _metadata_int(
+            request.metadata,
+            "estimated_output_tokens",
+        )
+        if self.max_output_tokens and requested_output > self.max_output_tokens:
+            return False
+        if self.context_window_tokens:
+            estimated_total = _metadata_int(request.metadata, "estimated_total_tokens")
+            if estimated_total <= 0:
+                estimated_total = _metadata_int(
+                    request.metadata,
+                    "estimated_input_tokens",
+                ) + max(0, requested_output)
+            if estimated_total > self.context_window_tokens:
+                return False
+        return True
+
+    def capability_names(self) -> tuple[str, ...]:
+        names = []
+        if self.supports_streaming:
+            names.append("streaming")
+        if self.supports_tool_calls:
+            names.append("tool_calls")
+        if self.supports_structured_output:
+            names.append("structured_output")
+        if self.supports_json_mode:
+            names.append("json_mode")
+        names.extend(f"modality:{item}" for item in self.modalities)
+        return tuple(dict.fromkeys(names))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-model-capabilities/v1",
+            "context_window_tokens": self.context_window_tokens,
+            "max_output_tokens": self.max_output_tokens,
+            "supports_streaming": self.supports_streaming,
+            "supports_tool_calls": self.supports_tool_calls,
+            "supports_structured_output": self.supports_structured_output,
+            "supports_json_mode": self.supports_json_mode,
+            "modalities": list(self.modalities),
+            "capabilities": list(self.capability_names()),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class LLMProviderSpec:
     name: str
     models: tuple[str, ...] = ()
     default_model: str = ""
     priority: int = 0
     tags: tuple[str, ...] = ()
+    default_capabilities: LLMModelCapabilities | None = None
+    model_capabilities: dict[str, LLMModelCapabilities] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def supports(self, model: str) -> bool:
         return not model or not self.models or model in self.models
+
+    def capabilities_for(self, model: str) -> LLMModelCapabilities | None:
+        if model and model in self.model_capabilities:
+            return self.model_capabilities[model]
+        if self.default_model and self.default_model in self.model_capabilities:
+            return self.model_capabilities[self.default_model]
+        return self.default_capabilities
+
+    def supports_route(
+        self,
+        model: str,
+        request: LLMRequest,
+        *,
+        streamed: bool = False,
+    ) -> bool:
+        if not self.supports(model):
+            return False
+        capabilities = self.capabilities_for(model)
+        if capabilities is None:
+            return True
+        return capabilities.supports_request(request, streamed=streamed)
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -416,6 +526,13 @@ class LLMProviderSpec:
             "default_model": self.default_model,
             "priority": self.priority,
             "tags": list(self.tags),
+            "default_capabilities": self.default_capabilities.manifest()
+            if self.default_capabilities
+            else None,
+            "model_capabilities": {
+                model: capabilities.manifest()
+                for model, capabilities in sorted(self.model_capabilities.items())
+            },
             "metadata": dict(self.metadata),
         }
 
@@ -520,6 +637,8 @@ class LLMProviderCenter(LLMProviderPort):
         default_model: str = "",
         priority: int = 0,
         tags: tuple[str, ...] = (),
+        default_capabilities: LLMModelCapabilities | None = None,
+        model_capabilities: dict[str, LLMModelCapabilities] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         if not name:
@@ -531,6 +650,8 @@ class LLMProviderCenter(LLMProviderPort):
                 default_model=default_model,
                 priority=priority,
                 tags=tuple(tags),
+                default_capabilities=default_capabilities,
+                model_capabilities=dict(model_capabilities or {}),
                 metadata=dict(metadata or {}),
             ),
             provider=provider,
@@ -580,10 +701,15 @@ class LLMProviderCenter(LLMProviderPort):
     def select(self, request: LLMRequest) -> LLMProviderRoute:
         entry = self._select_entry(request)
         model = request.model or entry.spec.default_model or self.default_model
+        capabilities = entry.spec.capabilities_for(model)
         return LLMProviderRoute(
             provider_name=entry.spec.name,
             model=model,
-            metadata={"provider_priority": entry.spec.priority, **entry.spec.metadata},
+            metadata={
+                "provider_priority": entry.spec.priority,
+                "model_capabilities": capabilities.manifest() if capabilities else None,
+                **entry.spec.metadata,
+            },
         )
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
@@ -634,7 +760,7 @@ class LLMProviderCenter(LLMProviderPort):
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
         self._check_estimated_usage(request)
         last_error: Exception | None = None
-        for entry in self._candidate_entries(request):
+        for entry in self._candidate_entries(request, streamed=True):
             routed = self._route_request(request, entry)
             attempts = self.max_retries + 1
             for attempt in range(attempts):
@@ -711,40 +837,58 @@ class LLMProviderCenter(LLMProviderPort):
             events.append(routed_event)
         return tuple(events), accumulator.usage, accumulator.summary_manifest()
 
-    def _select_entry(self, request: LLMRequest) -> _ProviderEntry:
+    def _select_entry(self, request: LLMRequest, *, streamed: bool = False) -> _ProviderEntry:
         requested_provider = str(request.metadata.get("provider") or "")
         if requested_provider:
             entry = self._providers.get(requested_provider)
             if entry is None:
                 raise LLMProviderNotFoundError(requested_provider)
-            if not entry.spec.supports(request.model):
+            model = self._model_for_entry(request, entry)
+            if not entry.spec.supports_route(model, request, streamed=streamed):
                 raise LLMProviderNotFoundError(f"{requested_provider}:{request.model}")
             return entry
 
         if self.default_provider:
             entry = self._providers.get(self.default_provider)
-            if entry and entry.spec.supports(request.model):
+            if entry and entry.spec.supports_route(
+                self._model_for_entry(request, entry),
+                request,
+                streamed=streamed,
+            ):
                 return entry
 
         for entry in self._ordered_entries():
-            if entry.spec.supports(request.model):
+            if entry.spec.supports_route(
+                self._model_for_entry(request, entry),
+                request,
+                streamed=streamed,
+            ):
                 return entry
 
         raise LLMProviderNotFoundError(request.model or "<default>")
 
-    def _candidate_entries(self, request: LLMRequest) -> tuple[_ProviderEntry, ...]:
+    def _candidate_entries(
+        self,
+        request: LLMRequest,
+        *,
+        streamed: bool = False,
+    ) -> tuple[_ProviderEntry, ...]:
         requested_provider = str(request.metadata.get("provider") or "")
         if requested_provider:
-            return (self._select_entry(request),)
+            return (self._select_entry(request, streamed=streamed),)
 
-        selected = self._select_entry(request)
+        selected = self._select_entry(request, streamed=streamed)
         if not self.fallback_enabled:
             return (selected,)
         entries = [selected]
         for entry in self._ordered_entries():
             if entry.spec.name == selected.spec.name:
                 continue
-            if entry.spec.supports(request.model):
+            if entry.spec.supports_route(
+                self._model_for_entry(request, entry),
+                request,
+                streamed=streamed,
+            ):
                 entries.append(entry)
         return tuple(entries)
 
@@ -757,13 +901,18 @@ class LLMProviderCenter(LLMProviderPort):
         )
 
     def _route_request(self, request: LLMRequest, entry: _ProviderEntry) -> LLMRequest:
-        model = request.model or entry.spec.default_model or self.default_model
+        model = self._model_for_entry(request, entry)
+        capabilities = entry.spec.capabilities_for(model)
         metadata = {
             **request.metadata,
             "provider": entry.spec.name,
             "provider_priority": entry.spec.priority,
+            "model_capabilities": capabilities.manifest() if capabilities else None,
         }
         return replace(request, model=model, metadata=metadata)
+
+    def _model_for_entry(self, request: LLMRequest, entry: _ProviderEntry) -> str:
+        return request.model or entry.spec.default_model or self.default_model
 
     def _check_estimated_usage(self, request: LLMRequest) -> None:
         self._check_call_attempt_limit()
@@ -1002,4 +1151,24 @@ def _metadata_int(metadata: dict[str, Any], key: str) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _metadata_bool(metadata: dict[str, Any], key: str) -> bool:
+    value = metadata.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _metadata_strings(metadata: dict[str, Any], key: str) -> tuple[str, ...]:
+    value = metadata.get(key)
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return tuple(part.strip() for part in value.split(",") if part.strip())
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item) for item in value if str(item))
+    return (str(value),)
 

@@ -21,7 +21,7 @@ agent_core
 
 | Core area | Runtime responsibility |
 | --- | --- |
-| LLM provider center and call audit | Concrete model clients, credentials, rate limits |
+| LLM provider center, model capabilities, and call audit | Concrete model clients, credentials, rate limits |
 | Tool center | Real tools, shell/file/network access, sandboxing |
 | Tool replay records and store port | Durable replay backend, retention, cross-run replay policy |
 | MCP center | MCP server deployment, credentials, process lifecycle |
@@ -169,6 +169,11 @@ runtime responsibilities.
 failed attempts. The core records provider name, model, attempt, streamed flag,
 usage, retryability, and request shape. Concrete provider clients, credentials,
 rate limits, and vendor-specific response payloads remain runtime-owned.
+`LLMModelCapabilities` lets runtimes declare context windows, output limits,
+streaming support, tool-call support, JSON mode, structured-output support, and
+modalities without importing a vendor SDK. The center uses those declarations to
+skip incompatible routes when a request declares required capabilities or
+estimated token/output size.
 `TransportLLMProvider`, `LLMTransportPort`, and `LLMProviderCodecPort` form the
 dependency-free adapter boundary: runtimes can provide a transport and optional
 vendor codec while the SDK keeps provider-neutral request, response, stream, and

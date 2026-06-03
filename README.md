@@ -14,6 +14,7 @@ ops agents, research agents, and future automation systems.
 - Structured final output contracts with validation and repair feedback.
 - Harness lifecycle, checkpoint, resume, trace, and replay primitives.
 - LLM provider abstractions and provider routing.
+- Provider model capability profiles for context windows, streaming, tool-call, JSON, and structured-output routing.
 - Provider call records and usage/failure manifests.
 - Tool registry and tool center.
 - Tool replay records and replay store port.
@@ -271,6 +272,9 @@ reducer while keeping the same core contract.
 - `LLMTransportPort`, `LLMProviderCodecPort`, `DefaultLLMProviderCodec`, and
   `TransportLLMProvider` for dependency-free provider adapter contracts.
 - Provider registry and routing.
+- `LLMModelCapabilities` for provider-neutral model context windows, output
+  limits, streaming support, tool-call support, JSON mode, structured output,
+  and modality declarations.
 - `LLMRetryPolicy` for retry/fallback behavior.
 - `LLMUsageLimits` for cost, call-attempt, and token budgets.
 - Usage/failure accounting.
@@ -286,7 +290,9 @@ reducer while keeping the same core contract.
 Concrete clients for OpenAI, Anthropic, local models, gateways, credentials, and
 vendor rate limits live in runtimes or adapter packages. `agent_core` owns the
 provider-neutral request/response/stream shapes, stream aggregation, and
-error/retry mapping.
+error/retry mapping. When runtimes declare `LLMModelCapabilities`,
+`LLMProviderCenter` can avoid routes that cannot satisfy requested model
+features or declared token/output limits.
 
 ### Tools
 
@@ -526,6 +532,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider center | MVP implemented |
 | Provider call audit | MVP implemented |
 | Provider transport contract | MVP implemented |
+| Provider model capabilities | MVP implemented |
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |
 | Interrupt/cancel/timeout semantics | MVP implemented |
