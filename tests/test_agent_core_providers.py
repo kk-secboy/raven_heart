@@ -9,6 +9,7 @@ from agent_core.prompt import PromptIR
 from agent_core.providers import (
     DefaultLLMProviderCodec,
     LLMCallRecord,
+    LLMContentPart,
     LLMBudgetExceededError,
     LLMMessage,
     LLMModelCapabilities,
@@ -195,6 +196,36 @@ def test_provider_center_search_manifest_and_missing_provider() -> None:
         center.select(LLMRequest(messages=[], metadata={"provider": "missing"}))
 
 
+def test_llm_message_supports_provider_neutral_content_parts() -> None:
+    message = LLMMessage(
+        role="user",
+        content="inspect this",
+        content_parts=(
+            LLMContentPart.text_part("caption"),
+            LLMContentPart(
+                kind="image",
+                uri="file://evidence.png",
+                mime_type="image/png",
+                metadata={"source": "artifact"},
+            ),
+        ),
+    )
+    request = LLMRequest(messages=[message])
+    manifest = request.manifest()
+    encoded = DefaultLLMProviderCodec().encode_request(request)
+
+    assert manifest["messages"][0]["content_bytes"] == len("inspect this")
+    assert manifest["messages"][0]["content_part_count"] == 2
+    assert manifest["messages"][0]["content_parts"][0]["text_bytes"] == len("caption")
+    assert manifest["messages"][0]["content_parts"][1]["has_uri"] is True
+    assert "file://evidence.png" not in str(manifest)
+    assert encoded["messages"][0]["content"] == "inspect this"
+    assert encoded["messages"][0]["content_parts"][1]["uri"] == "file://evidence.png"
+
+    with pytest.raises(ValueError):
+        LLMContentPart(kind="image")
+
+
 def test_llm_request_supports_provider_neutral_tool_and_response_contracts() -> None:
     request = LLMRequest(
         messages=[LLMMessage(role="user", content="look up target")],
@@ -374,6 +405,53 @@ async def test_provider_center_routes_by_native_tool_and_response_format_contrac
         center.calls[0].metadata["original_request"]["response_format"]["kind"]
         == "json_schema"
     )
+
+
+@pytest.mark.asyncio
+async def test_provider_center_routes_by_message_modalities() -> None:
+    text_only = MockLLMProvider(["text"])
+    vision = MockLLMProvider(["vision"])
+    center = LLMProviderCenter(default_provider="text")
+    center.register(
+        "text",
+        text_only,
+        default_model="text-mini",
+        priority=10,
+        default_capabilities=LLMModelCapabilities(modalities=("text",)),
+    )
+    center.register(
+        "vision",
+        vision,
+        default_model="vision-pro",
+        priority=1,
+        default_capabilities=LLMModelCapabilities(modalities=("text", "image")),
+    )
+
+    response = await center.complete(
+        LLMRequest(
+            messages=[
+                LLMMessage(
+                    role="user",
+                    content="analyze image",
+                    content_parts=(
+                        LLMContentPart(
+                            kind="image",
+                            uri="file://finding.png",
+                            mime_type="image/png",
+                        ),
+                    ),
+                )
+            ],
+        )
+    )
+
+    assert response.content == "vision"
+    assert not text_only.requests
+    assert vision.requests[0].model == "vision-pro"
+    assert vision.requests[0].metadata["model_capabilities"]["modalities"] == [
+        "text",
+        "image",
+    ]
 
 
 def test_model_capabilities_understand_response_format_kinds() -> None:

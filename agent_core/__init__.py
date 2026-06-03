@@ -213,6 +213,7 @@ from agent_core.prompt import (
 )
 from agent_core.providers import (
     DefaultLLMProviderCodec,
+    LLMContentPart,
     LLMCallRecord,
     LLMModelCapabilities,
     LLMProviderCenter,
@@ -414,6 +415,7 @@ __all__ = [
     "EmbeddingRoute",
     "EmbeddingVector",
     "DefaultLLMProviderCodec",
+    "LLMContentPart",
     "DefaultTraceEvaluator",
     "EventSinkPort",
     "EventLogPort",

@@ -306,6 +306,8 @@ ranking contract used by lightweight core stores.
 - `LLMTransportPort`, `LLMProviderCodecPort`, `DefaultLLMProviderCodec`, and
   `TransportLLMProvider` for dependency-free provider adapter contracts.
 - Provider registry and routing.
+- `LLMContentPart` for provider-neutral text, image, audio, file, binary, and
+  JSON message parts without binding the SDK to one vendor message schema.
 - `LLMToolContract`, `LLMToolChoice`, and `LLMResponseFormat` for
   provider-neutral native tool/function calling and JSON/JSON-schema response
   contracts.
@@ -339,6 +341,9 @@ Native tool calling and response-format contracts are represented as SDK
 request fields, not vendor payloads. Adapter packages translate them to
 OpenAI-compatible `tools`/`response_format`, Anthropic tool use, Gemini function
 calling, local model schemas, or gateway-specific payloads.
+Content parts follow the same rule: the SDK can describe text, image, audio,
+file, binary, and JSON parts, while runtimes own file access, uploads, URL
+signing, object storage, and vendor-specific multipart payloads.
 The routed request manifest records the selected provider, model priority, and
 model capabilities so trace/eval contracts can later prove which model ability
 was actually used for structured output, JSON mode, tool calls, streaming, or
@@ -592,6 +597,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider transport contract | MVP implemented |
 | Provider model capabilities | MVP implemented |
 | Provider tool/response-format contracts | MVP implemented |
+| Provider multimodal content contracts | MVP implemented |
 | Embedding provider center | MVP implemented |
 | Semantic ranking contract | MVP implemented |
 | Embedding trace/eval contracts | MVP implemented |

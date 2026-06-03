@@ -7,8 +7,74 @@ from typing import Any, AsyncIterator, Literal, Protocol
 
 
 MessageRole = Literal["system", "user", "assistant", "tool"]
+LLMContentPartKind = Literal["text", "image", "audio", "file", "binary", "json"]
 LLMToolChoiceMode = Literal["auto", "none", "required", "tool"]
 LLMResponseFormatKind = Literal["text", "json", "json_schema"]
+
+
+@dataclass(frozen=True)
+class LLMContentPart:
+    """Provider-neutral message content part.
+
+    Adapter packages map these parts to vendor-specific message formats while
+    manifests keep raw payloads out of traces.
+    """
+
+    kind: LLMContentPartKind
+    text: str = ""
+    uri: str = ""
+    mime_type: str = ""
+    data: str = ""
+    data_encoding: str = ""
+    name: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"text", "image", "audio", "file", "binary", "json"}:
+            raise ValueError(f"unsupported content part kind: {self.kind}")
+        if self.kind == "text" and not self.text:
+            raise ValueError("text content part requires text")
+        if self.kind in {"image", "audio", "file", "binary"} and not (self.uri or self.data):
+            raise ValueError(f"{self.kind} content part requires uri or data")
+        if self.kind == "json" and not self.text:
+            raise ValueError("json content part requires text")
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    @classmethod
+    def text_part(
+        cls,
+        text: str,
+        *,
+        name: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> "LLMContentPart":
+        return cls(kind="text", text=text, name=name, metadata=dict(metadata or {}))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-content-part/v1",
+            "kind": self.kind,
+            "text_bytes": len(self.text.encode("utf-8")),
+            "has_uri": bool(self.uri),
+            "mime_type": self.mime_type,
+            "data_bytes": len(self.data.encode("utf-8")),
+            "data_encoding": self.data_encoding,
+            "name": self.name,
+            "metadata": dict(self.metadata),
+        }
+
+    def transport_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-content-part/v1",
+            "kind": self.kind,
+            "text": self.text,
+            "uri": self.uri,
+            "mime_type": self.mime_type,
+            "data": self.data,
+            "data_encoding": self.data_encoding,
+            "name": self.name,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -16,13 +82,20 @@ class LLMMessage:
     role: MessageRole
     content: str
     name: str = ""
+    content_parts: tuple[LLMContentPart, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "content_parts", tuple(self.content_parts))
+        object.__setattr__(self, "metadata", dict(self.metadata))
 
     def manifest(self) -> dict[str, Any]:
         return {
             "role": self.role,
             "name": self.name,
             "content_bytes": len(self.content.encode("utf-8")),
+            "content_part_count": len(self.content_parts),
+            "content_parts": [part.manifest() for part in self.content_parts],
             "metadata": dict(self.metadata),
         }
 
@@ -412,6 +485,9 @@ class DefaultLLMProviderCodec:
                     "role": message.role,
                     "content": message.content,
                     "name": message.name,
+                    "content_parts": [
+                        part.transport_payload() for part in message.content_parts
+                    ],
                     "metadata": dict(message.metadata),
                 }
                 for message in request.messages
@@ -549,6 +625,9 @@ class LLMModelCapabilities:
         if streamed and not self.supports_streaming:
             return False
         if _metadata_bool(request.metadata, "requires_streaming") and not self.supports_streaming:
+            return False
+        requested_modalities = _request_modalities(request)
+        if requested_modalities and not requested_modalities <= set(self.modalities):
             return False
         if request.tools and not self.supports_tool_calls:
             return False
@@ -1270,6 +1349,22 @@ def _usage_from_payload(payload: Any) -> UsageInfo:
         cost_usd=float(payload.get("cost_usd") or 0.0),
         metadata=dict(payload.get("metadata") or {}),
     )
+
+
+def _request_modalities(request: LLMRequest) -> set[str]:
+    modalities = set(_metadata_strings(request.metadata, "required_modalities"))
+    for message in request.messages:
+        if message.content:
+            modalities.add("text")
+        for part in message.content_parts:
+            modalities.add(_content_part_modality(part.kind))
+    return {item for item in modalities if item}
+
+
+def _content_part_modality(kind: str) -> str:
+    if kind in {"text", "json"}:
+        return "text"
+    return kind
 
 
 def _stream_event_type(value: str) -> Literal["message_start", "delta", "action", "usage", "error", "message_end"]:

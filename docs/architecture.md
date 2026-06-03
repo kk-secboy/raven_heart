@@ -200,6 +200,11 @@ Anthropic tool use, Gemini function declarations, local-model JSON schemas, and
 gateway payload details remain adapter responsibilities. `LLMModelCapabilities`
 can reject routes that cannot satisfy these contracts before a provider call is
 attempted.
+`LLMContentPart` extends `LLMMessage` beyond a single text field while keeping
+the same boundary. The core can represent text, JSON, image, audio, file, and
+binary parts and route them through declared `modalities`; runtimes still own
+file reads, object storage, upload handles, signed URLs, and vendor-specific
+message part payloads.
 `TransportLLMProvider`, `LLMTransportPort`, and `LLMProviderCodecPort` form the
 dependency-free adapter boundary: runtimes can provide a transport and optional
 vendor codec while the SDK keeps provider-neutral request, response, stream, and
