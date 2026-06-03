@@ -30,6 +30,7 @@ ops agents, research agents, and future automation systems.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Memory governance decisions for allow/rewrite/deny write auditing.
 - Unified storage backend manifests for core stores and runtime-owned backends.
+- External memory store wrapper for runtime-owned PG/vector/graph/product adapters.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Journal replay manifests and snapshot consistency audit.
 - Run trace bundle for provider/tool/approval/journal/event audit aggregation.
@@ -356,6 +357,8 @@ modalities.
 ### Memory
 
 - `MemoryCenter` and `MemoryPort`.
+- `ExternalMemoryStore` and `MemoryCenter.register_spec()` for runtime-owned
+  PG/vector/graph/product memory adapters without adding database drivers to core.
 - `MemoryQuery.mode` for keyword, semantic, vector, graph, and hybrid recall.
 - `MemoryStoreSpec.backend_kind`, namespace, and capability flags for
   Postgres/vector/graph/product stores implemented outside core.
@@ -363,7 +366,8 @@ modalities.
 - In-memory memory store.
 - SQLite memory store.
 - Markdown memory store.
-- Postgres, vector DB, graph, or product memory can implement `MemoryPort` outside core.
+- Postgres, vector DB, graph, or product memory can implement `MemoryPort`
+  outside core and publish backend metadata through `ExternalMemoryStore`.
 - Runner-level memory recall injection through `ContextInjection`.
 - Memory governance hooks.
 - Leak scanning and global bucket checks.

@@ -111,6 +111,7 @@ from agent_core.harness import (
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig, LoopGuardDecision
 from agent_core.memory import (
     AllowAllMemoryGovernance,
+    ExternalMemoryStore,
     InMemoryMemoryStore,
     MarkdownMemoryStore,
     MemoryBackendKind,
@@ -385,6 +386,7 @@ __all__ = [
     "DefaultTraceEvaluator",
     "EventSinkPort",
     "EventLogPort",
+    "ExternalMemoryStore",
     "HandoffDecision",
     "HandoffDecisionStatus",
     "HandoffRecord",

@@ -4,6 +4,7 @@ import pytest
 
 from agent_core.actions import ActionRegistry
 from agent_core.memory import (
+    ExternalMemoryStore,
     InMemoryMemoryStore,
     MarkdownMemoryStore,
     MemoryCenter,
@@ -12,6 +13,7 @@ from agent_core.memory import (
     MemoryQuery,
     MemoryRoute,
     MemoryStoreNotFoundError,
+    MemoryStoreSpec,
     MemoryWrite,
     RuleBasedMemoryGovernance,
     SQLiteMemoryStore,
@@ -343,6 +345,64 @@ def test_memory_query_route_and_plan_manifest_for_external_backends() -> None:
     assert manifest["selected_stores"][0]["backend_kind"] == "vector"
     assert manifest["query"]["has_vector"] is True
     assert manifest["route"]["mode"] == "vector"
+
+
+@pytest.mark.asyncio
+async def test_external_memory_store_wraps_runtime_pg_adapter_with_manifest() -> None:
+    adapter = _RecordingMemoryStore(
+        (MemoryHit(content="tenant memory hit", score=0.9, source="pg"),)
+    )
+    external = ExternalMemoryStore(
+        adapter,
+        name="tenant-pg",
+        backend_kind="postgres",
+        priority=30,
+        namespaces=("tenant-a",),
+        supports_vector=True,
+        supports_graph=True,
+        tags=("durable", "tenant"),
+        location="postgres://memory",
+        metadata={"dsn_ref": "env:MEMORY_DSN"},
+    )
+    center = MemoryCenter(default_store="tenant-pg")
+    center.register_spec(external.spec, external)
+
+    await center.write(MemoryWrite(content="remember this", metadata={"store": "tenant-pg"}))
+    hits = await center.search(
+        MemoryQuery(
+            query="tenant",
+            mode="vector",
+            namespace="tenant-a",
+            vector=(0.1, 0.2),
+            filters={"store": "tenant-pg", "kind": "note"},
+        )
+    )
+    manifest = center.manifest()["stores"][0]
+    external_manifest = external.manifest()
+
+    assert adapter.writes[0].content == "remember this"
+    assert adapter.writes[0].metadata == {}
+    assert adapter.queries[0].filters == {"kind": "note"}
+    assert hits[0].metadata["store"] == "tenant-pg"
+    assert manifest["backend_kind"] == "postgres"
+    assert manifest["core_builtin"] is False
+    assert manifest["location"] == "postgres://memory"
+    assert manifest["backend"]["kind"] == "postgres"
+    assert manifest["backend"]["core_builtin"] is False
+    assert manifest["backend"]["transactional"] is True
+    assert manifest["backend"]["location"] == "postgres://memory"
+    assert "vector" in manifest["backend"]["capabilities"]
+    assert "graph" in manifest["backend"]["capabilities"]
+    assert external_manifest["schema_version"] == "agent-core-external-memory-store/v1"
+    assert external_manifest["store"]["name"] == "tenant-pg"
+    assert external_manifest["adapter"] == {}
+
+
+def test_memory_center_register_spec_requires_named_store() -> None:
+    center = MemoryCenter()
+
+    with pytest.raises(ValueError):
+        center.register_spec(MemoryStoreSpec(name=""), _RecordingMemoryStore())
 
 
 @pytest.mark.asyncio

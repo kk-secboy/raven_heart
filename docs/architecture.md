@@ -227,10 +227,12 @@ idempotency rules, and distributed retry scheduling.
 `MemoryCenter` carries richer backend contracts through `MemoryStoreSpec`,
 `MemoryQuery`, `MemoryRoute`, and `MemorySearchPlan`. Query modes cover keyword,
 semantic, vector, graph, and hybrid retrieval; store specs advertise backend
-kind, namespace coverage, tags, and vector/graph capability flags. This lets a
-runtime mount PG, vector DB, graph/RAG, or product-memory adapters without
-changing runner/ReAct code, while the SDK still records a prompt-safe route and
-query plan for trace/replay.
+kind, namespace coverage, tags, location, runtime ownership, and vector/graph
+capability flags. `ExternalMemoryStore` wraps runtime-owned PG, vector DB,
+graph/RAG, or product-memory adapters with the same manifest shape as SDK-local
+stores without importing their drivers. This lets a runtime mount external
+memory adapters without changing runner/ReAct code, while the SDK still records
+a prompt-safe route and query plan for trace/replay.
 
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; inspectable or local durable runs can use

@@ -23,6 +23,7 @@ MemoryBackendKind = Literal[
     "vector",
     "graph",
     "product",
+    "external",
     "custom",
 ]
 MemoryQueryMode = Literal["keyword", "semantic", "vector", "graph", "hybrid"]
@@ -158,6 +159,8 @@ class MemoryStoreSpec:
     readable: bool = True
     writable: bool = True
     backend_kind: MemoryBackendKind = "custom"
+    core_builtin: bool = True
+    location: str = ""
     namespaces: tuple[str, ...] = ()
     supports_keyword: bool = True
     supports_semantic: bool = True
@@ -173,6 +176,8 @@ class MemoryStoreSpec:
             "readable": self.readable,
             "writable": self.writable,
             "backend_kind": self.backend_kind,
+            "core_builtin": self.core_builtin,
+            "location": self.location,
             "backend": storage_backend_manifest(
                 role="memory",
                 kind=cast(StorageBackendKind, self.backend_kind),
@@ -188,6 +193,8 @@ class MemoryStoreSpec:
                     }.items()
                     if enabled
                 ),
+                location=self.location,
+                core_builtin=self.core_builtin,
                 metadata={"tags": list(self.tags)},
             ),
             "namespaces": list(self.namespaces),
@@ -435,6 +442,8 @@ class MemoryCenter(MemoryPort):
         supports_semantic: bool = True,
         supports_vector: bool = False,
         supports_graph: bool = False,
+        core_builtin: bool = True,
+        location: str = "",
         tags: tuple[str, ...] = (),
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -450,6 +459,8 @@ class MemoryCenter(MemoryPort):
                 readable=readable,
                 writable=writable,
                 backend_kind=resolved_backend_kind,
+                core_builtin=core_builtin,
+                location=location,
                 namespaces=tuple(namespaces),
                 supports_keyword=supports_keyword,
                 supports_semantic=supports_semantic,
@@ -460,6 +471,11 @@ class MemoryCenter(MemoryPort):
             ),
             store=store,
         )
+
+    def register_spec(self, spec: MemoryStoreSpec, store: MemoryPort) -> None:
+        if not spec.name:
+            raise ValueError("memory store name is required")
+        self._stores[spec.name] = _MemoryStoreMount(spec=spec, store=store)
 
     def get(self, name: str) -> MemoryPort:
         mount = self._stores.get(name)
@@ -645,6 +661,72 @@ class InMemoryMemoryStore(MemoryPort):
             "backend_kind": "in_memory",
             "backend": storage_backend_manifest(role="memory", kind="in_memory"),
             "record_count": len(self.records),
+        }
+
+
+class ExternalMemoryStore(MemoryPort):
+    """Runtime-owned memory adapter wrapper.
+
+    This class deliberately does not open database connections. It gives PG,
+    vector DB, graph, product-memory, or other runtime adapters the same
+    prompt-safe manifest and `MemoryPort` shape as SDK-local stores.
+    """
+
+    def __init__(
+        self,
+        adapter: MemoryPort,
+        *,
+        name: str,
+        backend_kind: MemoryBackendKind = "external",
+        priority: int = 0,
+        readable: bool = True,
+        writable: bool = True,
+        namespaces: tuple[str, ...] = (),
+        supports_keyword: bool = True,
+        supports_semantic: bool = True,
+        supports_vector: bool = False,
+        supports_graph: bool = False,
+        tags: tuple[str, ...] = (),
+        location: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not name:
+            raise ValueError("external memory store name is required")
+        self.adapter = adapter
+        self._spec = MemoryStoreSpec(
+            name=name,
+            priority=priority,
+            readable=readable,
+            writable=writable,
+            backend_kind=backend_kind,
+            core_builtin=False,
+            location=location,
+            namespaces=tuple(namespaces),
+            supports_keyword=supports_keyword,
+            supports_semantic=supports_semantic,
+            supports_vector=supports_vector,
+            supports_graph=supports_graph,
+            tags=tuple(tags),
+            metadata=dict(metadata or {}),
+        )
+
+    @property
+    def spec(self) -> MemoryStoreSpec:
+        return self._spec
+
+    async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
+        return await self.adapter.search(query)
+
+    async def write(self, item: MemoryWrite) -> None:
+        await self.adapter.write(item)
+
+    def manifest(self) -> dict[str, Any]:
+        adapter_manifest = getattr(self.adapter, "manifest", None)
+        return {
+            "schema_version": "agent-core-external-memory-store/v1",
+            "backend_kind": self._spec.backend_kind,
+            "store": self._spec.manifest(),
+            "adapter": adapter_manifest() if callable(adapter_manifest) else {},
         }
 
 
