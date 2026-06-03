@@ -17,6 +17,7 @@ RunStatus = Literal[
     "running",
     "completed",
     "cancelled",
+    "timeout",
     "failed",
     "max_iterations",
     "stalled",
@@ -24,10 +25,12 @@ RunStatus = Literal[
     "approval_required",
 ]
 TurnStatus = Literal["running", "completed", "cancelled", "failed"]
+RunInterruptKind = Literal["cancelled", "timeout", "deadline", "external"]
 TERMINAL_RUN_STATUSES = frozenset(
     {
         "completed",
         "cancelled",
+        "timeout",
         "failed",
         "max_iterations",
         "stalled",
@@ -221,13 +224,78 @@ class ResumeIndex:
 
 
 @dataclass
+class RunInterrupt:
+    kind: RunInterruptKind
+    reason: str = ""
+    created_at: str = field(default_factory=utc_now_iso)
+    deadline_at: str = ""
+    timeout_seconds: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-run-interrupt/v1",
+            "kind": self.kind,
+            "reason": self.reason,
+            "created_at": self.created_at,
+            "deadline_at": self.deadline_at,
+            "timeout_seconds": self.timeout_seconds,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass
 class CancelToken:
     cancelled: bool = False
     reason: str = ""
+    interrupt: RunInterrupt | None = None
 
-    def cancel(self, reason: str = "") -> None:
+    def interrupt_with(
+        self,
+        kind: RunInterruptKind,
+        reason: str = "",
+        *,
+        deadline_at: str = "",
+        timeout_seconds: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RunInterrupt:
         self.cancelled = True
         self.reason = reason
+        self.interrupt = RunInterrupt(
+            kind=kind,
+            reason=reason,
+            deadline_at=deadline_at,
+            timeout_seconds=timeout_seconds,
+            metadata=dict(metadata or {}),
+        )
+        return self.interrupt
+
+    def cancel(self, reason: str = "", *, metadata: dict[str, Any] | None = None) -> None:
+        self.interrupt_with("cancelled", reason, metadata=metadata)
+
+    def timeout(
+        self,
+        reason: str = "run timeout",
+        *,
+        timeout_seconds: float | None = None,
+        deadline_at: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.interrupt_with(
+            "timeout",
+            reason,
+            deadline_at=deadline_at,
+            timeout_seconds=timeout_seconds,
+            metadata=metadata,
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-cancel-token/v1",
+            "cancelled": self.cancelled,
+            "reason": self.reason,
+            "interrupt": self.interrupt.manifest() if self.interrupt is not None else None,
+        }
 
 
 class AgentHarness(Protocol):

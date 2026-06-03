@@ -687,3 +687,48 @@ async def test_agent_session_manager_cancels_background_run() -> None:
     assert manager.run_state(run_key).status == "cancelled"
     assert manager.cancel(run_key) is False
 
+
+@pytest.mark.asyncio
+async def test_agent_runner_passes_request_timeout_to_react_executor() -> None:
+    provider = _BlockingProvider()
+    journal = InMemoryAgentJournal()
+    session = AgentSession(
+        profile=AgentProfile(name="timeout-runner"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        harness=journal,
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(task="slow task", timeout_seconds=0.01)
+    )
+
+    assert outcome.result.status == "timeout"
+    assert outcome.result.metadata["interrupt"]["kind"] == "timeout"
+    assert outcome.prompt_manifest["metadata"]["timeout_seconds"] == 0.01
+    assert outcome.trace_manifest["run"]["status"] == "timeout"
+    assert journal.finished[-1]["status"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_agent_session_manager_marks_timeout_run_terminal() -> None:
+    provider = _BlockingProvider()
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="managed-timeout"),
+            provider=provider,
+            tools=MockToolRuntime(),
+        )
+    )
+
+    outcome = await manager.run(
+        "managed-timeout",
+        AgentRunRequest(task="slow task", timeout_seconds=0.01),
+    )
+    run = manager.runs()[0]
+
+    assert outcome.result.status == "timeout"
+    assert run.status == "timeout"
+    assert manager.cancel(run.run_key) is False
+

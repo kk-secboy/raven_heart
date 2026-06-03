@@ -199,6 +199,15 @@ approved grants whose subject matches the current policy gate, then emits
 semantics in the SDK while leaving people, permissions, and workflow routing to
 the runtime.
 
+`RunInterrupt` is the SDK-level contract for cancelled, timed-out, deadline, and
+external-interrupt runs. `CancelToken` keeps a prompt-safe interrupt manifest,
+`AgentRunRequest.timeout_seconds` applies a request-level deadline, and
+`ReActExecutor` records timeout checkpoints plus `run_timeout` events at
+provider/tool await boundaries before finishing the run with status `timeout`.
+Runtimes own process killing, worker cancellation, UI buttons, queue state, and
+distributed lease cleanup; the SDK owns the portable lifecycle semantics,
+checkpoint shape, event schema, and trace/replay metadata.
+
 ## Adapter Policy
 
 Adapters are useful, but they should not live in this repository while the SDK

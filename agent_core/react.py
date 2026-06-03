@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Awaitable, TypeVar
 
 from agent_core.actions import (
     ActionRegistry,
@@ -24,7 +26,7 @@ from agent_core.artifacts import ArtifactStorePort
 from agent_core.config import RuntimeBudget
 from agent_core.errors import ActionError, ProviderError
 from agent_core.events import AgentEvent, EventSinkPort, NullEventSink
-from agent_core.harness import AgentHarness, CancelToken, RunState
+from agent_core.harness import AgentHarness, CancelToken, RunInterrupt, RunState, TurnState
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig
 from agent_core.memory import MemoryPort, MemoryQuery, NullMemory
 from agent_core.policy import (
@@ -56,6 +58,8 @@ from agent_core.tools import (
     tool_manifest_item,
 )
 
+T = TypeVar("T")
+
 
 @dataclass(frozen=True)
 class ReActConfig:
@@ -72,6 +76,7 @@ class ReActConfig:
     budget: RuntimeBudget = field(default_factory=RuntimeBudget)
     loop_guard: LoopGuardConfig = field(default_factory=LoopGuardConfig)
     structured_output: StructuredOutputSpec | None = None
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +140,7 @@ class ReActExecutor:
         run = await self.harness.start_run(task)
         await self._emit("run_started", run, payload={"task": task})
         await self._record_timeline(task, kind="task")
+        deadline = _deadline_after(self.config.timeout_seconds)
         messages = [LLMMessage(role="user", content=prompt.render())]
         memory_message = await self._memory_message(task)
         if memory_message is not None:
@@ -144,14 +150,25 @@ class ReActExecutor:
         structured_output_repairs = 0
 
         for index in range(self.config.max_iterations):
+            if _deadline_expired(deadline):
+                self.cancel_token.timeout(
+                    "run timeout",
+                    timeout_seconds=self.config.timeout_seconds,
+                    metadata={"iteration": index, "phase": "before_turn"},
+                )
+                return await self._finish_interrupted(
+                    run,
+                    status="timeout",
+                    event_type="run_timeout",
+                    output=self.cancel_token.reason or "run timeout",
+                    iterations=index,
+                )
             if self.cancel_token.cancelled:
-                result_output = self.cancel_token.reason or "run cancelled"
-                await self.harness.finish_run(run, "cancelled", {"output": result_output})
-                await self._emit("run_cancelled", run, payload={"reason": result_output})
-                return ReActResult(
-                    run_id=run.run_id,
+                return await self._finish_interrupted(
+                    run,
                     status="cancelled",
-                    output=result_output,
+                    event_type="run_cancelled",
+                    output=self.cancel_token.reason or "run cancelled",
                     iterations=index,
                 )
             turn = await self.harness.start_turn(run, index)
@@ -164,33 +181,42 @@ class ReActExecutor:
                 payload={"manifest": prompt.manifest()},
             )
 
-            response = await self._call_provider(
-                LLMRequest(
-                    messages=list(messages),
-                    model=self.config.model,
-                    metadata=_provider_request_metadata(self.config.budget),
-                ),
-                run=run,
-                turn_id=turn.turn_id,
-            )
-            if self.cancel_token.cancelled:
-                result_output = self.cancel_token.reason or "run cancelled"
-                await self.harness.checkpoint(
-                    turn,
-                    {"status": "cancelled", "reason": result_output, "iteration": index},
+            try:
+                response = await self._await_with_deadline(
+                    self._call_provider(
+                        LLMRequest(
+                            messages=list(messages),
+                            model=self.config.model,
+                            metadata=_provider_request_metadata(self.config.budget),
+                        ),
+                        run=run,
+                        turn_id=turn.turn_id,
+                    ),
+                    deadline,
                 )
-                await self.harness.finish_run(run, "cancelled", {"output": result_output})
-                await self._emit(
-                    "run_cancelled",
+            except asyncio.TimeoutError:
+                self.cancel_token.timeout(
+                    "provider call timed out",
+                    timeout_seconds=self.config.timeout_seconds,
+                    metadata={"iteration": index, "phase": "provider"},
+                )
+                return await self._finish_interrupted(
                     run,
-                    turn_id=turn.turn_id,
-                    payload={"reason": result_output},
-                )
-                return ReActResult(
-                    run_id=run.run_id,
-                    status="cancelled",
-                    output=result_output,
+                    status="timeout",
+                    event_type="run_timeout",
+                    output=self.cancel_token.reason or "provider call timed out",
                     iterations=index + 1,
+                    turn=turn,
+                    checkpoint_state={"phase": "provider"},
+                )
+            if self.cancel_token.cancelled:
+                return await self._finish_interrupted(
+                    run,
+                    status="cancelled",
+                    event_type="run_cancelled",
+                    output=self.cancel_token.reason or "run cancelled",
+                    iterations=index + 1,
+                    turn=turn,
                 )
             await self.harness.record_model_event(
                 turn,
@@ -436,7 +462,27 @@ class ReActExecutor:
                     metadata=finish_metadata,
                 )
 
-            tool_result = await self._execute_action(run, turn.turn_id, action)
+            try:
+                tool_result = await self._await_with_deadline(
+                    self._execute_action(run, turn.turn_id, action),
+                    deadline,
+                )
+            except asyncio.TimeoutError:
+                self.cancel_token.timeout(
+                    "tool call timed out",
+                    timeout_seconds=self.config.timeout_seconds,
+                    metadata={"iteration": index, "phase": "tool", "action": action.name},
+                )
+                return await self._finish_interrupted(
+                    run,
+                    status="timeout",
+                    event_type="run_timeout",
+                    output=self.cancel_token.reason or "tool call timed out",
+                    iterations=index + 1,
+                    turn=turn,
+                    checkpoint_state={"phase": "tool", "action": action.name},
+                    final_action=action,
+                )
             prompt_tool_result = await self._prompt_safe_tool_result(tool_result)
             await self.harness.record_tool_call(
                 turn,
@@ -537,6 +583,67 @@ class ReActExecutor:
             iterations=self.config.max_iterations,
             final_action=final_action,
         )
+
+    async def _finish_interrupted(
+        self,
+        run: RunState,
+        *,
+        status: str,
+        event_type: str,
+        output: str,
+        iterations: int,
+        turn: TurnState | None = None,
+        checkpoint_state: dict[str, Any] | None = None,
+        final_action: ParsedAction | None = None,
+    ) -> ReActResult:
+        interrupt = self.cancel_token.interrupt
+        if interrupt is None:
+            interrupt = RunInterrupt(
+                kind="timeout" if status == "timeout" else "cancelled",
+                reason=output,
+            )
+        interrupt_manifest = interrupt.manifest()
+        if turn is not None:
+            await self.harness.checkpoint(
+                turn,
+                {
+                    "status": status,
+                    "reason": output,
+                    "iteration": max(0, iterations - 1),
+                    "interrupt": interrupt_manifest,
+                    **dict(checkpoint_state or {}),
+                },
+            )
+        await self.harness.finish_run(
+            run,
+            status,
+            {"output": output, "interrupt": interrupt_manifest},
+        )
+        await self._emit(
+            event_type,
+            run,
+            turn_id=turn.turn_id if turn is not None else "",
+            payload={"reason": output, "status": status, "interrupt": interrupt_manifest},
+        )
+        return ReActResult(
+            run_id=run.run_id,
+            status=status,
+            output=output,
+            iterations=iterations,
+            final_action=final_action,
+            metadata={"interrupt": interrupt_manifest},
+        )
+
+    async def _await_with_deadline(self, awaitable: Awaitable[T], deadline: float | None) -> T:
+        if deadline is None:
+            return await awaitable
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise asyncio.TimeoutError
+        return await asyncio.wait_for(awaitable, timeout=remaining)
 
     async def _call_provider(
         self,
@@ -1081,6 +1188,18 @@ def _provider_request_metadata(budget: RuntimeBudget) -> dict[str, Any]:
     if budget.max_cost_usd is not None:
         metadata["max_cost_usd"] = budget.max_cost_usd
     return metadata
+
+
+def _deadline_after(timeout_seconds: float | None) -> float | None:
+    if timeout_seconds is None:
+        return None
+    if timeout_seconds <= 0:
+        return time.monotonic()
+    return time.monotonic() + timeout_seconds
+
+
+def _deadline_expired(deadline: float | None) -> bool:
+    return deadline is not None and time.monotonic() >= deadline
 
 
 def _approval_request_manifest(approval: ApprovalRequest | None) -> dict[str, Any] | None:

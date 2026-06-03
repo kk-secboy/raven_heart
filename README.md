@@ -98,6 +98,8 @@ agent_core never imports runtime
   `AgentSessionManager.start_resume()` for SDK-level resume entrypoints.
 - Run manifest and error recording.
 - Terminal status checks.
+- `RunInterrupt` and `CancelToken` manifests for unified cancel, timeout,
+  deadline, and external-interrupt metadata.
 - Policy terminal statuses: `denied` and `approval_required`.
 - `AgentJournalReplay` for replayable event timelines and journal consistency audit.
 - `AgentRunTraceBundle` for per-run prompt, provider, approval, replay,
@@ -118,6 +120,9 @@ agent_core never imports runtime
 - Prompt timeline.
 - Memory injection.
 - Artifact compaction.
+- Request-level timeout handling through `AgentRunRequest.timeout_seconds`.
+- Timeout checkpoints, `run_timeout` events, and traceable interrupt manifests
+  for provider/tool await boundaries.
 
 ### Multi-Agent Handoff
 
@@ -441,6 +446,8 @@ A runtime should:
 5. Build an `AgentSession`.
 6. Run it with `AgentRunner`.
 7. Resume from checkpoints by passing a `ResumeToken` into `AgentRunRequest`.
+8. Optionally set `AgentRunRequest.timeout_seconds` or cancel background runs
+   through `AgentSessionManager.cancel()`.
 
 The runtime may be Raven, a code agent, an ops agent, or any other host. The runtime owns concrete tools, credentials, persistence, UI, and deployment. `raven_heart` owns the reusable agent mechanics.
 
@@ -453,6 +460,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider call audit | MVP implemented |
 | Provider transport contract | MVP implemented |
 | Trace correlation | MVP implemented |
+| Interrupt/cancel/timeout semantics | MVP implemented |
 | Tool center | MVP implemented |
 | Tool replay store | MVP implemented |
 | Skill center | MVP implemented |

@@ -30,6 +30,7 @@ EventType = Literal[
     "error",
     "run_finished",
     "run_cancelled",
+    "run_timeout",
 ]
 
 _EVENT_TYPES = {
@@ -50,6 +51,7 @@ _EVENT_TYPES = {
     "error",
     "run_finished",
     "run_cancelled",
+    "run_timeout",
 }
 
 

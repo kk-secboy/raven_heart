@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent_core.actions import (
@@ -32,6 +34,33 @@ from agent_core.tools import (
     ToolSpec,
 )
 from agent_core.testing import InMemoryHarness, MockLLMProvider, MockMemory, MockToolRuntime
+
+
+class _BlockingProvider:
+    def __init__(self) -> None:
+        self.requests: list[LLMRequest] = []
+        self.release = asyncio.Event()
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        await self.release.wait()
+        return LLMResponse(action={"action": "finish", "arguments": {"output": "late"}})
+
+
+class _BlockingToolRuntime(MockToolRuntime):
+    def __init__(self) -> None:
+        super().__init__({"lookup": ""})
+        self.release = asyncio.Event()
+
+    async def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        self.invocations.append(invocation)
+        await self.release.wait()
+        return ToolResult(
+            call_id=invocation.call_id,
+            tool_name=invocation.tool_name,
+            status="completed",
+            content="late",
+        )
 
 
 @pytest.mark.asyncio
@@ -277,6 +306,80 @@ async def test_react_executor_honors_cancel_token_before_first_turn() -> None:
     assert result.iterations == 0
     assert provider.requests == []
     assert harness.finished[-1]["status"] == "cancelled"
+
+
+def test_cancel_token_records_interrupt_manifest() -> None:
+    cancel = CancelToken()
+
+    cancel.timeout(
+        "provider call timed out",
+        timeout_seconds=0.25,
+        metadata={"phase": "provider"},
+    )
+
+    manifest = cancel.manifest()
+    assert manifest["cancelled"] is True
+    assert manifest["reason"] == "provider call timed out"
+    assert manifest["interrupt"]["schema_version"] == "agent-core-run-interrupt/v1"
+    assert manifest["interrupt"]["kind"] == "timeout"
+    assert manifest["interrupt"]["timeout_seconds"] == 0.25
+    assert manifest["interrupt"]["metadata"]["phase"] == "provider"
+
+
+@pytest.mark.asyncio
+async def test_react_executor_times_out_provider_call_with_interrupt_manifest() -> None:
+    provider = _BlockingProvider()
+    harness = InMemoryHarness()
+    events = ListEventSink()
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=MockToolRuntime(),
+        action_registry=ActionRegistry(),
+        harness=harness,
+        event_sink=events,
+        config=ReActConfig(timeout_seconds=0.01),
+    )
+
+    result = await executor.run("slow provider", PromptIR.from_parts(dynamic="task"))
+
+    assert result.status == "timeout"
+    assert result.iterations == 1
+    assert result.metadata["interrupt"]["kind"] == "timeout"
+    assert harness.finished[-1]["status"] == "timeout"
+    assert harness.finished[-1]["result"]["interrupt"]["metadata"]["phase"] == "provider"
+    assert harness.checkpoints[-1].state["status"] == "timeout"
+    assert harness.checkpoints[-1].state["phase"] == "provider"
+    assert any(event.type == "run_timeout" for event in events.events)
+
+
+@pytest.mark.asyncio
+async def test_react_executor_times_out_tool_call_with_interrupt_manifest() -> None:
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"query": "slow"}},
+            }
+        ]
+    )
+    tools = _BlockingToolRuntime()
+    harness = InMemoryHarness()
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=tools,
+        action_registry=ActionRegistry(),
+        harness=harness,
+        config=ReActConfig(timeout_seconds=0.01),
+    )
+
+    result = await executor.run("slow tool", PromptIR.from_parts(dynamic="task"))
+
+    assert result.status == "timeout"
+    assert result.output == "tool call timed out"
+    assert result.metadata["interrupt"]["metadata"]["phase"] == "tool"
+    assert harness.finished[-1]["status"] == "timeout"
+    assert harness.checkpoints[-1].state["phase"] == "tool"
+    assert tools.invocations[0].tool_name == "lookup"
 
 
 @pytest.mark.asyncio

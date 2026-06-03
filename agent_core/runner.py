@@ -125,6 +125,7 @@ class AgentRunRequest:
     resume_token: ResumeToken | None = None
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ class AgentResumeRequest:
     refresh: bool = False
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
+    timeout_seconds: float | None = None
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -149,6 +151,7 @@ class AgentResumeRequest:
             "has_context": self.context is not None,
             "has_approval_resume": self.approval_resume is not None,
             "has_structured_output": self.structured_output is not None,
+            "timeout_seconds": self.timeout_seconds,
         }
 
 
@@ -440,7 +443,11 @@ class AgentRunner:
         prompt = self._prompt_builder().build(context).trim_to_budget(
             self.session.profile.budget.max_prompt_bytes
         )
-        executor = self._executor(run_request.approval_resume, run_request.structured_output)
+        executor = self._executor(
+            run_request.approval_resume,
+            run_request.structured_output,
+            run_request.timeout_seconds,
+        )
         result = await executor.run(run_request.task, prompt)
         session_manifest = self.session.manifest()
         trace_manifest = await self._trace_manifest(
@@ -557,6 +564,8 @@ class AgentRunner:
             metadata["approval_resume"] = approval_resume_manifest
         if timeline_reduction_manifest:
             metadata["timeline_reduction"] = timeline_reduction_manifest
+        if request.timeout_seconds is not None:
+            metadata["timeout_seconds"] = request.timeout_seconds
         schema = base.schema
         if request.structured_output is not None:
             metadata["structured_output"] = request.structured_output.manifest()
@@ -630,6 +639,7 @@ class AgentRunner:
         self,
         approval_resume: ApprovalResumeContext | None = None,
         structured_output: StructuredOutputSpec | None = None,
+        timeout_seconds: float | None = None,
     ) -> ReActExecutor:
         budget = self.session.profile.budget
         return ReActExecutor(
@@ -656,6 +666,7 @@ class AgentRunner:
                 max_iterations=budget.max_iterations,
                 budget=budget,
                 structured_output=structured_output,
+                timeout_seconds=timeout_seconds,
             ),
         )
 
@@ -786,7 +797,7 @@ class AgentSessionManager:
 
     def cancel(self, run_key: str, reason: str = "cancelled by manager") -> bool:
         run = self._runs.get(run_key)
-        if run is None or run.status in {"completed", "cancelled", "failed"}:
+        if run is None or run.status in {"completed", "cancelled", "timeout", "failed"}:
             return False
         session = self._sessions.get(run.session_name)
         if session is not None:
@@ -1019,6 +1030,7 @@ def _run_request_from_resume(
         resume_token=candidate.token,
         approval_resume=request.approval_resume,
         structured_output=request.structured_output,
+        timeout_seconds=request.timeout_seconds,
     )
 
 
