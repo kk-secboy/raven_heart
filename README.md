@@ -183,6 +183,8 @@ and downstream persistence.
 - `AgentEvent` and `EventSinkPort`.
 - Monotonic event sequencing inside `ReActExecutor`.
 - `EventLogPort` for event logs that can return stored records and manifests.
+- `EventStreamCursor` and `EventStreamBatch` for provider-neutral event paging
+  that runtime-owned SSE/WebSocket/polling adapters can consume.
 - `ListEventSink` for lightweight event capture and manifest export.
 - `SQLiteEventSink` and `MarkdownEventSink` for durable local or inspectable
   SDK event logs.

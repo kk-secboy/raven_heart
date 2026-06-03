@@ -55,6 +55,7 @@ _EVENT_TYPES = {
     "run_cancelled",
     "run_timeout",
 }
+_TERMINAL_EVENT_TYPES = {"run_finished", "run_cancelled", "run_timeout"}
 
 
 def utc_now_iso() -> str:
@@ -78,6 +79,84 @@ class AgentEvent:
             "sequence": self.sequence,
             "payload": dict(self.payload),
             "created_at": self.created_at,
+        }
+
+
+@dataclass(frozen=True)
+class EventStreamCursor:
+    """Provider-neutral cursor for runtime-owned SSE/WebSocket/polling streams."""
+
+    run_id: str = ""
+    after_sequence: int = 0
+    limit: int = 100
+    event_types: tuple[EventType, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "after_sequence", max(0, int(self.after_sequence)))
+        object.__setattr__(self, "limit", max(1, int(self.limit)))
+        object.__setattr__(self, "event_types", tuple(dict.fromkeys(self.event_types)))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-event-stream-cursor/v1",
+            "run_id": self.run_id,
+            "after_sequence": self.after_sequence,
+            "limit": self.limit,
+            "event_types": list(self.event_types),
+        }
+
+
+@dataclass(frozen=True)
+class EventStreamBatch:
+    """One prompt-safe page of events ready for a runtime stream adapter."""
+
+    cursor: EventStreamCursor
+    events: tuple[AgentEvent, ...] = ()
+    next_after_sequence: int = 0
+    has_more: bool = False
+    terminal: bool = False
+
+    @classmethod
+    def from_log(
+        cls,
+        log: "EventLogPort",
+        cursor: EventStreamCursor | None = None,
+    ) -> "EventStreamBatch":
+        request = cursor or EventStreamCursor()
+        records = log.records(run_id=request.run_id or None)
+        selected = tuple(
+            event
+            for event in sorted(records, key=lambda item: item.sequence)
+            if event.sequence > request.after_sequence
+            and (not request.event_types or event.type in request.event_types)
+        )
+        page = selected[: request.limit]
+        return cls(
+            cursor=request,
+            events=page,
+            next_after_sequence=page[-1].sequence if page else request.after_sequence,
+            has_more=len(selected) > len(page),
+            terminal=any(event.type in _TERMINAL_EVENT_TYPES for event in page),
+        )
+
+    def next_cursor(self) -> EventStreamCursor:
+        return EventStreamCursor(
+            run_id=self.cursor.run_id,
+            after_sequence=self.next_after_sequence,
+            limit=self.cursor.limit,
+            event_types=self.cursor.event_types,
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-event-stream-batch/v1",
+            "cursor": self.cursor.manifest(),
+            "next_cursor": self.next_cursor().manifest(),
+            "event_count": len(self.events),
+            "events": [event.manifest() for event in self.events],
+            "next_after_sequence": self.next_after_sequence,
+            "has_more": self.has_more,
+            "terminal": self.terminal,
         }
 
 
