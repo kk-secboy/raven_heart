@@ -34,7 +34,15 @@ from agent_core.artifacts import (
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
-from agent_core.events import AgentEvent, EventSinkPort, ListEventSink, NullEventSink
+from agent_core.events import (
+    AgentEvent,
+    EventLogPort,
+    EventSinkPort,
+    ListEventSink,
+    MarkdownEventSink,
+    NullEventSink,
+    SQLiteEventSink,
+)
 from agent_core.evals import (
     DefaultTraceEvaluator,
     TraceEvalHarness,
@@ -289,6 +297,7 @@ __all__ = [
     "DefaultContextReducer",
     "DefaultTraceEvaluator",
     "EventSinkPort",
+    "EventLogPort",
     "HandoffDecision",
     "HandoffDecisionStatus",
     "HandoffRecord",
@@ -297,6 +306,7 @@ __all__ = [
     "HandoffRouterPort",
     "HandoffSpec",
     "ListEventSink",
+    "MarkdownEventSink",
     "NullEventSink",
     "DEFAULT_PROMPT_TRIM_ORDER",
     "LLMProviderPort",
@@ -363,6 +373,7 @@ __all__ = [
     "RuleBasedPolicy",
     "RuntimeBudget",
     "SQLiteAgentJournal",
+    "SQLiteEventSink",
     "SQLiteJournalStore",
     "SkillRegistry",
     "SkillSpec",

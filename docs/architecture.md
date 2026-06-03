@@ -55,7 +55,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Planner state | `PlannerStorePort` | In-memory, SQLite, Markdown | PG, workflow DB, planner audit store |
 | Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, CI/build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
-| Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
+| Events | `EventSinkPort`, `EventLogPort` | In-memory, SQLite, Markdown | UI stream, logs, metrics, audit pipeline |
 
 Structured output is intentionally contract-based rather than provider-specific.
 `StructuredOutputSpec` can be attached to an `AgentRunRequest`; the runner injects
@@ -131,8 +131,10 @@ replay. Production PG/object-storage backends should live in the runtime or a
 separate adapter package.
 
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
-can capture them with `ListEventSink`; production runtimes should implement
-`EventSinkPort` for their own logs, UI streams, metrics, or audit systems.
+can capture them with `ListEventSink`; inspectable or local durable runs can use
+`SQLiteEventSink` or `MarkdownEventSink`. Production runtimes should implement
+`EventSinkPort` or `EventLogPort` for their own logs, UI streams, metrics,
+retention policy, or audit systems.
 
 `ContextReducerPort` handles automatic timeline/context reduction as a core
 mechanic. `DefaultContextReducer` is deterministic and dependency-free, while

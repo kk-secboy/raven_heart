@@ -31,7 +31,7 @@ ops agents, research agents, and future automation systems.
 - Run trace store port plus in-memory, SQLite, and Markdown trace stores.
 - Trace replay and evaluation harness for provider-neutral run audits.
 - Manager run state store port plus in-memory, SQLite, and Markdown stores.
-- Sequenced event stream and event log manifests.
+- Sequenced event stream plus in-memory, SQLite, and Markdown event logs.
 - Planner protocol plus in-memory, SQLite, and Markdown plan state stores.
 - Multi-agent handoff specs, routing decisions, and lightweight coordination.
 - Human-in-loop approval request and decision queue primitives.
@@ -73,7 +73,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Context reducer protocol | Domain summarizers, archive storage, and retrieval strategy |
 | Structured output contracts | Domain schemas and downstream business handling |
 | Approval request and decision queue | Approval UI, identity, permissions, and workflow routing |
-| Harness state contracts | API routes, UI events, production persistence backend |
+| Harness state and event log contracts | API routes, UI streams, metrics, production persistence backend |
 
 The dependency direction must always be:
 
@@ -148,8 +148,15 @@ and downstream persistence.
 
 - `AgentEvent` and `EventSinkPort`.
 - Monotonic event sequencing inside `ReActExecutor`.
+- `EventLogPort` for event logs that can return stored records and manifests.
 - `ListEventSink` for lightweight event capture and manifest export.
+- `SQLiteEventSink` and `MarkdownEventSink` for durable local or inspectable
+  SDK event logs.
 - `approval_requested` events when policy requires human approval.
+
+The SDK owns event schemas, sequencing inside an executor, and lightweight
+event-log persistence. Runtimes own WebSocket/SSE rendering, metrics export,
+multi-tenant audit storage, retention policy, and observability pipelines.
 
 ### Trace Bundle
 
@@ -293,7 +300,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Planner state | `PlannerStorePort` | In-memory, SQLite, Markdown | Postgres, workflow DB, planner audit store |
 | Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
-| Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
+| Events | `EventSinkPort`, `EventLogPort` | In-memory, SQLite, Markdown | UI stream, logs, metrics, audit pipeline |
 
 This keeps `agent_core` small and importable while still leaving a clean path to
 production storage. A runtime should bring its own durable backends when it needs
