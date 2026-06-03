@@ -16,7 +16,15 @@ from agent_core.runner import AgentRunner, AgentSession
 from agent_core.providers import LLMProviderCenter
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.testing import MockLLMProvider, MockToolRuntime
-from agent_core.tools import InMemoryToolReplay
+from agent_core.tools import (
+    InMemoryToolReplay,
+    ToolExecutionCenter,
+    ToolInvocation,
+    ToolRegistry,
+    ToolResult,
+    ToolRetryPolicy,
+    ToolSpec,
+)
 from agent_core.trace import InMemoryRunTraceStore
 
 
@@ -205,6 +213,82 @@ def test_trace_eval_reports_resume_contract_failures() -> None:
     } <= codes
 
 
+def test_trace_eval_validates_tool_execution_retry_contracts() -> None:
+    trace = {
+        **_trace_manifest(),
+        "event_log": {
+            "event_count": 2,
+            "events": [
+                {"type": "tool_started", "run_id": "run-1", "payload": {"tool_name": "lookup"}},
+                {
+                    "type": "tool_finished",
+                    "run_id": "run-1",
+                    "payload": {
+                        "tool_name": "lookup",
+                        "call_id": "call-1",
+                        "execution": {
+                            "schema_version": "agent-core-tool-execution-summary/v1",
+                            "tool_name": "lookup",
+                            "call_id": "call-1",
+                            "attempt_count": 2,
+                            "retried": True,
+                            "final_status": "completed",
+                            "final_ok": True,
+                            "attempt_statuses": ["failed", "completed"],
+                            "retryable_attempts": [1],
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_tool_execution=True,
+            required_tool_execution_names=("lookup",),
+            required_tool_execution_ok_names=("lookup",),
+            required_tool_retry_names=("lookup",),
+            min_tool_attempts={"lookup": 2},
+        ),
+    )
+    forbidden = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(forbidden_tool_retry_names=("lookup",)),
+    )
+
+    assert report.ok
+    assert report.summary["tool_execution_count"] == 1
+    assert report.summary["retried_tool_names"] == ["lookup"]
+    assert report.summary["max_tool_attempt_count"] == 2
+    assert not forbidden.ok
+    assert {issue.code for issue in forbidden.issues} == {"forbidden_tool_retry"}
+
+
+def test_trace_eval_reports_tool_execution_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_tool_execution=True,
+            required_tool_execution_names=("lookup",),
+            required_tool_execution_ok_names=("lookup",),
+            required_tool_retry_names=("lookup",),
+            min_tool_attempts={"lookup": 2},
+        ),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "tool_execution_missing",
+        "missing_tool_execution",
+        "tool_execution_not_ok",
+        "missing_tool_retry",
+        "tool_attempts_below_minimum",
+    } <= codes
+
+
 def test_trace_replay_comparator_accepts_matching_trace() -> None:
     trace = _trace_manifest()
     report = TraceReplayComparator().compare(trace, trace)
@@ -351,3 +435,54 @@ async def test_trace_eval_harness_validates_stored_resume_runner_trace() -> None
     assert outcome.trace_manifest["summary"]["has_resume_plan"] is True
     assert outcome.trace_manifest["summary"]["resume_plan_ready"] is True
     assert report.summary["resume_plan_checkpoint_id"] == checkpoint.checkpoint_id
+
+
+@pytest.mark.asyncio
+async def test_trace_eval_harness_validates_stored_tool_retry_trace() -> None:
+    attempts = 0
+    registry = ToolRegistry()
+
+    async def lookup(invocation: ToolInvocation) -> ToolResult:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return ToolResult(
+                call_id=invocation.call_id,
+                tool_name=invocation.tool_name,
+                status="failed",
+                error="temporary",
+                metadata={"retryable": True},
+            )
+        return ToolResult(call_id=invocation.call_id, tool_name=invocation.tool_name, content="found")
+
+    registry.register(ToolSpec(name="lookup"), lookup)
+    trace_store = InMemoryRunTraceStore()
+    session = AgentSession(
+        profile=AgentProfile(name="tool-retry-eval", budget=RuntimeBudget(max_iterations=3)),
+        provider=MockLLMProvider(
+            [
+                {"action": "call_tool", "arguments": {"tool_name": "lookup", "arguments": {}}},
+                {"action": "finish", "arguments": {"output": "done"}},
+            ]
+        ),
+        tools=ToolExecutionCenter(registry, retry_policy=ToolRetryPolicy(max_attempts=2)),
+        trace_store=trace_store,
+        event_sink=ListEventSink(),
+    )
+
+    outcome = await AgentRunner(session).run("retry lookup")
+    report = await TraceEvalHarness(trace_store=trace_store).evaluate_run(
+        outcome.result.run_id,
+        TraceEvalSpec(
+            expected_status="completed",
+            require_tool_execution=True,
+            required_tool_execution_names=("lookup",),
+            required_tool_execution_ok_names=("lookup",),
+            required_tool_retry_names=("lookup",),
+            min_tool_attempts={"lookup": 2},
+        ),
+    )
+
+    assert report.ok
+    assert attempts == 2
+    assert report.summary["retried_tool_names"] == ["lookup"]

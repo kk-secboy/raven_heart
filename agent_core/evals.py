@@ -80,8 +80,14 @@ class TraceEvalSpec:
     require_resume_plan: bool = False
     require_resume_plan_ready: bool = False
     expected_resume_checkpoint_id: str = ""
+    require_tool_execution: bool = False
     required_event_types: tuple[str, ...] = ()
     required_tool_names: tuple[str, ...] = ()
+    required_tool_execution_names: tuple[str, ...] = ()
+    required_tool_execution_ok_names: tuple[str, ...] = ()
+    required_tool_retry_names: tuple[str, ...] = ()
+    forbidden_tool_retry_names: tuple[str, ...] = ()
+    min_tool_attempts: dict[str, int] = field(default_factory=dict)
     forbidden_event_types: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -98,8 +104,14 @@ class TraceEvalSpec:
             "require_resume_plan": self.require_resume_plan,
             "require_resume_plan_ready": self.require_resume_plan_ready,
             "expected_resume_checkpoint_id": self.expected_resume_checkpoint_id,
+            "require_tool_execution": self.require_tool_execution,
             "required_event_types": list(self.required_event_types),
             "required_tool_names": list(self.required_tool_names),
+            "required_tool_execution_names": list(self.required_tool_execution_names),
+            "required_tool_execution_ok_names": list(self.required_tool_execution_ok_names),
+            "required_tool_retry_names": list(self.required_tool_retry_names),
+            "forbidden_tool_retry_names": list(self.forbidden_tool_retry_names),
+            "min_tool_attempts": dict(self.min_tool_attempts),
             "forbidden_event_types": list(self.forbidden_event_types),
             "metadata": dict(self.metadata),
         }
@@ -358,6 +370,16 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     )
                 )
 
+        tool_executions = _tool_execution_summaries(trace)
+        if spec.require_tool_execution and not tool_executions:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "tool_execution_missing",
+                    "tool execution summary is required",
+                )
+            )
+
         event_types = set(replay.event_types())
         for event_type in spec.required_event_types:
             if event_type not in event_types:
@@ -387,6 +409,62 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         f"required tool missing: {tool_name}",
                     )
                 )
+        tool_execution_by_name = _tool_execution_by_name(tool_executions)
+        for tool_name in spec.required_tool_execution_names:
+            if tool_name not in tool_execution_by_name:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_tool_execution",
+                        f"required tool execution missing: {tool_name}",
+                    )
+                )
+        for tool_name in spec.required_tool_execution_ok_names:
+            executions = tool_execution_by_name.get(tool_name, ())
+            if not any(bool(execution.get("final_ok")) for execution in executions):
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "tool_execution_not_ok",
+                        f"required tool execution did not finish ok: {tool_name}",
+                    )
+                )
+        for tool_name in spec.required_tool_retry_names:
+            executions = tool_execution_by_name.get(tool_name, ())
+            if not any(bool(execution.get("retried")) for execution in executions):
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_tool_retry",
+                        f"required tool retry missing: {tool_name}",
+                    )
+                )
+        for tool_name in spec.forbidden_tool_retry_names:
+            executions = tool_execution_by_name.get(tool_name, ())
+            if any(bool(execution.get("retried")) for execution in executions):
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_tool_retry",
+                        f"forbidden tool retry present: {tool_name}",
+                    )
+                )
+        for tool_name, min_attempts in spec.min_tool_attempts.items():
+            executions = tool_execution_by_name.get(str(tool_name), ())
+            actual = max((int(execution.get("attempt_count") or 0) for execution in executions), default=0)
+            if actual < int(min_attempts):
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "tool_attempts_below_minimum",
+                        f"tool attempts below minimum: {tool_name}",
+                        metadata={
+                            "tool_name": str(tool_name),
+                            "expected_min_attempts": int(min_attempts),
+                            "actual_attempts": actual,
+                        },
+                    )
+                )
 
         return TraceEvalReport(
             run_id=replay.run_id,
@@ -401,6 +479,18 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "cost_usd": cost,
                 "event_types": sorted(event_types),
                 "tool_names": sorted(tool_names),
+                "tool_execution_count": len(tool_executions),
+                "retried_tool_names": sorted(
+                    {
+                        str(execution.get("tool_name") or "")
+                        for execution in tool_executions
+                        if execution.get("retried") and execution.get("tool_name")
+                    }
+                ),
+                "max_tool_attempt_count": max(
+                    (int(execution.get("attempt_count") or 0) for execution in tool_executions),
+                    default=0,
+                ),
                 "has_resume": bool(resume),
                 "has_resume_plan": bool(resume_plan),
                 "resume_plan_ready": bool(resume_plan.get("ready")) if resume_plan else False,
@@ -754,3 +844,129 @@ def _tool_names(trace: dict[str, Any]) -> set[str]:
         if isinstance(payload, dict) and payload.get("tool_name"):
             names.add(str(payload.get("tool_name")))
     return names
+
+
+def _tool_execution_summaries(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    summaries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(summary: dict[str, Any], *, fallback_tool_name: str = "", fallback_call_id: str = "") -> None:
+        normalized = _normalize_tool_execution_summary(
+            summary,
+            fallback_tool_name=fallback_tool_name,
+            fallback_call_id=fallback_call_id,
+        )
+        key = _tool_execution_key(normalized)
+        if key in seen:
+            return
+        seen.add(key)
+        summaries.append(normalized)
+
+    for event in _event_log_events(trace):
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        execution = payload.get("execution")
+        if isinstance(execution, dict):
+            add(
+                execution,
+                fallback_tool_name=str(payload.get("tool_name") or ""),
+                fallback_call_id=str(payload.get("call_id") or ""),
+            )
+
+    for event in _journal_events(trace):
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        metadata = payload.get("metadata")
+        execution = metadata.get("tool_execution") if isinstance(metadata, dict) else None
+        if isinstance(execution, dict):
+            add(
+                execution,
+                fallback_tool_name=str(payload.get("tool_name") or ""),
+                fallback_call_id=str(payload.get("call_id") or ""),
+            )
+
+    replay = trace.get("tool_replay")
+    if isinstance(replay, dict):
+        records = replay.get("records")
+        if isinstance(records, list):
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                result = record.get("result")
+                invocation = record.get("invocation")
+                result_metadata = result.get("metadata") if isinstance(result, dict) else None
+                execution = (
+                    result_metadata.get("tool_execution")
+                    if isinstance(result_metadata, dict)
+                    else None
+                )
+                if isinstance(execution, dict):
+                    fallback_tool_name = ""
+                    fallback_call_id = ""
+                    if isinstance(result, dict):
+                        fallback_tool_name = str(result.get("tool_name") or "")
+                        fallback_call_id = str(result.get("call_id") or "")
+                    if isinstance(invocation, dict):
+                        fallback_tool_name = fallback_tool_name or str(invocation.get("tool_name") or "")
+                        fallback_call_id = fallback_call_id or str(invocation.get("call_id") or "")
+                    add(
+                        execution,
+                        fallback_tool_name=fallback_tool_name,
+                        fallback_call_id=fallback_call_id,
+                    )
+    return tuple(summaries)
+
+
+def _normalize_tool_execution_summary(
+    summary: dict[str, Any],
+    *,
+    fallback_tool_name: str = "",
+    fallback_call_id: str = "",
+) -> dict[str, Any]:
+    return {
+        "schema_version": str(summary.get("schema_version") or "agent-core-tool-execution-summary/v1"),
+        "tool_name": str(summary.get("tool_name") or fallback_tool_name),
+        "call_id": str(summary.get("call_id") or fallback_call_id),
+        "attempt_count": _safe_int(summary.get("attempt_count")),
+        "retried": bool(summary.get("retried")),
+        "final_status": str(summary.get("final_status") or ""),
+        "final_ok": bool(summary.get("final_ok")),
+        "attempt_statuses": [
+            str(item) for item in summary.get("attempt_statuses") or ()
+        ],
+        "retryable_attempts": [
+            _safe_int(item) for item in summary.get("retryable_attempts") or ()
+        ],
+    }
+
+
+def _tool_execution_key(summary: dict[str, Any]) -> str:
+    return "|".join(
+        (
+            str(summary.get("tool_name") or ""),
+            str(summary.get("call_id") or ""),
+            str(summary.get("attempt_count") or 0),
+            str(summary.get("final_status") or ""),
+        )
+    )
+
+
+def _tool_execution_by_name(
+    summaries: tuple[dict[str, Any], ...],
+) -> dict[str, tuple[dict[str, Any], ...]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for summary in summaries:
+        name = str(summary.get("tool_name") or "")
+        if not name:
+            continue
+        grouped.setdefault(name, []).append(summary)
+    return {key: tuple(value) for key, value in grouped.items()}
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
