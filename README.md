@@ -26,6 +26,7 @@ ops agents, research agents, and future automation systems.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - Context injection policy for bucket allow-lists, per-injection trimming, total injection budget, and audit manifests.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
+- Memory governance decisions for allow/rewrite/deny write auditing.
 - Unified storage backend manifests for core stores and runtime-owned backends.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Journal replay manifests and snapshot consistency audit.
@@ -180,13 +181,15 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   resume, timeline reduction, capability discovery, memory recall/search, and
   prompt trim manifests when available.
 - Summary counters include capability discovery matches, memory hits, and
-  storage backend and context injection counts, plus whether the prompt was
-  semantically trimmed.
+  storage backend, context injection, and memory governance counts, plus whether
+  the prompt was semantically trimmed.
 - `StorageBackendTrace` collects backend manifests from session, memory,
   replay, approval, policy, event, artifact, and trace components into one
   run-level backend inventory.
 - `ContextInjectionTrace` summarizes prompt injection decisions by source,
   target bucket, status, included count, excluded count, and trimmed count.
+- `MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny decisions,
+  risk levels, stores, and prompt-safe leak hashes.
 - `TraceCorrelationIndex` cross-references provider calls, tool replay records,
   policy decisions, approvals, event log entries, and journal replay events by
   run, turn, call id, approval id, decision id, and subject.
@@ -208,7 +211,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   iteration limits, provider call limits, required events, required tools,
   resume-plan presence, resume-plan readiness, expected checkpoint id, tool
   execution presence, tool retry, minimum tool attempt counts, and storage
-  backend and context injection constraints.
+  backend, context injection, and memory governance constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
@@ -338,6 +341,7 @@ error/retry mapping.
 - Runner-level memory recall injection through `ContextInjection`.
 - Memory governance hooks.
 - Leak scanning and global bucket checks.
+- Prompt-safe governance manifests for allow/rewrite/deny write decisions.
 
 ### Data Backend Boundary
 
@@ -524,6 +528,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Capability discovery | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
 | Memory backend routing/specs | MVP implemented |
+| Memory governance trace/eval | MVP implemented |
 | Unified storage backend manifests | MVP implemented |
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |

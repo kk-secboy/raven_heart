@@ -269,6 +269,37 @@ async def test_memory_governance_truncates_large_writes() -> None:
     assert store.records[0].metadata["memory_truncated"] is True
 
 
+@pytest.mark.asyncio
+async def test_memory_center_governance_manifest_records_prompt_safe_decisions() -> None:
+    store = InMemoryMemoryStore()
+    center = MemoryCenter(
+        default_store="local",
+        governance=RuleBasedMemoryGovernance(max_content_chars=12),
+    )
+    center.register("local", store)
+
+    await center.write(MemoryWrite(content="x" * 20, source="summary"))
+    with pytest.raises(MemoryGovernanceDeniedError):
+        await center.write(
+            MemoryWrite(
+                content="Target is https://prod.example.com and password=secret123",
+                source="scan",
+                metadata={"scope": "user"},
+            )
+        )
+    manifest = center.manifest()["governance"]
+
+    assert manifest["enabled"] is True
+    assert manifest["decision_count"] == 2
+    assert manifest["decisions"][0]["decision"] == "rewrite"
+    assert manifest["decisions"][0]["item"]["content_sha256"]
+    assert manifest["decisions"][1]["decision"] == "deny"
+    assert manifest["decisions"][1]["leak_count"] >= 1
+    assert manifest["decisions"][1]["leak_sha256s"]
+    assert "secret123" not in str(manifest)
+    assert "prod.example.com" not in str(manifest)
+
+
 def test_memory_query_route_and_plan_manifest_for_external_backends() -> None:
     center = MemoryCenter(default_store="pg")
     center.register(

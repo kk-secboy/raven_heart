@@ -26,6 +26,7 @@ agent_core
 | Tool replay records and store port | Durable replay backend, retention, cross-run replay policy |
 | MCP center | MCP server deployment, credentials, process lifecycle |
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
+| Memory governance contracts | Product retention policy, tenant rules, operator workflows |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Run trace bundle | Durable trace export, observability pipeline, retention |
 | Trace replay/eval harness | Domain eval suites, dashboards, regression policy |
@@ -93,16 +94,18 @@ distributed resume scheduling.
 
 `AgentRunTraceBundle` aggregates per-run session, prompt, journal replay,
 provider audit, tool replay, approvals, event log, resume, timeline reduction,
-capability discovery, memory recall/search, and prompt trim manifests. The SDK
+capability discovery, memory recall/search, memory governance, and prompt trim manifests. The SDK
 owns the shape and summary counters, including discovery match counts, memory
-hit counts, storage backend counts, context injection counts, and prompt-trim
-presence. `StorageBackendTrace` deduplicates the backend manifests visible
+hit counts, storage backend counts, context injection counts, memory governance
+counts, and prompt-trim presence. `StorageBackendTrace` deduplicates the backend manifests visible
 across those components so a runtime can audit which state lived in core
 builtins and which state lived in external PG/vector/graph/object-store
 adapters. `ContextInjectionTrace` summarizes prompt injection decisions by
 source, target bucket, status, included count, excluded count, and trimmed
-count. Runtime code owns where the bundle is stored, how long it is retained,
-and how it is queried for product observability or incident review.
+count. `MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny
+decisions, risk levels, stores, reasons, and prompt-safe leak hashes. Runtime
+code owns where the bundle is stored, how long it is retained, and how it is
+queried for product observability or incident review.
 
 `TraceCorrelationIndex` is generated inside the trace bundle. It gives
 provider-neutral cross references across provider calls, tool replay records,
@@ -119,8 +122,9 @@ resume-plan readiness, expected resume checkpoint ids, tool execution presence,
 tool retry, minimum tool attempt counts, required storage backend roles/kinds,
 forbidden backend kinds, external-backend limits, required context injection
 sources/targets, forbidden injection sources, and trimmed/excluded injection
-limits. Runtime code owns domain-specific eval datasets, baseline selection,
-scoring policy, dashboards, and release gates.
+limits, plus memory governance allow/rewrite/deny and risk ceilings. Runtime
+code owns domain-specific eval datasets, baseline selection, scoring policy,
+dashboards, and release gates.
 
 `AgentRunStorePort` persists manager-level run state such as queued, running,
 cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,
@@ -325,3 +329,9 @@ It proves which stores were selected, which route filters were consumed by the
 center, and which backend filters were passed through. Concrete PG/vector/graph
 stores can translate the same `MemoryQuery` fields into SQL, vector search,
 graph traversal, or product APIs outside this repository.
+
+`RuleBasedMemoryGovernance` is the built-in dependency-free write gate. It can
+deny empty or unsafe writes, reject protected-scope target or secret leaks,
+enforce allowed global buckets, truncate over-budget content, and record
+prompt-safe decision manifests. Runtimes can replace the governance port with
+tenant-specific policy while keeping trace and eval contracts stable.

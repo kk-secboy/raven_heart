@@ -23,6 +23,7 @@ from agent_core.trace import (
     ContextInjectionTrace,
     InMemoryRunTraceStore,
     MarkdownRunTraceStore,
+    MemoryGovernanceTrace,
     SQLiteRunTraceStore,
     StorageBackendTrace,
     TraceCorrelationIndex,
@@ -52,6 +53,26 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         timeline_reduction={"compressed_bytes": 10},
         capability_discovery={"match_count": 4},
         memory_search={"hit_count": 2},
+        session={
+            "memory": {
+                "governance": {
+                    "decisions": [
+                        {
+                            "decision": "rewrite",
+                            "allowed": True,
+                            "risk_level": "low",
+                            "store": "local",
+                        },
+                        {
+                            "decision": "deny",
+                            "allowed": False,
+                            "risk_level": "high",
+                            "store": "local",
+                        },
+                    ]
+                }
+            }
+        },
         prompt={
             "metadata": {
                 "trim": {"target_bytes": 900},
@@ -98,6 +119,10 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["context_injection_count"] == 2
     assert manifest["summary"]["context_injection_trimmed_count"] == 1
     assert manifest["context_injections"]["sources"] == {"memory": 1, "runtime": 1}
+    assert manifest["summary"]["memory_governance_decision_count"] == 2
+    assert manifest["summary"]["memory_governance_denied_count"] == 1
+    assert manifest["summary"]["memory_governance_rewritten_count"] == 1
+    assert manifest["memory_governance"]["decisions_by_status"] == {"deny": 1, "rewrite": 1}
     assert manifest["summary"]["has_prompt_trim"] is True
     assert manifest["capability_discovery"]["match_count"] == 4
     assert manifest["memory_search"]["hit_count"] == 2
@@ -243,6 +268,29 @@ def test_context_injection_trace_summarizes_prompt_injection_decisions() -> None
     assert trace["trimmed_count"] == 1
     assert trace["sources"] == {"memory": 1, "runtime": 1}
     assert trace["targets"] == {"high_static": 1, "semi_dynamic_1": 1}
+
+
+def test_memory_governance_trace_summarizes_session_memory_decisions() -> None:
+    trace = MemoryGovernanceTrace.from_session(
+        {
+            "memory": {
+                "governance": {
+                    "decisions": [
+                        {"decision": "rewrite", "allowed": True, "risk_level": "low", "store": "local"},
+                        {"decision": "deny", "allowed": False, "risk_level": "high", "store": "local"},
+                    ]
+                }
+            }
+        }
+    ).manifest()
+
+    assert trace["schema_version"] == "agent-core-memory-governance-trace/v1"
+    assert trace["decision_count"] == 2
+    assert trace["allowed_count"] == 1
+    assert trace["denied_count"] == 1
+    assert trace["rewritten_count"] == 1
+    assert trace["decisions_by_status"] == {"deny": 1, "rewrite": 1}
+    assert trace["risk_levels"] == {"high": 1, "low": 1}
 
 
 @pytest.mark.asyncio

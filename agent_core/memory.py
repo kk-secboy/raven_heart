@@ -240,6 +240,29 @@ class MemoryGovernanceDecision:
             "metadata": dict(self.metadata),
         }
 
+    def manifest(self) -> dict[str, Any]:
+        item = self.item
+        item_manifest = {}
+        if item is not None:
+            item_manifest = {
+                "content_bytes": len(item.content.encode("utf-8")),
+                "content_sha256": sha256(item.content.encode("utf-8")).hexdigest(),
+                "source": item.source,
+                "metadata": dict(item.metadata),
+            }
+        return {
+            "schema_version": "agent-core-memory-governance-decision/v1",
+            "allowed": self.allowed,
+            "decision": self.decision,
+            "reason": self.reason,
+            "risk_level": self.risk_level,
+            "store": self.store,
+            "item": item_manifest,
+            "leak_count": len(self.leaks),
+            "leak_sha256s": [_stable_hash(leak) for leak in self.leaks],
+            "metadata": dict(self.metadata),
+        }
+
 
 class MemoryGovernancePort(Protocol):
     async def authorize_write(
@@ -396,6 +419,7 @@ class MemoryCenter(MemoryPort):
         self.default_store = default_store
         self.governance = governance
         self._stores: dict[str, _MemoryStoreMount] = {}
+        self._governance_decisions: list[dict[str, Any]] = []
 
     def register(
         self,
@@ -464,6 +488,12 @@ class MemoryCenter(MemoryPort):
             "schema_version": "agent-core-memory-center/v1",
             "default_store": self.default_store,
             "stores": [spec.manifest() for spec in self.specs()],
+            "governance": {
+                "schema_version": "agent-core-memory-governance-trace/v1",
+                "enabled": self.governance is not None,
+                "decision_count": len(self._governance_decisions),
+                "decisions": [dict(item) for item in self._governance_decisions],
+            },
         }
 
     def plan_search(self, query: MemoryQuery) -> MemorySearchPlan:
@@ -525,10 +555,16 @@ class MemoryCenter(MemoryPort):
         )
         if self.governance is not None:
             decision = await self.governance.authorize_write(write_item, store=mount.spec)
+            self._record_governance_decision(decision)
             if not decision.allowed:
                 raise MemoryGovernanceDeniedError(decision)
             write_item = decision.item or write_item
         await mount.store.write(write_item)
+
+    def _record_governance_decision(self, decision: MemoryGovernanceDecision) -> None:
+        manifest = decision.manifest()
+        manifest["sequence"] = len(self._governance_decisions) + 1
+        self._governance_decisions.append(manifest)
 
     def _ordered_mounts(self) -> tuple[_MemoryStoreMount, ...]:
         return tuple(

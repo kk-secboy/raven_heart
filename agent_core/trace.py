@@ -138,6 +138,41 @@ class ContextInjectionTrace:
 
 
 @dataclass(frozen=True)
+class MemoryGovernanceTrace:
+    """Run-level inventory of memory write governance decisions."""
+
+    decisions: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_session(cls, session: dict[str, Any]) -> "MemoryGovernanceTrace":
+        memory = session.get("memory") if isinstance(session.get("memory"), dict) else {}
+        governance = memory.get("governance") if isinstance(memory.get("governance"), dict) else {}
+        raw = governance.get("decisions") if isinstance(governance, dict) else ()
+        decisions = tuple(dict(item) for item in raw or () if isinstance(item, dict))
+        return cls(decisions=decisions)
+
+    def manifest(self) -> dict[str, Any]:
+        decisions = tuple(dict(item) for item in self.decisions)
+        allowed = tuple(item for item in decisions if item.get("allowed") is True)
+        denied = tuple(item for item in decisions if item.get("decision") == "deny")
+        rewritten = tuple(item for item in decisions if item.get("decision") == "rewrite")
+        return {
+            "schema_version": "agent-core-memory-governance-trace/v1",
+            "decision_count": len(decisions),
+            "allowed_count": len(allowed),
+            "denied_count": len(denied),
+            "rewritten_count": len(rewritten),
+            "decisions_by_status": _count_injection_field(decisions, "decision"),
+            "risk_levels": _count_injection_field(decisions, "risk_level"),
+            "stores": _count_injection_field(decisions, "store"),
+            "reasons": _count_injection_field(decisions, "reason"),
+            "decisions": list(decisions),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class TraceCorrelationEntry:
     """One normalized pointer into trace materials."""
 
@@ -259,6 +294,7 @@ class AgentRunTraceBundle:
     memory_search: dict[str, Any] = field(default_factory=dict)
     storage_backends: dict[str, Any] = field(default_factory=dict)
     context_injections: dict[str, Any] = field(default_factory=dict)
+    memory_governance: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -275,6 +311,9 @@ class AgentRunTraceBundle:
         ).manifest()
         context_injections = self.context_injections or ContextInjectionTrace.from_prompt(
             self.prompt
+        ).manifest()
+        memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
+            self.session
         ).manifest()
         correlation = self.correlation or TraceCorrelationIndex.from_trace_components(
             run_id=self.run_id,
@@ -324,6 +363,15 @@ class AgentRunTraceBundle:
                 "context_injection_excluded_count": int(
                     context_injections.get("excluded_count") or 0
                 ),
+                "memory_governance_decision_count": int(
+                    memory_governance.get("decision_count") or 0
+                ),
+                "memory_governance_denied_count": int(
+                    memory_governance.get("denied_count") or 0
+                ),
+                "memory_governance_rewritten_count": int(
+                    memory_governance.get("rewritten_count") or 0
+                ),
                 "has_prompt_trim": bool(self.prompt.get("metadata", {}).get("trim")),
             },
             "session": dict(self.session),
@@ -341,6 +389,7 @@ class AgentRunTraceBundle:
             "memory_search": dict(self.memory_search),
             "storage_backends": dict(storage_backends),
             "context_injections": dict(context_injections),
+            "memory_governance": dict(memory_governance),
             "correlation": dict(correlation),
             "metadata": dict(self.metadata),
         }

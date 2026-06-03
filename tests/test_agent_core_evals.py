@@ -126,6 +126,29 @@ def _trace_manifest() -> dict[str, object]:
                 storage_backend_manifest(role="event_log", kind="markdown"),
             ],
         },
+        "memory_governance": {
+            "schema_version": "agent-core-memory-governance-trace/v1",
+            "decision_count": 2,
+            "allowed_count": 1,
+            "denied_count": 1,
+            "rewritten_count": 1,
+            "decisions": [
+                {
+                    "decision": "rewrite",
+                    "allowed": True,
+                    "risk_level": "low",
+                    "store": "local",
+                    "reason": "memory_write_policy_rewrite",
+                },
+                {
+                    "decision": "deny",
+                    "allowed": False,
+                    "risk_level": "high",
+                    "store": "local",
+                    "reason": "memory_target_or_secret_leak",
+                },
+            ],
+        },
     }
 
 
@@ -432,6 +455,56 @@ def test_trace_eval_reports_context_injection_contract_failures() -> None:
     } <= codes
     assert not missing.ok
     assert {issue.code for issue in missing.issues} == {"context_injections_missing"}
+
+
+def test_trace_eval_validates_memory_governance_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_memory_governance=True,
+            required_memory_governance_decisions=("rewrite", "deny"),
+            max_denied_memory_writes=1,
+            max_rewritten_memory_writes=1,
+            max_high_risk_memory_writes=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["memory_governance_decision_count"] == 2
+    assert report.summary["memory_governance_decisions"] == ["deny", "rewrite"]
+    assert report.summary["denied_memory_write_count"] == 1
+    assert report.summary["rewritten_memory_write_count"] == 1
+    assert report.summary["high_risk_memory_write_count"] == 1
+    assert report.metadata["spec"]["require_memory_governance"] is True
+
+
+def test_trace_eval_reports_memory_governance_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_memory_governance_decisions=("allow",),
+            forbidden_memory_governance_decisions=("deny",),
+            max_denied_memory_writes=0,
+            max_rewritten_memory_writes=0,
+            max_high_risk_memory_writes=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "memory_governance"},
+        TraceEvalSpec(require_memory_governance=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_memory_governance_decision",
+        "forbidden_memory_governance_decision",
+        "denied_memory_write_limit_exceeded",
+        "rewritten_memory_write_limit_exceeded",
+        "high_risk_memory_write_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"memory_governance_missing"}
 
 
 def test_trace_replay_comparator_accepts_matching_trace() -> None:

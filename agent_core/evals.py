@@ -100,6 +100,12 @@ class TraceEvalSpec:
     forbidden_context_injection_sources: tuple[str, ...] = ()
     forbid_trimmed_context_injections: bool = False
     max_excluded_context_injections: int | None = None
+    require_memory_governance: bool = False
+    required_memory_governance_decisions: tuple[str, ...] = ()
+    forbidden_memory_governance_decisions: tuple[str, ...] = ()
+    max_denied_memory_writes: int | None = None
+    max_rewritten_memory_writes: int | None = None
+    max_high_risk_memory_writes: int | None = None
     forbidden_event_types: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -136,6 +142,12 @@ class TraceEvalSpec:
             "forbidden_context_injection_sources": list(self.forbidden_context_injection_sources),
             "forbid_trimmed_context_injections": self.forbid_trimmed_context_injections,
             "max_excluded_context_injections": self.max_excluded_context_injections,
+            "require_memory_governance": self.require_memory_governance,
+            "required_memory_governance_decisions": list(self.required_memory_governance_decisions),
+            "forbidden_memory_governance_decisions": list(self.forbidden_memory_governance_decisions),
+            "max_denied_memory_writes": self.max_denied_memory_writes,
+            "max_rewritten_memory_writes": self.max_rewritten_memory_writes,
+            "max_high_risk_memory_writes": self.max_high_risk_memory_writes,
             "forbidden_event_types": list(self.forbidden_event_types),
             "metadata": dict(self.metadata),
         }
@@ -337,6 +349,20 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         excluded_context_injections = tuple(
             injection for injection in context_injections if injection.get("included") is False
         )
+        memory_governance_decisions = _memory_governance_decisions(trace)
+        memory_governance_statuses = _memory_governance_values(
+            memory_governance_decisions,
+            "decision",
+        )
+        denied_memory_writes = tuple(
+            decision for decision in memory_governance_decisions if decision.get("decision") == "deny"
+        )
+        rewritten_memory_writes = tuple(
+            decision for decision in memory_governance_decisions if decision.get("decision") == "rewrite"
+        )
+        high_risk_memory_writes = tuple(
+            decision for decision in memory_governance_decisions if decision.get("risk_level") == "high"
+        )
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -529,6 +555,75 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 )
             )
 
+        if spec.require_memory_governance and not memory_governance_decisions:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "memory_governance_missing",
+                    "memory governance trace is required",
+                )
+            )
+        for decision in spec.required_memory_governance_decisions:
+            if decision not in memory_governance_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_memory_governance_decision",
+                        f"required memory governance decision missing: {decision}",
+                    )
+                )
+        for decision in spec.forbidden_memory_governance_decisions:
+            if decision in memory_governance_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_memory_governance_decision",
+                        f"forbidden memory governance decision present: {decision}",
+                    )
+                )
+        if (
+            spec.max_denied_memory_writes is not None
+            and len(denied_memory_writes) > spec.max_denied_memory_writes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "denied_memory_write_limit_exceeded",
+                    "denied memory write count exceeded limit",
+                    metadata={"actual": len(denied_memory_writes), "limit": spec.max_denied_memory_writes},
+                )
+            )
+        if (
+            spec.max_rewritten_memory_writes is not None
+            and len(rewritten_memory_writes) > spec.max_rewritten_memory_writes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "rewritten_memory_write_limit_exceeded",
+                    "rewritten memory write count exceeded limit",
+                    metadata={
+                        "actual": len(rewritten_memory_writes),
+                        "limit": spec.max_rewritten_memory_writes,
+                    },
+                )
+            )
+        if (
+            spec.max_high_risk_memory_writes is not None
+            and len(high_risk_memory_writes) > spec.max_high_risk_memory_writes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "high_risk_memory_write_limit_exceeded",
+                    "high-risk memory write count exceeded limit",
+                    metadata={
+                        "actual": len(high_risk_memory_writes),
+                        "limit": spec.max_high_risk_memory_writes,
+                    },
+                )
+            )
+
         tool_executions = _tool_execution_summaries(trace)
         if spec.require_tool_execution and not tool_executions:
             issues.append(
@@ -664,6 +759,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "context_injection_targets": sorted(context_injection_targets),
                 "trimmed_context_injection_count": len(trimmed_context_injections),
                 "excluded_context_injection_count": len(excluded_context_injections),
+                "memory_governance_decision_count": len(memory_governance_decisions),
+                "memory_governance_decisions": sorted(memory_governance_statuses),
+                "denied_memory_write_count": len(denied_memory_writes),
+                "rewritten_memory_write_count": len(rewritten_memory_writes),
+                "high_risk_memory_write_count": len(high_risk_memory_writes),
             },
             metadata={"spec": spec.manifest()},
         )
@@ -1018,6 +1118,25 @@ def _context_injections(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 
 def _context_injection_values(injections: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in injections if item.get(key)}
+
+
+def _memory_governance_decisions(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    manifest = trace.get("memory_governance")
+    if isinstance(manifest, dict):
+        raw = manifest.get("decisions")
+        if isinstance(raw, (list, tuple)):
+            return tuple(dict(item) for item in raw if isinstance(item, dict))
+    session = trace.get("session")
+    memory = session.get("memory") if isinstance(session, dict) else {}
+    governance = memory.get("governance") if isinstance(memory, dict) else {}
+    raw = governance.get("decisions") if isinstance(governance, dict) else ()
+    if isinstance(raw, (list, tuple)):
+        return tuple(dict(item) for item in raw if isinstance(item, dict))
+    return ()
+
+
+def _memory_governance_values(decisions: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in decisions if item.get(key)}
 
 
 def _tool_names(trace: dict[str, Any]) -> set[str]:
