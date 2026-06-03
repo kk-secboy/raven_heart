@@ -7,6 +7,7 @@ import pytest
 from agent_core.approvals import ApprovalDecisionRecord, ApprovalResumeContext, InMemoryApprovalStore
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack, ContextInjectionPolicy
+from agent_core.errors import ResumeError
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
 from agent_core.mcp import MCPCenter, MCPServerSpec
@@ -765,6 +766,36 @@ async def test_agent_session_manager_resumes_from_latest_checkpoint() -> None:
     assert run.metadata["resume"]["checkpoint_id"] == checkpoint.checkpoint_id
     assert run.metadata["resume_plan"]["checkpoint_id"] == checkpoint.checkpoint_id
     assert run.metadata["resume"]["auto_selected"] is True
+
+
+@pytest.mark.asyncio
+async def test_agent_session_manager_can_reject_terminal_resume_candidates() -> None:
+    journal = InMemoryAgentJournal()
+    original_run = await journal.start_run("managed original")
+    original_turn = await journal.start_turn(original_run, 0)
+    await journal.checkpoint(original_turn, {"step": "done"})
+    await journal.finish_run(original_run, "completed", {"output": "done"})
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="managed-strict-resume"),
+            provider=MockLLMProvider([{"action": "finish", "arguments": {"output": "resumed"}}]),
+            tools=MockToolRuntime(),
+            harness=journal,
+        )
+    )
+    request = AgentResumeRequest(
+        run_id=original_run.run_id,
+        task="continue managed",
+        allow_terminal=False,
+    )
+
+    plan = manager.resume_plan("managed-strict-resume", request)
+
+    assert plan.ready is False
+    assert plan.summary_manifest()["issue_codes"] == ["terminal_checkpoint_not_allowed"]
+    with pytest.raises(ResumeError, match="resume plan is not ready"):
+        await manager.resume("managed-strict-resume", request)
 
 
 @pytest.mark.asyncio

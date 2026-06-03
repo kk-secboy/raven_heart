@@ -287,15 +287,30 @@ class ResumePlan:
                         metadata={"run_id": candidate.run_id, "checkpoint_id": candidate.checkpoint_id},
                     )
                 )
+            allow_terminal = bool(dict(request or {}).get("allow_terminal", True))
             if candidate.terminal:
-                issues.append(
-                    ResumePlanIssue(
-                        code="terminal_checkpoint_selected",
-                        message="selected checkpoint belongs to a terminal run",
-                        severity="warning",
-                        metadata={"run_id": candidate.run_id, "status": candidate.status},
+                if allow_terminal:
+                    issues.append(
+                        ResumePlanIssue(
+                            code="terminal_checkpoint_selected",
+                            message="selected checkpoint belongs to a terminal run",
+                            severity="warning",
+                            metadata={"run_id": candidate.run_id, "status": candidate.status},
+                        )
                     )
-                )
+                else:
+                    issues.append(
+                        ResumePlanIssue(
+                            code="terminal_checkpoint_not_allowed",
+                            message="selected checkpoint belongs to a terminal run",
+                            severity="error",
+                            metadata={
+                                "run_id": candidate.run_id,
+                                "status": candidate.status,
+                                "allow_terminal": False,
+                            },
+                        )
+                    )
         return cls(
             request=dict(request or {}),
             index=index,

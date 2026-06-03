@@ -120,6 +120,11 @@ async def test_resume_plan_exports_ready_state_and_terminal_warnings() -> None:
         run_id=completed.run_id,
         request={"run_id": completed.run_id},
     )
+    strict_terminal_plan = ResumePlan.from_index(
+        journal.resume_index(),
+        run_id=completed.run_id,
+        request={"run_id": completed.run_id, "allow_terminal": False},
+    )
     missing_plan = ResumePlan.from_index(
         journal.resume_index(),
         run_id="missing",
@@ -133,6 +138,11 @@ async def test_resume_plan_exports_ready_state_and_terminal_warnings() -> None:
     assert terminal_plan.ready is True
     assert terminal_plan.summary_manifest()["checkpoint_id"] == completed_checkpoint.checkpoint_id
     assert terminal_plan.summary_manifest()["issue_codes"] == ["terminal_checkpoint_selected"]
+    assert strict_terminal_plan.ready is False
+    assert strict_terminal_plan.summary_manifest()["issue_codes"] == [
+        "terminal_checkpoint_not_allowed"
+    ]
+    assert strict_terminal_plan.manifest()["issues"][0]["severity"] == "error"
     assert missing_plan.ready is False
     assert missing_plan.manifest()["issues"][0]["code"] == "resume_candidate_not_found"
 

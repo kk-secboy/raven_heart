@@ -150,6 +150,7 @@ class AgentResumeRequest:
     task: str = ""
     run_id: str = ""
     include_terminal: bool = True
+    allow_terminal: bool = True
     context: AgentContextPack | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     refresh: bool = False
@@ -164,6 +165,7 @@ class AgentResumeRequest:
             "task": self.task,
             "run_id": self.run_id,
             "include_terminal": self.include_terminal,
+            "allow_terminal": self.allow_terminal,
             "metadata": dict(self.metadata),
             "refresh": self.refresh,
             "has_context": self.context is not None,
