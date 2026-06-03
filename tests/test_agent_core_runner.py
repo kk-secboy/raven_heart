@@ -275,13 +275,19 @@ async def test_agent_runner_resume_selects_latest_checkpoint_candidate() -> None
     )
 
     runner = AgentRunner(session)
+    plan = runner.resume_plan(AgentResumeRequest(task="continue latest", metadata={"request_id": "r1"}))
     outcome = await runner.resume(AgentResumeRequest(task="continue latest", metadata={"request_id": "r1"}))
 
+    assert plan.ready is True
+    assert plan.summary_manifest()["checkpoint_id"] == latest.checkpoint_id
     assert outcome.result.status == "completed"
     assert outcome.resume_manifest["checkpoint_id"] == latest.checkpoint_id
+    assert outcome.resume_plan_manifest["checkpoint_id"] == latest.checkpoint_id
+    assert outcome.resume_plan_manifest["status"] == "ready"
     assert outcome.resume_manifest["state"]["step"] == "latest"
     assert outcome.prompt_manifest["metadata"]["request_id"] == "r1"
     assert outcome.prompt_manifest["metadata"]["resume"]["checkpoint_id"] == latest.checkpoint_id
+    assert outcome.prompt_manifest["metadata"]["resume_plan"]["checkpoint_id"] == latest.checkpoint_id
     assert provider.requests[0].messages[0].content.count("== Resumed Checkpoint ==") == 1
 
 
@@ -537,12 +543,17 @@ async def test_agent_session_manager_resumes_from_latest_checkpoint() -> None:
         )
     )
 
+    plan = manager.resume_plan("managed-auto-resume", "continue managed")
     outcome = await manager.resume("managed-auto-resume", "continue managed")
     run = manager.runs()[0]
 
+    assert plan.ready is True
+    assert plan.summary_manifest()["checkpoint_id"] == checkpoint.checkpoint_id
     assert outcome.result.status == "completed"
     assert outcome.resume_manifest["checkpoint_id"] == checkpoint.checkpoint_id
+    assert outcome.resume_plan_manifest["checkpoint_id"] == checkpoint.checkpoint_id
     assert run.metadata["resume"]["checkpoint_id"] == checkpoint.checkpoint_id
+    assert run.metadata["resume_plan"]["checkpoint_id"] == checkpoint.checkpoint_id
     assert run.metadata["resume"]["auto_selected"] is True
 
 

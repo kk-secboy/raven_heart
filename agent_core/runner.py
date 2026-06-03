@@ -28,6 +28,7 @@ from agent_core.harness import (
     InMemoryAgentJournal,
     ResumeCandidate,
     ResumeIndex,
+    ResumePlan,
     ResumeToken,
 )
 from agent_core.loop_guard import LoopGuard
@@ -162,6 +163,7 @@ class AgentRunOutcome:
     session_manifest: dict[str, Any]
     prompt_manifest: dict[str, Any]
     resume_manifest: dict[str, Any] = field(default_factory=dict)
+    resume_plan_manifest: dict[str, Any] = field(default_factory=dict)
     timeline_reduction_manifest: dict[str, Any] = field(default_factory=dict)
     capability_discovery_manifest: dict[str, Any] = field(default_factory=dict)
     memory_search_manifest: dict[str, Any] = field(default_factory=dict)
@@ -476,6 +478,7 @@ class AgentRunner:
             session_manifest=session_manifest,
             prompt_manifest=prompt.manifest(),
             resume_manifest=resume_manifest,
+            resume_plan_manifest=_request_resume_plan_manifest(run_request),
             timeline_reduction_manifest=timeline_reduction_manifest,
             capability_discovery_manifest=capability_discovery_manifest,
             memory_search_manifest=memory_recall.manifest,
@@ -489,10 +492,15 @@ class AgentRunner:
         resume_request = _normalize_resume_request(request)
         return _resume_candidate_for_request(self.session.harness, resume_request)
 
+    def resume_plan(self, request: AgentResumeRequest | str | None = None) -> ResumePlan:
+        resume_request = _normalize_resume_request(request)
+        return _resume_plan_for_request(self.session.harness, resume_request)
+
     async def resume(self, request: AgentResumeRequest | str | None = None) -> AgentRunOutcome:
         resume_request = _normalize_resume_request(request)
-        candidate = _resume_candidate_for_request(self.session.harness, resume_request)
-        return await self.run(_run_request_from_resume(candidate, resume_request))
+        plan = _resume_plan_for_request(self.session.harness, resume_request)
+        candidate = _resume_candidate_from_plan(plan, resume_request)
+        return await self.run(_run_request_from_resume(candidate, resume_request, plan=plan))
 
     def _prompt_builder(self) -> AgentPromptBuilder:
         return AgentPromptBuilder(
@@ -814,14 +822,23 @@ class AgentSessionManager:
     def resume_index(self, session_name: str, *, include_terminal: bool = True) -> ResumeIndex:
         return _resume_index_for_harness(self.session(session_name).harness, include_terminal=include_terminal)
 
+    def resume_plan(
+        self,
+        session_name: str,
+        request: AgentResumeRequest | str | None = None,
+    ) -> ResumePlan:
+        resume_request = _normalize_resume_request(request)
+        return _resume_plan_for_request(self.session(session_name).harness, resume_request)
+
     async def resume(
         self,
         session_name: str,
         request: AgentResumeRequest | str | None = None,
     ) -> AgentRunOutcome:
         resume_request = _normalize_resume_request(request)
-        candidate = _resume_candidate_for_request(self.session(session_name).harness, resume_request)
-        return await self.run(session_name, _run_request_from_resume(candidate, resume_request))
+        plan = _resume_plan_for_request(self.session(session_name).harness, resume_request)
+        candidate = _resume_candidate_from_plan(plan, resume_request)
+        return await self.run(session_name, _run_request_from_resume(candidate, resume_request, plan=plan))
 
     def start(self, session_name: str, request: AgentRunRequest | str) -> str:
         run_request = self._normalize_request(request)
@@ -844,8 +861,9 @@ class AgentSessionManager:
         request: AgentResumeRequest | str | None = None,
     ) -> str:
         resume_request = _normalize_resume_request(request)
-        candidate = _resume_candidate_for_request(self.session(session_name).harness, resume_request)
-        return self.start(session_name, _run_request_from_resume(candidate, resume_request))
+        plan = _resume_plan_for_request(self.session(session_name).harness, resume_request)
+        candidate = _resume_candidate_from_plan(plan, resume_request)
+        return self.start(session_name, _run_request_from_resume(candidate, resume_request, plan=plan))
 
     def cancel(self, run_key: str, reason: str = "cancelled by manager") -> bool:
         run = self._runs.get(run_key)
@@ -1046,20 +1064,40 @@ def _resume_candidate_for_request(
     harness: AgentHarness,
     request: AgentResumeRequest,
 ) -> ResumeCandidate:
+    plan = _resume_plan_for_request(harness, request)
+    return _resume_candidate_from_plan(plan, request)
+
+
+def _resume_plan_for_request(
+    harness: AgentHarness,
+    request: AgentResumeRequest,
+) -> ResumePlan:
     index = _resume_index_for_harness(harness, include_terminal=request.include_terminal)
-    candidate = index.for_run(request.run_id) if request.run_id else index.latest()
+    return ResumePlan.from_index(index, run_id=request.run_id, request=request.manifest())
+
+
+def _resume_candidate_from_plan(
+    plan: ResumePlan,
+    request: AgentResumeRequest,
+) -> ResumeCandidate:
+    candidate = plan.candidate
     if candidate is None:
         if request.run_id:
             raise ResumeError(f"no resumable checkpoint for run: {request.run_id}")
         raise ResumeError("no resumable checkpoint available")
     if candidate.token is None:
         raise ResumeError(f"resume candidate has no token: {candidate.run_id}")
+    if not plan.ready:
+        issues = ", ".join(issue.code for issue in plan.issues if issue.severity == "error")
+        raise ResumeError(f"resume plan is not ready: {issues or 'unknown'}")
     return candidate
 
 
 def _run_request_from_resume(
     candidate: ResumeCandidate,
     request: AgentResumeRequest,
+    *,
+    plan: ResumePlan | None = None,
 ) -> AgentRunRequest:
     if candidate.token is None:
         raise ResumeError(f"resume candidate has no token: {candidate.run_id}")
@@ -1073,6 +1111,8 @@ def _run_request_from_resume(
             "auto_selected": not bool(request.run_id),
         },
     }
+    if plan is not None:
+        metadata["resume_plan"] = plan.summary_manifest()
     task = request.task or candidate.task
     return AgentRunRequest(
         task=task,
@@ -1084,6 +1124,11 @@ def _run_request_from_resume(
         structured_output=request.structured_output,
         timeout_seconds=request.timeout_seconds,
     )
+
+
+def _request_resume_plan_manifest(request: AgentRunRequest) -> dict[str, Any]:
+    value = request.metadata.get("resume_plan")
+    return dict(value) if isinstance(value, dict) else {}
 
 
 async def _component_manifest(component: Any) -> dict[str, Any]:

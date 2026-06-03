@@ -10,6 +10,7 @@ from agent_core.harness import (
     MarkdownJournalStore,
     PersistentAgentJournal,
     ResumeIndex,
+    ResumePlan,
     SQLiteAgentJournal,
     SQLiteJournalStore,
 )
@@ -96,6 +97,44 @@ async def test_agent_journal_resume_index_exports_latest_checkpoint_candidates()
     assert completed_candidate.checkpoint_id == completed_checkpoint.checkpoint_id
     assert active_only.for_run(completed.run_id) is None
     assert restored.for_run(active.run_id).checkpoint_id == latest.checkpoint_id  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_resume_plan_exports_ready_state_and_terminal_warnings() -> None:
+    journal = InMemoryAgentJournal()
+    active = await journal.start_run("active task")
+    active_turn = await journal.start_turn(active, 0)
+    latest = await journal.checkpoint(active_turn, {"step": "active"})
+    completed = await journal.start_run("completed task")
+    completed_turn = await journal.start_turn(completed, 0)
+    completed_checkpoint = await journal.checkpoint(completed_turn, {"step": "done"})
+    await journal.finish_run(completed, "completed", {"output": "done"})
+
+    active_plan = ResumePlan.from_index(
+        journal.resume_index(),
+        run_id=active.run_id,
+        request={"run_id": active.run_id},
+    )
+    terminal_plan = ResumePlan.from_index(
+        journal.resume_index(),
+        run_id=completed.run_id,
+        request={"run_id": completed.run_id},
+    )
+    missing_plan = ResumePlan.from_index(
+        journal.resume_index(),
+        run_id="missing",
+        request={"run_id": "missing"},
+    )
+
+    assert active_plan.ready is True
+    assert active_plan.manifest()["schema_version"] == "agent-core-resume-plan/v1"
+    assert active_plan.manifest()["candidate"]["checkpoint_id"] == latest.checkpoint_id
+    assert active_plan.summary_manifest()["checkpoint_sequence"] == latest.sequence
+    assert terminal_plan.ready is True
+    assert terminal_plan.summary_manifest()["checkpoint_id"] == completed_checkpoint.checkpoint_id
+    assert terminal_plan.summary_manifest()["issue_codes"] == ["terminal_checkpoint_selected"]
+    assert missing_plan.ready is False
+    assert missing_plan.manifest()["issues"][0]["code"] == "resume_candidate_not_found"
 
 
 @pytest.mark.asyncio

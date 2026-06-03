@@ -93,6 +93,8 @@ agent_core never imports runtime
 - Postgres or other durable stores can implement the same port outside core.
 - Checkpoints and resume tokens.
 - `ResumeCandidate` and `ResumeIndex` for manifest-friendly resumable run discovery.
+- `ResumePlan` and `ResumePlanIssue` for preflight resume status, selected
+  checkpoint, terminal-run warnings, and missing-candidate errors.
 - `AgentRunRequest.resume_token` for injecting checkpoint state into the next run.
 - `AgentRunner.resume()`, `AgentSessionManager.resume()`, and
   `AgentSessionManager.start_resume()` for SDK-level resume entrypoints.

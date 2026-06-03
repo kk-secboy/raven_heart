@@ -73,11 +73,14 @@ debugging, audit, or resume decisions.
 
 `ResumeCandidate` and `ResumeIndex` turn the latest checkpoint per run into a
 standard manifest with a `ResumeToken`, checkpoint state, terminal status, and
-run metadata. `AgentRunner.resume()` and `AgentSessionManager.resume()` convert
-those candidates into `AgentRunRequest` objects without runtime-side token
-assembly. The SDK owns discovery, serialization, and local resume entrypoints;
-runtime code owns worker selection, user-facing recovery flows, and distributed
-resume scheduling.
+run metadata. `ResumePlan` adds the preflight decision layer: selected
+checkpoint, ready/unavailable status, terminal-run warnings, missing-candidate
+errors, and a small summary manifest that can be persisted with manager run
+state. `AgentRunner.resume()` and `AgentSessionManager.resume()` convert those
+plans into `AgentRunRequest` objects without runtime-side token assembly. The
+SDK owns discovery, serialization, local resume entrypoints, and preflight
+status; runtime code owns worker selection, user-facing recovery flows, and
+distributed resume scheduling.
 
 `AgentRunTraceBundle` aggregates per-run session, prompt, journal replay,
 provider audit, tool replay, approvals, event log, resume, timeline reduction,

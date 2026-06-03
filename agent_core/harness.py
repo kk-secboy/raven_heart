@@ -26,6 +26,7 @@ RunStatus = Literal[
 ]
 TurnStatus = Literal["running", "completed", "cancelled", "failed"]
 RunInterruptKind = Literal["cancelled", "timeout", "deadline", "external"]
+ResumePlanIssueSeverity = Literal["info", "warning", "error"]
 TERMINAL_RUN_STATUSES = frozenset(
     {
         "completed",
@@ -220,6 +221,123 @@ class ResumeIndex:
             "include_terminal": self.include_terminal,
             "candidates": [candidate.manifest() for candidate in self.candidates],
             "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ResumePlanIssue:
+    """One SDK-level finding for a resume decision."""
+
+    code: str
+    message: str
+    severity: ResumePlanIssueSeverity = "info"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-resume-plan-issue/v1",
+            "code": self.code,
+            "message": self.message,
+            "severity": self.severity,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ResumePlan:
+    """Manifest-friendly resume decision that runtimes can inspect before resuming."""
+
+    request: dict[str, Any]
+    index: ResumeIndex
+    candidate: ResumeCandidate | None = None
+    selected_by: Literal["latest", "run_id", "none"] = "none"
+    issues: tuple[ResumePlanIssue, ...] = ()
+
+    @classmethod
+    def from_index(
+        cls,
+        index: ResumeIndex,
+        *,
+        run_id: str = "",
+        request: dict[str, Any] | None = None,
+    ) -> "ResumePlan":
+        candidate = index.for_run(run_id) if run_id else index.latest()
+        selected_by: Literal["latest", "run_id", "none"] = "run_id" if run_id else "latest"
+        issues: list[ResumePlanIssue] = []
+        if candidate is None:
+            selected_by = "none"
+            issues.append(
+                ResumePlanIssue(
+                    code="resume_candidate_not_found",
+                    message=f"no resumable checkpoint for run: {run_id}"
+                    if run_id
+                    else "no resumable checkpoint available",
+                    severity="error",
+                    metadata={"requested_run_id": run_id},
+                )
+            )
+        else:
+            if candidate.token is None:
+                issues.append(
+                    ResumePlanIssue(
+                        code="resume_token_missing",
+                        message="selected checkpoint does not expose a resume token",
+                        severity="error",
+                        metadata={"run_id": candidate.run_id, "checkpoint_id": candidate.checkpoint_id},
+                    )
+                )
+            if candidate.terminal:
+                issues.append(
+                    ResumePlanIssue(
+                        code="terminal_checkpoint_selected",
+                        message="selected checkpoint belongs to a terminal run",
+                        severity="warning",
+                        metadata={"run_id": candidate.run_id, "status": candidate.status},
+                    )
+                )
+        return cls(
+            request=dict(request or {}),
+            index=index,
+            candidate=candidate,
+            selected_by=selected_by,
+            issues=tuple(issues),
+        )
+
+    @property
+    def ready(self) -> bool:
+        return self.candidate is not None and not any(issue.severity == "error" for issue in self.issues)
+
+    @property
+    def status(self) -> str:
+        return "ready" if self.ready else "unavailable"
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-resume-plan/v1",
+            "status": self.status,
+            "ready": self.ready,
+            "selected_by": self.selected_by,
+            "request": dict(self.request),
+            "index": self.index.manifest(),
+            "candidate": self.candidate.manifest() if self.candidate is not None else None,
+            "issue_count": len(self.issues),
+            "issues": [issue.manifest() for issue in self.issues],
+        }
+
+    def summary_manifest(self) -> dict[str, Any]:
+        candidate = self.candidate
+        return {
+            "schema_version": "agent-core-resume-plan-summary/v1",
+            "status": self.status,
+            "ready": self.ready,
+            "selected_by": self.selected_by,
+            "candidate_count": self.index.manifest()["candidate_count"],
+            "run_id": candidate.run_id if candidate is not None else "",
+            "checkpoint_id": candidate.checkpoint_id if candidate is not None else "",
+            "checkpoint_sequence": candidate.checkpoint_sequence if candidate is not None else 0,
+            "terminal": candidate.terminal if candidate is not None else False,
+            "issue_count": len(self.issues),
+            "issue_codes": [issue.code for issue in self.issues],
         }
 
 
