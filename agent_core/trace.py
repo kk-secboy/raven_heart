@@ -105,6 +105,39 @@ class StorageBackendTrace:
 
 
 @dataclass(frozen=True)
+class ContextInjectionTrace:
+    """Run-level inventory of prompt context injection decisions."""
+
+    injections: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_prompt(cls, prompt: dict[str, Any]) -> "ContextInjectionTrace":
+        metadata = prompt.get("metadata") if isinstance(prompt.get("metadata"), dict) else {}
+        raw = metadata.get("context_injections") if isinstance(metadata, dict) else ()
+        injections = tuple(dict(item) for item in raw or () if isinstance(item, dict))
+        return cls(injections=injections)
+
+    def manifest(self) -> dict[str, Any]:
+        injections = tuple(dict(item) for item in self.injections)
+        included = tuple(item for item in injections if item.get("included") is not False)
+        excluded = tuple(item for item in injections if item.get("included") is False)
+        trimmed = tuple(item for item in included if item.get("trimmed") is True)
+        return {
+            "schema_version": "agent-core-context-injection-trace/v1",
+            "injection_count": len(injections),
+            "included_count": len(included),
+            "excluded_count": len(excluded),
+            "trimmed_count": len(trimmed),
+            "sources": _count_injection_field(injections, "source"),
+            "targets": _count_injection_field(injections, "target"),
+            "statuses": _count_injection_field(injections, "status"),
+            "injections": list(injections),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class TraceCorrelationEntry:
     """One normalized pointer into trace materials."""
 
@@ -225,6 +258,7 @@ class AgentRunTraceBundle:
     capability_discovery: dict[str, Any] = field(default_factory=dict)
     memory_search: dict[str, Any] = field(default_factory=dict)
     storage_backends: dict[str, Any] = field(default_factory=dict)
+    context_injections: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -238,6 +272,9 @@ class AgentRunTraceBundle:
             approvals=self.approvals,
             event_log=self.event_log,
             memory_search=self.memory_search,
+        ).manifest()
+        context_injections = self.context_injections or ContextInjectionTrace.from_prompt(
+            self.prompt
         ).manifest()
         correlation = self.correlation or TraceCorrelationIndex.from_trace_components(
             run_id=self.run_id,
@@ -280,6 +317,13 @@ class AgentRunTraceBundle:
                 "external_storage_backend_count": int(
                     storage_backends.get("external_backend_count") or 0
                 ),
+                "context_injection_count": int(context_injections.get("injection_count") or 0),
+                "context_injection_trimmed_count": int(
+                    context_injections.get("trimmed_count") or 0
+                ),
+                "context_injection_excluded_count": int(
+                    context_injections.get("excluded_count") or 0
+                ),
                 "has_prompt_trim": bool(self.prompt.get("metadata", {}).get("trim")),
             },
             "session": dict(self.session),
@@ -296,6 +340,7 @@ class AgentRunTraceBundle:
             "capability_discovery": dict(self.capability_discovery),
             "memory_search": dict(self.memory_search),
             "storage_backends": dict(storage_backends),
+            "context_injections": dict(context_injections),
             "correlation": dict(correlation),
             "metadata": dict(self.metadata),
         }
@@ -340,6 +385,16 @@ def _count_backend_field(backends: tuple[dict[str, Any], ...], field_name: str) 
     counts: dict[str, int] = {}
     for backend in backends:
         value = str(backend.get(field_name) or "")
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _count_injection_field(injections: tuple[dict[str, Any], ...], field_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for injection in injections:
+        value = str(injection.get(field_name) or "")
         if not value:
             continue
         counts[value] = counts.get(value, 0) + 1

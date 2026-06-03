@@ -94,6 +94,12 @@ class TraceEvalSpec:
     forbidden_storage_backend_kinds: tuple[str, ...] = ()
     forbid_external_storage_backends: bool = False
     max_external_storage_backends: int | None = None
+    require_context_injections: bool = False
+    required_context_injection_sources: tuple[str, ...] = ()
+    required_context_injection_targets: tuple[str, ...] = ()
+    forbidden_context_injection_sources: tuple[str, ...] = ()
+    forbid_trimmed_context_injections: bool = False
+    max_excluded_context_injections: int | None = None
     forbidden_event_types: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -124,6 +130,12 @@ class TraceEvalSpec:
             "forbidden_storage_backend_kinds": list(self.forbidden_storage_backend_kinds),
             "forbid_external_storage_backends": self.forbid_external_storage_backends,
             "max_external_storage_backends": self.max_external_storage_backends,
+            "require_context_injections": self.require_context_injections,
+            "required_context_injection_sources": list(self.required_context_injection_sources),
+            "required_context_injection_targets": list(self.required_context_injection_targets),
+            "forbidden_context_injection_sources": list(self.forbidden_context_injection_sources),
+            "forbid_trimmed_context_injections": self.forbid_trimmed_context_injections,
+            "max_excluded_context_injections": self.max_excluded_context_injections,
             "forbidden_event_types": list(self.forbidden_event_types),
             "metadata": dict(self.metadata),
         }
@@ -316,6 +328,15 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         external_storage_backends = tuple(
             backend for backend in storage_backends if backend.get("core_builtin") is False
         )
+        context_injections = _context_injections(trace)
+        context_injection_sources = _context_injection_values(context_injections, "source")
+        context_injection_targets = _context_injection_values(context_injections, "target")
+        trimmed_context_injections = tuple(
+            injection for injection in context_injections if injection.get("trimmed") is True
+        )
+        excluded_context_injections = tuple(
+            injection for injection in context_injections if injection.get("included") is False
+        )
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -444,6 +465,66 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     metadata={
                         "actual": len(external_storage_backends),
                         "limit": spec.max_external_storage_backends,
+                    },
+                )
+            )
+
+        if spec.require_context_injections and not context_injections:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "context_injections_missing",
+                    "context injection trace is required",
+                )
+            )
+        for source in spec.required_context_injection_sources:
+            if source not in context_injection_sources:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_context_injection_source",
+                        f"required context injection source missing: {source}",
+                    )
+                )
+        for target in spec.required_context_injection_targets:
+            if target not in context_injection_targets:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_context_injection_target",
+                        f"required context injection target missing: {target}",
+                    )
+                )
+        for source in spec.forbidden_context_injection_sources:
+            if source in context_injection_sources:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_context_injection_source",
+                        f"forbidden context injection source present: {source}",
+                    )
+                )
+        if spec.forbid_trimmed_context_injections and trimmed_context_injections:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "context_injection_trimmed_forbidden",
+                    "trimmed context injections are forbidden",
+                    metadata={"trimmed_count": len(trimmed_context_injections)},
+                )
+            )
+        if (
+            spec.max_excluded_context_injections is not None
+            and len(excluded_context_injections) > spec.max_excluded_context_injections
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "context_injection_excluded_limit_exceeded",
+                    "excluded context injection count exceeded limit",
+                    metadata={
+                        "actual": len(excluded_context_injections),
+                        "limit": spec.max_excluded_context_injections,
                     },
                 )
             )
@@ -578,6 +659,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "storage_backend_roles": sorted(storage_backend_roles),
                 "storage_backend_kinds": sorted(storage_backend_kinds),
                 "external_storage_backend_count": len(external_storage_backends),
+                "context_injection_count": len(context_injections),
+                "context_injection_sources": sorted(context_injection_sources),
+                "context_injection_targets": sorted(context_injection_targets),
+                "trimmed_context_injection_count": len(trimmed_context_injections),
+                "excluded_context_injection_count": len(excluded_context_injections),
             },
             metadata={"spec": spec.manifest()},
         )
@@ -914,6 +1000,24 @@ def _storage_backends(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 
 def _storage_backend_values(backends: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in backends if item.get(key)}
+
+
+def _context_injections(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    manifest = trace.get("context_injections")
+    if isinstance(manifest, dict):
+        raw = manifest.get("injections")
+        if isinstance(raw, (list, tuple)):
+            return tuple(dict(item) for item in raw if isinstance(item, dict))
+    prompt = trace.get("prompt")
+    prompt_metadata = prompt.get("metadata") if isinstance(prompt, dict) else {}
+    raw = prompt_metadata.get("context_injections") if isinstance(prompt_metadata, dict) else ()
+    if isinstance(raw, (list, tuple)):
+        return tuple(dict(item) for item in raw if isinstance(item, dict))
+    return ()
+
+
+def _context_injection_values(injections: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in injections if item.get(key)}
 
 
 def _tool_names(trace: dict[str, Any]) -> set[str]:

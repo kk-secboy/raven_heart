@@ -69,6 +69,36 @@ def _trace_manifest() -> dict[str, object]:
             "call_count": 2,
             "calls": [{"usage": {"cost_usd": 0.01}}, {"usage": {"cost_usd": 0.02}}],
         },
+        "prompt": {
+            "metadata": {
+                "context_injections": [
+                    {
+                        "name": "memory_recall",
+                        "source": "memory",
+                        "target": "semi_dynamic_1",
+                        "status": "trimmed",
+                        "included": True,
+                        "trimmed": True,
+                    },
+                    {
+                        "name": "operator_hint",
+                        "source": "runtime",
+                        "target": "dynamic",
+                        "status": "included",
+                        "included": True,
+                        "trimmed": False,
+                    },
+                    {
+                        "name": "denied_static",
+                        "source": "runtime",
+                        "target": "high_static",
+                        "status": "target_denied",
+                        "included": False,
+                        "trimmed": False,
+                    },
+                ]
+            }
+        },
         "tool_replay": {
             "record_count": 1,
             "records": [
@@ -354,6 +384,54 @@ def test_trace_eval_reports_storage_backend_contract_failures() -> None:
     } <= codes
     assert not missing.ok
     assert {issue.code for issue in missing.issues} == {"storage_backends_missing"}
+
+
+def test_trace_eval_validates_context_injection_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_context_injections=True,
+            required_context_injection_sources=("memory", "runtime"),
+            required_context_injection_targets=("semi_dynamic_1", "dynamic"),
+            max_excluded_context_injections=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["context_injection_count"] == 3
+    assert report.summary["trimmed_context_injection_count"] == 1
+    assert report.summary["excluded_context_injection_count"] == 1
+    assert report.summary["context_injection_sources"] == ["memory", "runtime"]
+    assert report.metadata["spec"]["require_context_injections"] is True
+
+
+def test_trace_eval_reports_context_injection_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_context_injection_sources=("approval",),
+            required_context_injection_targets=("timeline_open",),
+            forbidden_context_injection_sources=("runtime",),
+            forbid_trimmed_context_injections=True,
+            max_excluded_context_injections=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "prompt"},
+        TraceEvalSpec(require_context_injections=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_context_injection_source",
+        "missing_context_injection_target",
+        "forbidden_context_injection_source",
+        "context_injection_trimmed_forbidden",
+        "context_injection_excluded_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"context_injections_missing"}
 
 
 def test_trace_replay_comparator_accepts_matching_trace() -> None:

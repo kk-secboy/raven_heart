@@ -95,12 +95,14 @@ distributed resume scheduling.
 provider audit, tool replay, approvals, event log, resume, timeline reduction,
 capability discovery, memory recall/search, and prompt trim manifests. The SDK
 owns the shape and summary counters, including discovery match counts, memory
-hit counts, storage backend counts, and prompt-trim presence. `StorageBackendTrace`
-deduplicates the backend manifests visible across those components so a runtime
-can audit which state lived in core builtins and which state lived in external
-PG/vector/graph/object-store adapters. Runtime code owns where the bundle is
-stored, how long it is retained, and how it is queried for product observability
-or incident review.
+hit counts, storage backend counts, context injection counts, and prompt-trim
+presence. `StorageBackendTrace` deduplicates the backend manifests visible
+across those components so a runtime can audit which state lived in core
+builtins and which state lived in external PG/vector/graph/object-store
+adapters. `ContextInjectionTrace` summarizes prompt injection decisions by
+source, target bucket, status, included count, excluded count, and trimmed
+count. Runtime code owns where the bundle is stored, how long it is retained,
+and how it is queried for product observability or incident review.
 
 `TraceCorrelationIndex` is generated inside the trace bundle. It gives
 provider-neutral cross references across provider calls, tool replay records,
@@ -115,9 +117,10 @@ final status, iteration limits, provider call limits, required events, required
 tools, cost ceilings, event ordering, journal integrity, resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, tool execution presence,
 tool retry, minimum tool attempt counts, required storage backend roles/kinds,
-forbidden backend kinds, and external-backend limits. Runtime code owns
-domain-specific eval datasets, baseline selection, scoring policy, dashboards,
-and release gates.
+forbidden backend kinds, external-backend limits, required context injection
+sources/targets, forbidden injection sources, and trimmed/excluded injection
+limits. Runtime code owns domain-specific eval datasets, baseline selection,
+scoring policy, dashboards, and release gates.
 
 `AgentRunStorePort` persists manager-level run state such as queued, running,
 cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,

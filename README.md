@@ -180,10 +180,13 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   resume, timeline reduction, capability discovery, memory recall/search, and
   prompt trim manifests when available.
 - Summary counters include capability discovery matches, memory hits, and
-  storage backend counts, plus whether the prompt was semantically trimmed.
+  storage backend and context injection counts, plus whether the prompt was
+  semantically trimmed.
 - `StorageBackendTrace` collects backend manifests from session, memory,
   replay, approval, policy, event, artifact, and trace components into one
   run-level backend inventory.
+- `ContextInjectionTrace` summarizes prompt injection decisions by source,
+  target bucket, status, included count, excluded count, and trimmed count.
 - `TraceCorrelationIndex` cross-references provider calls, tool replay records,
   policy decisions, approvals, event log entries, and journal replay events by
   run, turn, call id, approval id, decision id, and subject.
@@ -205,7 +208,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   iteration limits, provider call limits, required events, required tools,
   resume-plan presence, resume-plan readiness, expected checkpoint id, tool
   execution presence, tool retry, minimum tool attempt counts, and storage
-  backend role/kind constraints.
+  backend and context injection constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.

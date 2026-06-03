@@ -71,6 +71,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "ContextInjectionDecision",
         "ContextInjectionDecisionStatus",
         "ContextInjectionPolicy",
+        "ContextInjectionTrace",
         "ContextReducerPort",
         "DefaultLLMProviderCodec",
         "DefaultContextReducer",

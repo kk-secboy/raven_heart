@@ -20,6 +20,7 @@ from agent_core.tools import (
 )
 from agent_core.trace import (
     AgentRunTraceBundle,
+    ContextInjectionTrace,
     InMemoryRunTraceStore,
     MarkdownRunTraceStore,
     SQLiteRunTraceStore,
@@ -51,7 +52,29 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         timeline_reduction={"compressed_bytes": 10},
         capability_discovery={"match_count": 4},
         memory_search={"hit_count": 2},
-        prompt={"metadata": {"trim": {"target_bytes": 900}}},
+        prompt={
+            "metadata": {
+                "trim": {"target_bytes": 900},
+                "context_injections": [
+                    {
+                        "name": "memory_recall",
+                        "source": "memory",
+                        "target": "semi_dynamic_1",
+                        "status": "trimmed",
+                        "included": True,
+                        "trimmed": True,
+                    },
+                    {
+                        "name": "operator_hint",
+                        "source": "runtime",
+                        "target": "dynamic",
+                        "status": "included",
+                        "included": True,
+                        "trimmed": False,
+                    },
+                ],
+            }
+        },
     )
 
     manifest = bundle.manifest()
@@ -72,6 +95,9 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["has_timeline_reduction"] is True
     assert manifest["summary"]["capability_discovery_match_count"] == 4
     assert manifest["summary"]["memory_search_hit_count"] == 2
+    assert manifest["summary"]["context_injection_count"] == 2
+    assert manifest["summary"]["context_injection_trimmed_count"] == 1
+    assert manifest["context_injections"]["sources"] == {"memory": 1, "runtime": 1}
     assert manifest["summary"]["has_prompt_trim"] is True
     assert manifest["capability_discovery"]["match_count"] == 4
     assert manifest["memory_search"]["hit_count"] == 2
@@ -184,6 +210,41 @@ def test_storage_backend_trace_collects_and_deduplicates_component_backends() ->
     assert len(memory["sources"]) == 2
 
 
+def test_context_injection_trace_summarizes_prompt_injection_decisions() -> None:
+    trace = ContextInjectionTrace.from_prompt(
+        {
+            "metadata": {
+                "context_injections": [
+                    {
+                        "name": "memory",
+                        "source": "memory",
+                        "target": "semi_dynamic_1",
+                        "status": "trimmed",
+                        "included": True,
+                        "trimmed": True,
+                    },
+                    {
+                        "name": "denied",
+                        "source": "runtime",
+                        "target": "high_static",
+                        "status": "target_denied",
+                        "included": False,
+                        "trimmed": False,
+                    },
+                ]
+            }
+        }
+    ).manifest()
+
+    assert trace["schema_version"] == "agent-core-context-injection-trace/v1"
+    assert trace["injection_count"] == 2
+    assert trace["included_count"] == 1
+    assert trace["excluded_count"] == 1
+    assert trace["trimmed_count"] == 1
+    assert trace["sources"] == {"memory": 1, "runtime": 1}
+    assert trace["targets"] == {"high_static": 1, "semi_dynamic_1": 1}
+
+
 @pytest.mark.asyncio
 async def test_run_trace_stores_persist_bundle_manifests(tmp_path) -> None:
     bundle = AgentRunTraceBundle(
@@ -263,6 +324,7 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     assert trace["prompt"]["metadata"]["profile"] == "traceable"
     assert trace["summary"]["capability_discovery_match_count"] == trace["capability_discovery"]["match_count"]
     assert trace["summary"]["memory_search_hit_count"] == 0
+    assert trace["summary"]["context_injection_count"] == 0
     assert trace["summary"]["storage_backend_count"] >= 7
     assert trace["storage_backends"]["roles"]["memory"] == 1
     assert trace["storage_backends"]["roles"]["journal"] == 1
