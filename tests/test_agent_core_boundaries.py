@@ -50,6 +50,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentHarness",
         "AgentPromptBuilder",
         "ContextInjection",
+        "ContextReducerPort",
+        "DefaultContextReducer",
         "ReActExecutor",
         "InMemoryPlanner",
         "ListEventSink",
@@ -75,6 +77,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "RuleBasedPolicy",
         "RuleBasedMemoryGovernance",
         "DEFAULT_PROMPT_TRIM_ORDER",
+        "ReducerRequest",
+        "ReducerResult",
+        "apply_reduction_to_timeline",
     }
 
     assert expected <= set(agent_core.__all__)

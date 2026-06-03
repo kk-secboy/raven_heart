@@ -27,6 +27,7 @@ agent_core
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
+| Context reducer protocol and reduction manifests | Domain summarizers, archive stores, retrieval policy |
 | Planner protocol and plan state | Domain-specific plan generation and workflow policy |
 | Harness/ReAct runner | UI events, API routes, production persistence backend |
 | Sequenced event stream | UI rendering, logs, metrics, audit pipeline |
@@ -54,6 +55,12 @@ debugging, audit, or resume decisions.
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; production runtimes should implement
 `EventSinkPort` for their own logs, UI streams, metrics, or audit systems.
+
+`ContextReducerPort` handles automatic timeline/context reduction as a core
+mechanic. `DefaultContextReducer` is deterministic and dependency-free, while
+production runtimes can implement the same port with model-backed summaries,
+archive storage, vector indexes, or graph memory. The reducer returns manifests
+so compression can be audited and replayed.
 
 `PlannerPort` is a core contract because plan state, dependency readiness,
 updates, and manifests are reusable across agent domains. The core only ships a

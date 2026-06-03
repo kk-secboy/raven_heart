@@ -18,6 +18,7 @@ ops agents, research agents, and future automation systems.
 - MCP center and SDK-free stdio connector.
 - Prompt buckets and context trimming.
 - Provider-neutral prompt IR with semantic bucket trimming.
+- Context reducer port and deterministic timeline reduction.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Pluggable journal stores for harness checkpoint/resume persistence.
@@ -53,6 +54,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | MCP center interfaces | MCP server deployment and secrets |
 | Memory and journal ports | Graphiti, RAG, durable product stores |
 | Planner protocol and plan state | Domain-specific planning strategy and product workflow |
+| Context reducer protocol | Domain summarizers, archive storage, and retrieval strategy |
 | Harness state contracts | API routes, UI events, production persistence backend |
 
 The dependency direction must always be:
@@ -94,6 +96,19 @@ agent_core never imports runtime
 - `AgentEvent` and `EventSinkPort`.
 - Monotonic event sequencing inside `ReActExecutor`.
 - `ListEventSink` for lightweight event capture and manifest export.
+
+### Context Reduction
+
+- `ContextReducerPort` for automatic timeline/context compaction.
+- `DefaultContextReducer` for deterministic local reduction.
+- `ReducerRequest` and `ReducerResult` manifests for replay and audit.
+- Pinned item retention plus recent-window retention.
+- `apply_reduction_to_timeline()` for updating a `TimelineStore` with compressed
+  head text and archive refs.
+
+The SDK owns reduction mechanics and manifests. Runtimes may replace the reducer
+with an LLM summarizer, vector/archive backed compressor, or domain-specific
+reducer while keeping the same core contract.
 
 ### LLM Providers
 
@@ -276,6 +291,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SQLite/Markdown memory | MVP implemented |
 | Planner core | MVP implemented |
 | Prompt buckets/trimming | MVP implemented |
+| Context reducer | MVP implemented |
 | Runtime adapter code | intentionally excluded |
 | Full OpenAI Agents SDK replacement | in progress |
 

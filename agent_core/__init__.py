@@ -100,6 +100,13 @@ from agent_core.providers import (
     LLMResponse,
 )
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
+from agent_core.reducer import (
+    ContextReducerPort,
+    DefaultContextReducer,
+    ReducerRequest,
+    ReducerResult,
+    apply_reduction_to_timeline,
+)
 from agent_core.runner import (
     AgentRunner,
     AgentRunOutcome,
@@ -169,7 +176,9 @@ __all__ = [
     "CompositePolicy",
     "Checkpoint",
     "ContextInjection",
+    "ContextReducerPort",
     "CostTrace",
+    "DefaultContextReducer",
     "EventSinkPort",
     "ListEventSink",
     "NullEventSink",
@@ -214,6 +223,8 @@ __all__ = [
     "ReActConfig",
     "ReActExecutor",
     "ReActResult",
+    "ReducerRequest",
+    "ReducerResult",
     "ResumeToken",
     "ReplayIssue",
     "RunStatus",
@@ -227,6 +238,7 @@ __all__ = [
     "SkillsContext",
     "SkillViewWindow",
     "compute_skill_hash",
+    "apply_reduction_to_timeline",
     "parse_skill_resource_ref",
     "skill_from_markdown",
     "InMemoryToolReplay",

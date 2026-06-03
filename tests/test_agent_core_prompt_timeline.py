@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from agent_core import apply_reduction_to_timeline
 from agent_core.prompt import PromptBucketRole, PromptIR
 from agent_core.reducer import DefaultContextReducer, ReducerRequest
-from agent_core.timeline import TimelineBudget, TimelineStore
+from agent_core.timeline import TimelineBudget, TimelineItem, TimelineStore
 
 
 def test_prompt_ir_renders_yaklang_style_buckets_in_stable_order() -> None:
@@ -104,4 +105,42 @@ async def test_default_reducer_keeps_recent_window_and_compresses_old_items() ->
     assert result.archive_refs
     assert result.retained_items
     assert result.retained_items[-1].content.startswith("step 5")
+
+
+@pytest.mark.asyncio
+async def test_default_reducer_exports_manifest_and_applies_to_timeline() -> None:
+    pinned = TimelineItem("pinned fact " + ("p" * 80), kind="fact", pinned=True)
+    timeline = TimelineStore([pinned])
+    for index in range(4):
+        timeline.add(f"old step {index} " + ("payload " * 20), kind="observation")
+    latest = timeline.add("latest observation " + ("z" * 80), kind="observation")
+
+    reducer = DefaultContextReducer()
+    request = ReducerRequest(items=timeline.items, max_bytes=220, recent_keep_ratio=0.2)
+    result = await reducer.reduce(request)
+    view = apply_reduction_to_timeline(timeline, result)
+    manifest = result.manifest()
+
+    active_ids = {item.item_id for item in timeline.items if not item.deleted}
+    assert pinned.item_id in active_ids
+    assert latest.item_id in active_ids
+    assert result.metadata["compressed_item_count"] > 0
+    assert manifest["schema_version"] == "agent-core-reducer-result/v1"
+    assert manifest["retained_item_ids"] == [item.item_id for item in result.retained_items]
+    assert timeline.compressed_head
+    assert timeline.archive_refs == list(result.archive_refs)
+    assert view.compressed_head == timeline.compressed_head
+
+
+@pytest.mark.asyncio
+async def test_reducer_request_normalizes_budget_values() -> None:
+    timeline = TimelineStore()
+    item = timeline.add("large " + ("x" * 200), kind="observation")
+
+    result = await DefaultContextReducer().reduce(
+        ReducerRequest(items=(item,), max_bytes=0, recent_keep_ratio=5.0)
+    )
+
+    assert result.metadata["max_bytes"] == 1
+    assert result.metadata["recent_keep_ratio"] == 1.0
 
