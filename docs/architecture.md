@@ -27,6 +27,7 @@ agent_core
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
+| Planner protocol and plan state | Domain-specific plan generation and workflow policy |
 | Harness/ReAct runner | UI events, API routes, production persistence backend |
 | Sequenced event stream | UI rendering, logs, metrics, audit pipeline |
 | Policy ports | Operator approval UX and organization policy |
@@ -53,6 +54,12 @@ debugging, audit, or resume decisions.
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; production runtimes should implement
 `EventSinkPort` for their own logs, UI streams, metrics, or audit systems.
+
+`PlannerPort` is a core contract because plan state, dependency readiness,
+updates, and manifests are reusable across agent domains. The core only ships a
+lightweight `InMemoryPlanner`; Raven-specific decomposition, code repair plans,
+approval flows, and durable planner storage should live in a runtime or adapter
+package that implements the same port.
 
 ## Adapter Policy
 

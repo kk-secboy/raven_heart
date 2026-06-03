@@ -77,7 +77,15 @@ from agent_core.policy import (
     PolicyRule,
     RuleBasedPolicy,
 )
-from agent_core.planner import Plan, PlannerPort, PlanStep, PlanUpdate
+from agent_core.planner import (
+    InMemoryPlanner,
+    Plan,
+    PlannerPort,
+    PlanStep,
+    PlanStepStatus,
+    PlanUpdate,
+    TERMINAL_PLAN_STEP_STATUSES,
+)
 from agent_core.prompt import PromptBucket, PromptBucketRole, PromptIR
 from agent_core.prompt import DEFAULT_PROMPT_TRIM_ORDER
 from agent_core.providers import (
@@ -194,6 +202,7 @@ __all__ = [
     "Plan",
     "PlannerPort",
     "PlanStep",
+    "PlanStepStatus",
     "PlanUpdate",
     "ParsedAction",
     "PolicyDecision",
@@ -225,6 +234,7 @@ __all__ = [
     "InMemoryArtifactStore",
     "InMemoryJournalStore",
     "InMemoryMemoryStore",
+    "InMemoryPlanner",
     "MarkdownMemoryStore",
     "MarkdownJournalStore",
     "MemoryCenter",
@@ -243,6 +253,7 @@ __all__ = [
     "RuleBasedMemoryGovernance",
     "SQLiteMemoryStore",
     "TERMINAL_RUN_STATUSES",
+    "TERMINAL_PLAN_STEP_STATUSES",
     "TERMINAL_TURN_STATUSES",
     "ToolCenter",
     "ToolInvocation",

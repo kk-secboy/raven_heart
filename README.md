@@ -23,6 +23,7 @@ ops agents, research agents, and future automation systems.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Journal replay manifests and snapshot consistency audit.
 - Sequenced event stream and event log manifests.
+- Planner protocol and lightweight in-memory plan state.
 - Policy gates, budget metadata, loop guards, and capability manifests.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
@@ -51,6 +52,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Skill registry | Skill distribution UX |
 | MCP center interfaces | MCP server deployment and secrets |
 | Memory and journal ports | Graphiti, RAG, durable product stores |
+| Planner protocol and plan state | Domain-specific planning strategy and product workflow |
 | Harness state contracts | API routes, UI events, production persistence backend |
 
 The dependency direction must always be:
@@ -149,6 +151,19 @@ This keeps `agent_core` small and importable while still leaving a clean path to
 production storage. A runtime should bring its own durable backends when it needs
 PG, graph memory, multi-tenant isolation, retention policy, or product audit.
 
+### Planner
+
+- `PlannerPort` for plan-and-execute agents.
+- `Plan`, `PlanStep`, and `PlanUpdate` state contracts.
+- `InMemoryPlanner` for tests, examples, and lightweight embeddings.
+- Dependency-aware ready-step selection.
+- Manifest export with terminal state, ready steps, and status counts.
+
+The SDK owns generic plan state and update semantics. Runtimes own the actual
+planning strategy: Raven can produce pentest plans, a code agent can produce
+repair plans, and an ops agent can produce incident response plans while all of
+them reuse the same core contract.
+
 ### Prompt Buckets
 
 `agent_core` owns prompt structure, not product-specific prompt wording. Runtime
@@ -219,11 +234,7 @@ The core package currently has no required runtime dependencies.
 python -m pytest
 ```
 
-Current baseline:
-
-```text
-102 passed
-```
+The expected baseline is the full repository test suite passing.
 
 ## Examples
 
@@ -263,6 +274,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Skill center | MVP implemented |
 | MCP center | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
+| Planner core | MVP implemented |
 | Prompt buckets/trimming | MVP implemented |
 | Runtime adapter code | intentionally excluded |
 | Full OpenAI Agents SDK replacement | in progress |
