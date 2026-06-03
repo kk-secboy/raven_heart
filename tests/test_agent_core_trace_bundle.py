@@ -37,6 +37,9 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         event_log={"event_count": 9},
         resume={"checkpoint_id": "c1"},
         timeline_reduction={"compressed_bytes": 10},
+        capability_discovery={"match_count": 4},
+        memory_search={"hit_count": 2},
+        prompt={"metadata": {"trim": {"target_bytes": 900}}},
     )
 
     manifest = bundle.manifest()
@@ -53,6 +56,11 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["correlation_entry_count"] == 0
     assert manifest["summary"]["has_resume"] is True
     assert manifest["summary"]["has_timeline_reduction"] is True
+    assert manifest["summary"]["capability_discovery_match_count"] == 4
+    assert manifest["summary"]["memory_search_hit_count"] == 2
+    assert manifest["summary"]["has_prompt_trim"] is True
+    assert manifest["capability_discovery"]["match_count"] == 4
+    assert manifest["memory_search"]["hit_count"] == 2
 
 
 def test_trace_correlation_index_cross_references_trace_materials() -> None:
@@ -206,6 +214,10 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     call_id = trace["tool_replay"]["records"][0]["result"]["call_id"]
     assert trace["correlation"]["groups"]["calls"][call_id]
     assert trace["prompt"]["metadata"]["profile"] == "traceable"
+    assert trace["summary"]["capability_discovery_match_count"] == trace["capability_discovery"]["match_count"]
+    assert trace["summary"]["memory_search_hit_count"] == 0
+    assert trace["capability_discovery"]["schema_version"] == "agent-core-capability-discovery/v1"
+    assert trace["memory_search"]["enabled"] is True
 
 
 @pytest.mark.asyncio

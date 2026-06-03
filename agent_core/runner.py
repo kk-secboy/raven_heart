@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import inspect
 import json
 import re
@@ -16,7 +17,7 @@ from uuid import uuid4
 from agent_core.actions import ActionRegistry, ActionVerifierPort
 from agent_core.approvals import ApprovalResumeContext, ApprovalStorePort, NullApprovalStore
 from agent_core.artifacts import ArtifactStorePort
-from agent_core.capabilities import CapabilityCatalog
+from agent_core.capabilities import CapabilityCatalog, CapabilityQuery
 from agent_core.config import AgentProfile, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
 from agent_core.events import EventSinkPort
@@ -162,7 +163,15 @@ class AgentRunOutcome:
     prompt_manifest: dict[str, Any]
     resume_manifest: dict[str, Any] = field(default_factory=dict)
     timeline_reduction_manifest: dict[str, Any] = field(default_factory=dict)
+    capability_discovery_manifest: dict[str, Any] = field(default_factory=dict)
+    memory_search_manifest: dict[str, Any] = field(default_factory=dict)
     trace_manifest: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AgentMemoryRecall:
+    injections: tuple[ContextInjection, ...] = ()
+    manifest: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -432,12 +441,13 @@ class AgentRunner:
         if run_request.refresh:
             await self.refresh()
         resume_manifest = await self._resume_manifest(run_request.resume_token)
-        memory_injections = await self._memory_injections(run_request)
+        capability_discovery_manifest = self._capability_discovery_manifest(run_request)
+        memory_recall = await self._memory_recall(run_request)
         timeline_reduction_manifest = await self._reduce_timeline_if_needed(run_request)
         context = self._context_for(
             run_request,
             resume_manifest=resume_manifest,
-            injections=memory_injections,
+            injections=memory_recall.injections,
             timeline_reduction_manifest=timeline_reduction_manifest,
         )
         prompt = self._prompt_builder().build(context).trim_to_budget(
@@ -456,6 +466,8 @@ class AgentRunner:
             prompt_manifest=prompt.manifest(),
             resume_manifest=resume_manifest,
             timeline_reduction_manifest=timeline_reduction_manifest,
+            capability_discovery_manifest=capability_discovery_manifest,
+            memory_search_manifest=memory_recall.manifest,
             request=run_request,
         )
         await self.session.trace_store.save(trace_manifest)
@@ -465,6 +477,8 @@ class AgentRunner:
             prompt_manifest=prompt.manifest(),
             resume_manifest=resume_manifest,
             timeline_reduction_manifest=timeline_reduction_manifest,
+            capability_discovery_manifest=capability_discovery_manifest,
+            memory_search_manifest=memory_recall.manifest,
             trace_manifest=trace_manifest,
         )
 
@@ -612,27 +626,60 @@ class AgentRunner:
         }
         return manifest
 
+    def _capability_discovery_manifest(self, request: AgentRunRequest) -> dict[str, Any]:
+        catalog = self.session.capability_catalog()
+        query_text = (request.context.dynamic_task if request.context else "") or request.task
+        return catalog.discover(
+            CapabilityQuery(
+                query=query_text,
+                limit=16,
+            )
+        ).manifest()
+
     async def _memory_injections(self, request: AgentRunRequest) -> tuple[ContextInjection, ...]:
+        return (await self._memory_recall(request)).injections
+
+    async def _memory_recall(self, request: AgentRunRequest) -> AgentMemoryRecall:
         if not self.session.profile.capabilities.memory_enabled:
-            return ()
+            return AgentMemoryRecall(
+                manifest={
+                    "schema_version": "agent-core-memory-recall/v1",
+                    "enabled": False,
+                    "reason": "profile_memory_disabled",
+                    "hit_count": 0,
+                }
+            )
         context = request.context or AgentContextPack()
         query_text = context.dynamic_task or request.task
-        hits = await self.session.memory.search(MemoryQuery(query=query_text, limit=5))
+        query = MemoryQuery(query=query_text, limit=5)
+        plan_manifest = _memory_search_plan_manifest(self.session.memory, query)
+        hits = await self.session.memory.search(query)
+        manifest = {
+            "schema_version": "agent-core-memory-recall/v1",
+            "enabled": True,
+            "query": query.manifest(),
+            "plan": plan_manifest,
+            "hit_count": len(hits),
+            "hits": [_memory_hit_manifest(hit) for hit in hits],
+        }
         if not hits:
-            return ()
-        return (
-            ContextInjection(
-                name="memory_recall",
-                content=_memory_context_block(hits),
-                target=PromptBucketRole.SEMI_DYNAMIC_1,
-                source="memory",
-                priority=80,
-                metadata={
-                    "query": query_text,
-                    "hit_count": len(hits),
-                    "sources": [hit.source for hit in hits if hit.source],
-                },
+            return AgentMemoryRecall(manifest=manifest)
+        return AgentMemoryRecall(
+            injections=(
+                ContextInjection(
+                    name="memory_recall",
+                    content=_memory_context_block(hits),
+                    target=PromptBucketRole.SEMI_DYNAMIC_1,
+                    source="memory",
+                    priority=80,
+                    metadata={
+                        "query": query_text,
+                        "hit_count": len(hits),
+                        "sources": [hit.source for hit in hits if hit.source],
+                    },
+                ),
             ),
+            manifest=manifest,
         )
 
     def _executor(
@@ -678,6 +725,8 @@ class AgentRunner:
         prompt_manifest: dict[str, Any],
         resume_manifest: dict[str, Any],
         timeline_reduction_manifest: dict[str, Any],
+        capability_discovery_manifest: dict[str, Any],
+        memory_search_manifest: dict[str, Any],
         request: AgentRunRequest,
     ) -> dict[str, Any]:
         bundle = AgentRunTraceBundle(
@@ -695,9 +744,12 @@ class AgentRunner:
             event_log=await _component_manifest(self.session.event_sink),
             resume=resume_manifest,
             timeline_reduction=timeline_reduction_manifest,
+            capability_discovery=capability_discovery_manifest,
+            memory_search=memory_search_manifest,
             metadata={
                 "profile": self.session.profile.name,
                 "request_metadata": dict(request.metadata),
+                "prompt_trim": dict(prompt_manifest.get("metadata", {}).get("trim") or {}),
             },
         )
         return bundle.manifest()
@@ -1088,6 +1140,35 @@ def _memory_context_block(hits: tuple[MemoryHit, ...]) -> str:
         source = hit.source or "memory"
         lines.append(f"- {source} ({hit.score:.3f}): {hit.content}")
     return "[memory]\n" + "\n".join(lines)
+
+
+def _memory_search_plan_manifest(memory: MemoryPort, query: MemoryQuery) -> dict[str, Any]:
+    plan_search = getattr(memory, "plan_search", None)
+    if not callable(plan_search):
+        return {
+            "schema_version": "agent-core-memory-search-plan-unavailable/v1",
+            "query": query.manifest(),
+            "memory_type": type(memory).__name__,
+        }
+    plan = plan_search(query)
+    manifest = getattr(plan, "manifest", None)
+    if callable(manifest):
+        value = manifest()
+        return dict(value) if isinstance(value, dict) else {}
+    return {}
+
+
+def _memory_hit_manifest(hit: MemoryHit) -> dict[str, Any]:
+    content_bytes = len(hit.content.encode("utf-8"))
+    return {
+        "source": hit.source,
+        "score": hit.score,
+        "content_bytes": content_bytes,
+        "content_sha256": hashlib.sha256(hit.content.encode("utf-8")).hexdigest()
+        if hit.content
+        else "",
+        "metadata": dict(hit.metadata),
+    }
 
 
 def _append_context_block(existing: str, block: str) -> str:

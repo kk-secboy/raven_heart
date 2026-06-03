@@ -80,10 +80,12 @@ runtime code owns worker selection, user-facing recovery flows, and distributed
 resume scheduling.
 
 `AgentRunTraceBundle` aggregates per-run session, prompt, journal replay,
-provider audit, tool replay, approvals, event log, resume, and timeline reduction
-manifests. The SDK owns the shape and summary counters. Runtime code owns where
-the bundle is stored, how long it is retained, and how it is queried for product
-observability or incident review.
+provider audit, tool replay, approvals, event log, resume, timeline reduction,
+capability discovery, memory recall/search, and prompt trim manifests. The SDK
+owns the shape and summary counters, including discovery match counts, memory
+hit counts, and prompt-trim presence. Runtime code owns where the bundle is
+stored, how long it is retained, and how it is queried for product observability
+or incident review.
 
 `TraceCorrelationIndex` is generated inside the trace bundle. It gives
 provider-neutral cross references across provider calls, tool replay records,

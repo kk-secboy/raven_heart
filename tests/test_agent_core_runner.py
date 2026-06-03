@@ -8,7 +8,7 @@ from agent_core.approvals import ApprovalDecisionRecord, ApprovalResumeContext, 
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack
 from agent_core.harness import InMemoryAgentJournal
-from agent_core.memory import InMemoryMemoryStore, MemoryRecord
+from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
 from agent_core.mcp import MCPCenter, MCPServerSpec
 from agent_core.providers import LLMProviderCenter
 from agent_core.providers import LLMRequest, LLMResponse
@@ -63,10 +63,14 @@ async def test_agent_runner_executes_react_with_profile_context_and_manifest() -
     registry.register(SkillSpec(name="recon", description="Recon skill", prompt="Use passive recon."))
     skills = SkillsContext(registry)
     skills.load("recon")
-    memory = InMemoryMemoryStore(
-        (
-            MemoryRecord(content="Inspect target admin UI at /admin", source="memory"),
-        )
+    memory = MemoryCenter(default_store="local")
+    memory.register(
+        "local",
+        InMemoryMemoryStore(
+            (
+                MemoryRecord(content="Inspect target admin UI at /admin", source="memory"),
+            )
+        ),
     )
     session = AgentSession(
         profile=AgentProfile(
@@ -110,6 +114,10 @@ async def test_agent_runner_executes_react_with_profile_context_and_manifest() -
     assert memory_injection["name"] == "memory_recall"
     assert memory_injection["source"] == "memory"
     assert memory_injection["metadata"]["hit_count"] == 1
+    assert outcome.memory_search_manifest["hit_count"] == 1
+    assert outcome.memory_search_manifest["plan"]["schema_version"] == "agent-core-memory-search-plan/v1"
+    assert outcome.trace_manifest["summary"]["memory_search_hit_count"] == 1
+    assert outcome.trace_manifest["memory_search"]["hits"][0]["content_sha256"]
     assert journal.finished[0]["status"] == "completed"
 
 
@@ -162,6 +170,8 @@ async def test_agent_runner_trims_prompt_to_profile_budget() -> None:
     assert "current task" in prompt_text
     assert "[...trimmed...]" in prompt_text
     assert trim["target_bytes"] == 900
+    assert outcome.trace_manifest["summary"]["has_prompt_trim"] is True
+    assert outcome.trace_manifest["metadata"]["prompt_trim"]["target_bytes"] == 900
 
 
 @pytest.mark.asyncio

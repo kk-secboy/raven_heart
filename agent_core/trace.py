@@ -179,6 +179,8 @@ class AgentRunTraceBundle:
     event_log: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
     timeline_reduction: dict[str, Any] = field(default_factory=dict)
+    capability_discovery: dict[str, Any] = field(default_factory=dict)
+    memory_search: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -213,6 +215,11 @@ class AgentRunTraceBundle:
                 "correlation_entry_count": int(correlation.get("entry_count") or 0),
                 "has_resume": bool(self.resume),
                 "has_timeline_reduction": bool(self.timeline_reduction),
+                "capability_discovery_match_count": int(
+                    self.capability_discovery.get("match_count") or 0
+                ),
+                "memory_search_hit_count": int(self.memory_search.get("hit_count") or 0),
+                "has_prompt_trim": bool(self.prompt.get("metadata", {}).get("trim")),
             },
             "session": dict(self.session),
             "prompt": dict(self.prompt),
@@ -224,6 +231,8 @@ class AgentRunTraceBundle:
             "event_log": dict(self.event_log),
             "resume": dict(self.resume),
             "timeline_reduction": dict(self.timeline_reduction),
+            "capability_discovery": dict(self.capability_discovery),
+            "memory_search": dict(self.memory_search),
             "correlation": dict(correlation),
             "metadata": dict(self.metadata),
         }
