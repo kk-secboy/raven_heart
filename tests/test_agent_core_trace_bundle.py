@@ -5,6 +5,7 @@ import pytest
 from agent_core.config import AgentProfile
 from agent_core.events import ListEventSink
 from agent_core.harness import InMemoryAgentJournal
+from agent_core.policy import InMemoryPolicyDecisionStore
 from agent_core.providers import LLMProviderCenter
 from agent_core.runner import AgentRunner, AgentSession
 from agent_core.testing import MockLLMProvider
@@ -30,6 +31,7 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         journal_replay={"ok": True, "event_count": 7},
         provider={"call_count": 2},
         tool_replay={"record_count": 1},
+        policy_decisions={"record_count": 2},
         approvals={"record_count": 3},
         event_log={"event_count": 9},
         resume={"checkpoint_id": "c1"},
@@ -44,6 +46,7 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["journal_event_count"] == 7
     assert manifest["summary"]["provider_call_count"] == 2
     assert manifest["summary"]["tool_replay_record_count"] == 1
+    assert manifest["summary"]["policy_decision_record_count"] == 2
     assert manifest["summary"]["approval_record_count"] == 3
     assert manifest["summary"]["event_log_count"] == 9
     assert manifest["summary"]["has_resume"] is True
@@ -97,6 +100,7 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
         harness=InMemoryAgentJournal(),
         event_sink=event_sink,
         tool_replay=InMemoryToolReplay(),
+        policy_decision_store=InMemoryPolicyDecisionStore(),
     )
 
     outcome = await AgentRunner(session).run("inspect")
@@ -110,10 +114,12 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     assert trace["summary"]["journal_event_count"] > 0
     assert trace["summary"]["provider_call_count"] == 2
     assert trace["summary"]["tool_replay_record_count"] == 1
+    assert trace["summary"]["policy_decision_record_count"] == 3
     assert trace["summary"]["event_log_count"] == event_sink.manifest()["event_count"]
     assert trace["journal_replay"]["ok"] is True
     assert trace["provider"]["calls"][0]["provider_name"] == "mock"
     assert trace["tool_replay"]["records"][0]["result"]["tool_name"] == "lookup"
+    assert trace["policy_decisions"]["records"][1]["subject"] == "tool:lookup"
     assert trace["prompt"]["metadata"]["profile"] == "traceable"
 
 

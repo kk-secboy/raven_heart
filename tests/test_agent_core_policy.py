@@ -8,7 +8,16 @@ from agent_core.actions import ActionRegistry, ParsedAction
 from agent_core.approvals import ApprovalDecisionRecord, ApprovalResumeContext, InMemoryApprovalStore
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.mcp import MCPCenter, MCPServerSpec, MCPToolReference, MCPToolSpec
-from agent_core.policy import CompositePolicy, PolicyRule, RuleBasedPolicy
+from agent_core.policy import (
+    ApprovalRequest,
+    CompositePolicy,
+    InMemoryPolicyDecisionStore,
+    MarkdownPolicyDecisionStore,
+    PolicyDecision,
+    PolicyRule,
+    RuleBasedPolicy,
+    SQLitePolicyDecisionStore,
+)
 from agent_core.prompt import PromptIR
 from agent_core.react import ReActConfig, ReActExecutor
 from agent_core.testing import InMemoryHarness, MockLLMProvider
@@ -324,4 +333,93 @@ async def test_composite_policy_denies_over_approval() -> None:
     decision = await policy.check_tool(ToolInvocation(tool_name="scan"))
 
     assert decision.status == "deny"
+
+
+@pytest.mark.asyncio
+async def test_policy_decision_stores_persist_records(tmp_path) -> None:
+    decision = PolicyDecision(
+        status="approval_required",
+        reason="release requires approval",
+        approval=ApprovalRequest(
+            reason="release requires approval",
+            subject="tool:deploy",
+            metadata={"rule": "release"},
+        ),
+    )
+    stores = (
+        InMemoryPolicyDecisionStore(),
+        SQLitePolicyDecisionStore(tmp_path / "policy.sqlite"),
+        MarkdownPolicyDecisionStore(tmp_path / "policy.md"),
+    )
+
+    for store in stores:
+        record = await store.submit(
+            decision,
+            subject_kind="tool",
+            subject_name="deploy",
+            run_id="run-1",
+            turn_id="turn-1",
+            metadata={"argument_keys": ["target"]},
+        )
+        records = await store.records()
+
+        assert records[0].decision_id == record.decision_id
+        assert records[0].subject == "tool:deploy"
+        assert records[0].decision.status == "approval_required"
+        assert records[0].decision.approval is not None
+        assert records[0].metadata["argument_keys"] == ["target"]
+        assert store.manifest()["record_count"] == 1
+
+    markdown_text = (tmp_path / "policy.md").read_text(encoding="utf-8")
+    assert "agent-core-policy-decision-record-payload" not in markdown_text
+
+
+@pytest.mark.asyncio
+async def test_react_records_action_and_tool_policy_decisions() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="delete_target", description="Delete target", tags=("destructive",)),
+        _handler,
+    )
+    provider = MockLLMProvider(
+        [
+            {"action": "delete_target", "arguments": {"path": "target.txt"}},
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    policy = RuleBasedPolicy(
+        [
+            PolicyRule(
+                name="deny-destructive",
+                status="deny",
+                tool_tags=("destructive",),
+                reason="destructive tools are blocked",
+            )
+        ]
+    )
+    store = InMemoryPolicyDecisionStore()
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=registry,
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        policy=policy,
+        policy_decision_store=store,
+        config=ReActConfig(max_iterations=3),
+    )
+
+    result = await executor.run("try delete", PromptIR.from_parts(dynamic="task"))
+    records = await store.records()
+
+    assert result.status == "completed"
+    assert [record.subject for record in records] == [
+        "action:delete_target",
+        "tool:delete_target",
+        "action:finish",
+    ]
+    assert records[0].decision.status == "allow"
+    assert records[1].decision.status == "deny"
+    assert records[1].decision.reason == "destructive tools are blocked"
+    assert records[1].metadata["argument_keys"] == ["path"]
+    assert records[1].metadata["tool_spec"]["tags"] == ["destructive"]
 

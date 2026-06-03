@@ -75,6 +75,7 @@ class AgentRunTraceBundle:
     journal_replay: dict[str, Any] = field(default_factory=dict)
     provider: dict[str, Any] = field(default_factory=dict)
     tool_replay: dict[str, Any] = field(default_factory=dict)
+    policy_decisions: dict[str, Any] = field(default_factory=dict)
     approvals: dict[str, Any] = field(default_factory=dict)
     event_log: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
@@ -96,6 +97,7 @@ class AgentRunTraceBundle:
                 "journal_event_count": int(self.journal_replay.get("event_count") or 0),
                 "provider_call_count": int(self.provider.get("call_count") or 0),
                 "tool_replay_record_count": int(self.tool_replay.get("record_count") or 0),
+                "policy_decision_record_count": int(self.policy_decisions.get("record_count") or 0),
                 "approval_record_count": int(self.approvals.get("record_count") or 0),
                 "event_log_count": int(self.event_log.get("event_count") or 0),
                 "has_resume": bool(self.resume),
@@ -106,6 +108,7 @@ class AgentRunTraceBundle:
             "journal_replay": dict(self.journal_replay),
             "provider": dict(self.provider),
             "tool_replay": dict(self.tool_replay),
+            "policy_decisions": dict(self.policy_decisions),
             "approvals": dict(self.approvals),
             "event_log": dict(self.event_log),
             "resume": dict(self.resume),
@@ -568,6 +571,7 @@ def _trace_record_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "iterations": int(run.get("iterations") or 0),
         "provider_call_count": int(summary.get("provider_call_count") or 0),
         "tool_replay_record_count": int(summary.get("tool_replay_record_count") or 0),
+        "policy_decision_record_count": int(summary.get("policy_decision_record_count") or 0),
         "approval_record_count": int(summary.get("approval_record_count") or 0),
         "event_log_count": int(summary.get("event_log_count") or 0),
     }

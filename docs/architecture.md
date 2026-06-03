@@ -37,7 +37,7 @@ agent_core
 | Planner protocol and plan state | Domain-specific plan generation and workflow policy |
 | Harness/ReAct runner | UI events, API routes, production persistence backend |
 | Sequenced event stream | UI rendering, logs, metrics, audit pipeline |
-| Policy ports | Operator approval UX and organization policy |
+| Policy ports and decision records | Operator approval UX, organization policy, SIEM export |
 | Approval store and approval manifests | Identity, approval UI, workflow routing, escalation policy |
 
 ## Data Backend Boundary
@@ -49,6 +49,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | PG, vector DB, graph/RAG, product knowledge |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | PG, object storage, workflow replay DB |
+| Policy decisions | `PolicyDecisionStorePort` | Null, in-memory, SQLite, Markdown | PG, SIEM/audit log, workflow DB |
 | Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | PG, object storage, observability pipeline |
 | Manager runs | `AgentRunStorePort` | In-memory, SQLite, Markdown | PG, workflow DB, scheduler state |
 | Planner state | `PlannerStorePort` | In-memory, SQLite, Markdown | PG, workflow DB, planner audit store |

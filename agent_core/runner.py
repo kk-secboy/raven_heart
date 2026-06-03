@@ -24,7 +24,7 @@ from agent_core.harness import AgentHarness, CancelToken, InMemoryAgentJournal, 
 from agent_core.loop_guard import LoopGuard
 from agent_core.memory import MemoryHit, MemoryPort, MemoryQuery, NullMemory
 from agent_core.mcp import MCPCenter
-from agent_core.policy import PolicyPort
+from agent_core.policy import NullPolicyDecisionStore, PolicyDecisionStorePort, PolicyPort
 from agent_core.providers import LLMProviderPort
 from agent_core.prompt import PromptBucketRole
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
@@ -52,6 +52,7 @@ class AgentSession:
     context_reducer: ContextReducerPort | None = None
     event_sink: EventSinkPort | None = None
     policy: PolicyPort | None = None
+    policy_decision_store: PolicyDecisionStorePort = field(default_factory=NullPolicyDecisionStore)
     approval_store: ApprovalStorePort = field(default_factory=NullApprovalStore)
     tool_replay: ToolReplayPort = field(default_factory=NullToolReplay)
     trace_store: RunTraceStorePort = field(default_factory=NullRunTraceStore)
@@ -78,6 +79,7 @@ class AgentSession:
         provider_manifest = getattr(self.provider, "manifest", None)
         memory_manifest = getattr(self.memory, "manifest", None)
         approval_manifest = getattr(self.approval_store, "manifest", None)
+        policy_decision_manifest = getattr(self.policy_decision_store, "manifest", None)
         trace_store_manifest = getattr(self.trace_store, "manifest", None)
         return {
             "schema_version": "agent-core-session/v1",
@@ -97,6 +99,7 @@ class AgentSession:
             "provider": provider_manifest() if callable(provider_manifest) else {},
             "capabilities": self.capability_catalog().manifest(),
             "memory": memory_manifest() if callable(memory_manifest) else {},
+            "policy_decisions": policy_decision_manifest() if callable(policy_decision_manifest) else {},
             "approvals": approval_manifest() if callable(approval_manifest) else {},
             "trace_store": trace_store_manifest() if callable(trace_store_manifest) else {},
             "context_reducer": _context_reducer_manifest(self.context_reducer),
@@ -559,6 +562,7 @@ class AgentRunner:
             harness=self.session.harness,
             event_sink=self.session.event_sink,
             policy=self.session.policy,
+            policy_decision_store=self.session.policy_decision_store,
             approval_store=self.session.approval_store,
             approval_resume=approval_resume,
             memory=NullMemory(),
@@ -598,6 +602,7 @@ class AgentRunner:
             journal_replay=self._journal_replay_manifest(result.run_id),
             provider=await _component_manifest(self.session.provider),
             tool_replay=await _component_manifest(self.session.tool_replay),
+            policy_decisions=await _component_manifest(self.session.policy_decision_store),
             approvals=await _component_manifest(self.session.approval_store),
             event_log=await _component_manifest(self.session.event_sink),
             resume=resume_manifest,

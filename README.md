@@ -154,8 +154,8 @@ and downstream persistence.
 
 - `AgentRunTraceBundle` aggregates one run's provider-neutral audit materials.
 - `AgentRunOutcome.trace_manifest` includes session, prompt, journal replay,
-  provider call audit, tool replay, approvals, event log, resume, and timeline
-  reduction manifests when available.
+  provider call audit, tool replay, policy decisions, approvals, event log,
+  resume, and timeline reduction manifests when available.
 - `RunTraceStorePort` plus `InMemoryRunTraceStore`, `SQLiteRunTraceStore`, and
   `MarkdownRunTraceStore` for lightweight durable trace capture.
 - `AgentSession.trace_store` lets `AgentRunner` persist trace bundles
@@ -179,6 +179,11 @@ and regression data retention.
 
 ### Human-In-Loop Approvals
 
+- `PolicyDecisionStorePort` records each action/tool policy gate decision for
+  replay, eval, and audit.
+- `InMemoryPolicyDecisionStore`, `SQLitePolicyDecisionStore`, and
+  `MarkdownPolicyDecisionStore` provide lightweight SDK-local policy audit
+  backends.
 - `ApprovalRequest` manifests produced by policy decisions.
 - `ApprovalStorePort` for approval queues.
 - `InMemoryApprovalStore` for tests and lightweight runtimes.
@@ -190,9 +195,10 @@ and regression data retention.
 - `approval_resumed` events when a matching approved subject unlocks an
   action/tool policy gate.
 
-The SDK owns approval state contracts and event emission. Runtimes own the
-operator UI, identity, authorization, notification routing, SLA policy, and
-durable workflow storage.
+The SDK owns policy decision records, approval state contracts, and event
+emission. Runtimes own the organization policy source, operator UI, identity,
+authorization, notification routing, SLA policy, SIEM export, and durable
+workflow storage.
 
 ### Context Reduction
 

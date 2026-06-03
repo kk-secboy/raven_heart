@@ -27,7 +27,15 @@ from agent_core.events import AgentEvent, EventSinkPort, NullEventSink
 from agent_core.harness import AgentHarness, CancelToken, RunState
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig
 from agent_core.memory import MemoryPort, MemoryQuery, NullMemory
-from agent_core.policy import AllowAllPolicy, ApprovalRequest, PolicyPort
+from agent_core.policy import (
+    AllowAllPolicy,
+    ApprovalRequest,
+    NullPolicyDecisionStore,
+    PolicyDecision,
+    PolicyDecisionStorePort,
+    PolicyPort,
+    PolicySubjectKind,
+)
 from agent_core.prompt import PromptIR
 from agent_core.providers import LLMMessage, LLMProviderPort, LLMRequest, LLMResponse, UsageInfo
 from agent_core.skills import SkillsContext
@@ -86,6 +94,7 @@ class ReActExecutor:
         harness: AgentHarness,
         event_sink: EventSinkPort | None = None,
         policy: PolicyPort | None = None,
+        policy_decision_store: PolicyDecisionStorePort | None = None,
         approval_store: ApprovalStorePort | None = None,
         approval_resume: ApprovalResumeContext | None = None,
         memory: MemoryPort | None = None,
@@ -105,6 +114,7 @@ class ReActExecutor:
         self.harness = harness
         self.event_sink = event_sink or NullEventSink()
         self.policy = policy or AllowAllPolicy()
+        self.policy_decision_store = policy_decision_store or NullPolicyDecisionStore()
         self.approval_store = approval_store or NullApprovalStore()
         self.approval_resume = approval_resume or ApprovalResumeContext()
         self.memory = memory or NullMemory()
@@ -221,8 +231,21 @@ class ReActExecutor:
                 continue
 
             decision = await self.policy.check_action(action)
+            approval_grant = None
             if not decision.allowed:
                 approval_grant = self.approval_resume.approved_for(decision.approval)
+            await self._record_policy_decision(
+                decision,
+                run,
+                turn.turn_id,
+                subject_kind="action",
+                subject_name=action.name,
+                metadata={
+                    "argument_keys": sorted(str(key) for key in action.arguments),
+                    "approval_resumed": approval_grant.manifest() if approval_grant else None,
+                },
+            )
+            if not decision.allowed:
                 if decision.status == "approval_required" and approval_grant is not None:
                     await self._emit_approval_resumed(run, turn.turn_id, approval_grant)
                 else:
@@ -719,8 +742,23 @@ class ReActExecutor:
     ) -> ToolResult:
         invocation = self._with_tool_spec_metadata(invocation)
         decision = await self.policy.check_tool(invocation)
+        approval_grant = None
         if not decision.allowed:
             approval_grant = self.approval_resume.approved_for(decision.approval)
+        await self._record_policy_decision(
+            decision,
+            run,
+            turn_id,
+            subject_kind="tool",
+            subject_name=invocation.tool_name,
+            metadata={
+                "call_id": invocation.call_id,
+                "argument_keys": sorted(str(key) for key in invocation.arguments),
+                "tool_spec": invocation.metadata.get("tool_spec"),
+                "approval_resumed": approval_grant.manifest() if approval_grant else None,
+            },
+        )
+        if not decision.allowed:
             if decision.status == "approval_required" and approval_grant is not None:
                 await self._emit_approval_resumed(run, turn_id, approval_grant)
             else:
@@ -956,6 +994,35 @@ class ReActExecutor:
             payload=record.manifest(),
         )
         return record
+
+    async def _record_policy_decision(
+        self,
+        decision: PolicyDecision,
+        run: RunState,
+        turn_id: str,
+        *,
+        subject_kind: PolicySubjectKind,
+        subject_name: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        record = await self.policy_decision_store.submit(
+            decision,
+            subject_kind=subject_kind,
+            subject_name=subject_name,
+            run_id=run.run_id,
+            turn_id=turn_id,
+            metadata=metadata,
+        )
+        await self._emit(
+            "policy_decision",
+            run,
+            turn_id=turn_id,
+            payload={
+                "decision_id": record.decision_id,
+                "subject": record.subject,
+                "status": decision.status,
+            },
+        )
 
     async def _emit_approval_resumed(
         self,
