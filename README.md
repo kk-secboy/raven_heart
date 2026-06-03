@@ -15,6 +15,7 @@ ops agents, research agents, and future automation systems.
 - LLM provider abstractions and provider routing.
 - Provider call records and usage/failure manifests.
 - Tool registry and tool center.
+- Tool replay records and replay store port.
 - Skill center and skill context injection.
 - MCP center and SDK-free stdio connector.
 - Prompt buckets and context trimming.
@@ -52,6 +53,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Prompt bucket IR | Domain-specific prompt content |
 | Provider protocol, routing, and call audit | Concrete LLM clients, credentials, and rate limits |
 | Tool registry protocol | Real tools, sandboxing, permissions |
+| Tool replay protocol and manifests | Durable replay backend and retention policy |
 | Skill registry | Skill distribution UX |
 | MCP center interfaces | MCP server deployment and secrets |
 | Memory and journal ports | Graphiti, RAG, durable product stores |
@@ -142,6 +144,9 @@ reducer while keeping the same core contract.
 - Runtime mounts.
 - Tool tags, aliases, manifests, inventory, and search.
 - In-memory replay.
+- `ToolReplayRecord` manifests for deterministic replay audit.
+- `ToolReplayStorePort` and `PersistentToolReplay` for pluggable replay storage.
+- Invocation manifests hash arguments instead of exposing full argument values.
 
 ### Skills
 
@@ -177,6 +182,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product knowledge stores |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
+| Tool replay | `ToolReplayStorePort` | In-memory replay store | SQLite, Postgres, object storage, workflow replay DB |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, build artifacts |
 | Approvals | `ApprovalStorePort` | Null store, in-memory approval queue | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
@@ -306,6 +312,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider center | MVP implemented |
 | Provider call audit | MVP implemented |
 | Tool center | MVP implemented |
+| Tool replay store | MVP implemented |
 | Skill center | MVP implemented |
 | MCP center | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |

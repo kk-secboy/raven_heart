@@ -20,7 +20,15 @@ from agent_core.react import ReActConfig, ReActExecutor
 from agent_core.config import RuntimeBudget
 from agent_core.skills import SkillRegistry, SkillsContext
 from agent_core.timeline import TimelineStore
-from agent_core.tools import InMemoryToolReplay, ToolInvocation, ToolRegistry, ToolResult, ToolSpec
+from agent_core.tools import (
+    InMemoryToolReplay,
+    InMemoryToolReplayStore,
+    PersistentToolReplay,
+    ToolInvocation,
+    ToolRegistry,
+    ToolResult,
+    ToolSpec,
+)
 from agent_core.testing import InMemoryHarness, MockLLMProvider, MockMemory, MockToolRuntime
 
 
@@ -326,28 +334,56 @@ async def test_react_executor_can_drive_loop_from_stream_events() -> None:
 async def test_react_executor_replays_duplicate_tool_invocation() -> None:
     provider = MockLLMProvider(
         [
-            {"action": "call_tool", "arguments": {"tool_name": "lookup", "arguments": {"q": "x"}}},
-            {"action": "call_tool", "arguments": {"tool_name": "lookup", "arguments": {"q": "x"}}},
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"q": "secret-target-value"}},
+            },
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"q": "secret-target-value"}},
+            },
             {"action": "finish", "arguments": {"output": "done"}},
         ]
     )
     tools = MockToolRuntime({"lookup": "cached result"})
     events = ListEventSink()
+    replay = InMemoryToolReplay()
     executor = ReActExecutor(
         provider=provider,
         tool_runtime=tools,
         action_registry=ActionRegistry(),
         harness=InMemoryHarness(),
         event_sink=events,
-        tool_replay=InMemoryToolReplay(),
+        tool_replay=replay,
         config=ReActConfig(max_iterations=4),
     )
 
     result = await executor.run("replay task", PromptIR.from_parts(dynamic="task"))
+    manifest = replay.manifest()
 
     assert result.status == "completed"
     assert len(tools.invocations) == 1
     assert any(event.payload.get("replayed") for event in events.events if event.type == "tool_finished")
+    assert manifest["record_count"] == 1
+    assert manifest["records"][0]["invocation"]["argument_keys"] == ["q"]
+    assert "secret-target-value" not in str(manifest["records"][0]["invocation"])
+
+
+@pytest.mark.asyncio
+async def test_persistent_tool_replay_uses_store_port_and_manifests_records() -> None:
+    store = InMemoryToolReplayStore()
+    replay = PersistentToolReplay(store)
+    invocation = ToolInvocation(tool_name="lookup", arguments={"query": "target"})
+    result = ToolResult(call_id=invocation.call_id, tool_name="lookup", content="found")
+
+    await replay.put(invocation, result)
+    replayed = await replay.get(invocation)
+    manifest = await replay.manifest()
+
+    assert replayed == result
+    assert manifest["schema_version"] == "agent-core-persistent-tool-replay/v1"
+    assert manifest["store"]["schema_version"] == "agent-core-in-memory-tool-replay-store/v1"
+    assert manifest["records"][0]["result"]["content_sha256"]
 
 
 @pytest.mark.asyncio

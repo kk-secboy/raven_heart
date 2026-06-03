@@ -7,11 +7,16 @@ import inspect
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
 from agent_core.prompt import estimate_tokens
 from agent_core.search import SearchDocument, rank_documents
+
+
+def utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,20 @@ class ToolInvocation:
         }
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def manifest(self) -> dict[str, Any]:
+        raw_arguments = json.dumps(self.arguments, sort_keys=True, default=str)
+        return {
+            "schema_version": "agent-core-tool-invocation/v1",
+            "tool_name": self.tool_name,
+            "call_id": self.call_id,
+            "replay_key": self.replay_key(),
+            "argument_keys": sorted(str(key) for key in self.arguments),
+            "arguments_sha256": hashlib.sha256(raw_arguments.encode("utf-8")).hexdigest()
+            if self.arguments
+            else "",
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -89,6 +108,22 @@ class ToolResult:
             error=self.error,
             metadata=metadata,
         )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-result/v1",
+            "call_id": self.call_id,
+            "tool_name": self.tool_name,
+            "status": self.status,
+            "ok": self.ok,
+            "content_bytes": self.content_bytes,
+            "content_sha256": hashlib.sha256(self.content.encode("utf-8")).hexdigest()
+            if self.content
+            else "",
+            "data_keys": sorted(str(key) for key in self.data),
+            "error": self.error,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -613,6 +648,36 @@ class ToolReplayPort(Protocol):
         """Store a completed invocation result."""
 
 
+@dataclass(frozen=True)
+class ToolReplayRecord:
+    replay_key: str
+    invocation: ToolInvocation
+    result: ToolResult
+    created_at: str = field(default_factory=utc_now_iso)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-replay-record/v1",
+            "replay_key": self.replay_key,
+            "created_at": self.created_at,
+            "invocation": self.invocation.manifest(),
+            "result": self.result.manifest(),
+            "metadata": dict(self.metadata),
+        }
+
+
+class ToolReplayStorePort(Protocol):
+    async def load(self, replay_key: str) -> ToolReplayRecord | None:
+        """Load a replay record by key."""
+
+    async def save(self, record: ToolReplayRecord) -> None:
+        """Persist a replay record."""
+
+    async def records(self) -> tuple[ToolReplayRecord, ...]:
+        """Return replay records for manifest/export use."""
+
+
 class NullToolReplay:
     async def get(self, invocation: ToolInvocation) -> ToolResult | None:
         return None
@@ -622,14 +687,89 @@ class NullToolReplay:
 
 
 class InMemoryToolReplay:
-    def __init__(self) -> None:
-        self.results: dict[str, ToolResult] = {}
+    def __init__(self, records: tuple[ToolReplayRecord, ...] = ()) -> None:
+        self.results: dict[str, ToolReplayRecord] = {
+            record.replay_key: record for record in records
+        }
 
     async def get(self, invocation: ToolInvocation) -> ToolResult | None:
-        return self.results.get(invocation.replay_key())
+        record = self.results.get(invocation.replay_key())
+        return record.result if record is not None else None
 
     async def put(self, invocation: ToolInvocation, result: ToolResult) -> None:
-        self.results[invocation.replay_key()] = result
+        replay_key = invocation.replay_key()
+        self.results[replay_key] = ToolReplayRecord(
+            replay_key=replay_key,
+            invocation=invocation,
+            result=result,
+        )
+
+    def records(self) -> tuple[ToolReplayRecord, ...]:
+        return tuple(sorted(self.results.values(), key=lambda item: item.created_at))
+
+    def manifest(self) -> dict[str, Any]:
+        records = self.records()
+        return {
+            "schema_version": "agent-core-in-memory-tool-replay/v1",
+            "record_count": len(records),
+            "records": [record.manifest() for record in records],
+        }
+
+
+class InMemoryToolReplayStore(ToolReplayStorePort):
+    def __init__(self, records: tuple[ToolReplayRecord, ...] = ()) -> None:
+        self._records: dict[str, ToolReplayRecord] = {
+            record.replay_key: record for record in records
+        }
+
+    async def load(self, replay_key: str) -> ToolReplayRecord | None:
+        return self._records.get(replay_key)
+
+    async def save(self, record: ToolReplayRecord) -> None:
+        self._records[record.replay_key] = record
+
+    async def records(self) -> tuple[ToolReplayRecord, ...]:
+        return tuple(sorted(self._records.values(), key=lambda item: item.created_at))
+
+    def manifest(self) -> dict[str, Any]:
+        records = tuple(sorted(self._records.values(), key=lambda item: item.created_at))
+        return {
+            "schema_version": "agent-core-in-memory-tool-replay-store/v1",
+            "record_count": len(records),
+            "records": [record.manifest() for record in records],
+        }
+
+
+class PersistentToolReplay(ToolReplayPort):
+    def __init__(self, store: ToolReplayStorePort) -> None:
+        self.store = store
+
+    async def get(self, invocation: ToolInvocation) -> ToolResult | None:
+        record = await self.store.load(invocation.replay_key())
+        return record.result if record is not None else None
+
+    async def put(self, invocation: ToolInvocation, result: ToolResult) -> None:
+        replay_key = invocation.replay_key()
+        await self.store.save(
+            ToolReplayRecord(
+                replay_key=replay_key,
+                invocation=invocation,
+                result=result,
+            )
+        )
+
+    async def records(self) -> tuple[ToolReplayRecord, ...]:
+        return await self.store.records()
+
+    async def manifest(self) -> dict[str, Any]:
+        store_manifest = getattr(self.store, "manifest", None)
+        records = await self.store.records()
+        return {
+            "schema_version": "agent-core-persistent-tool-replay/v1",
+            "store": store_manifest() if callable(store_manifest) else {},
+            "record_count": len(records),
+            "records": [record.manifest() for record in records],
+        }
 
 
 def _format_tool_inventory_line(spec: ToolSpec) -> str:

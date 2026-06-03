@@ -23,6 +23,7 @@ agent_core
 | --- | --- |
 | LLM provider center and call audit | Concrete model clients, credentials, rate limits |
 | Tool center | Real tools, shell/file/network access, sandboxing |
+| Tool replay records and store port | Durable replay backend, retention, cross-run replay policy |
 | MCP center | MCP server deployment, credentials, process lifecycle |
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
@@ -42,6 +43,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | PG, vector DB, graph/RAG, product knowledge |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
+| Tool replay | `ToolReplayStorePort` | In-memory replay store | PG, SQLite, object storage, workflow replay DB |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, CI/build artifacts |
 | Approvals | `ApprovalStorePort` | Null store, in-memory approval queue | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
@@ -58,6 +60,11 @@ debugging, audit, or resume decisions.
 failed attempts. The core records provider name, model, attempt, streamed flag,
 usage, retryability, and request shape. Concrete provider clients, credentials,
 rate limits, and vendor-specific response payloads remain runtime-owned.
+
+`ToolReplayStorePort` gives tool replay the same port-based shape as memory and
+journals. Core replay manifests include replay keys, invocation argument hashes,
+and prompt-safe result manifests. Runtime code owns durable storage, retention,
+tenant isolation, and whether replay can cross a run boundary.
 
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; production runtimes should implement
