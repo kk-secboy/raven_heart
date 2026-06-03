@@ -399,6 +399,8 @@ modalities.
 - `MCPCenter`.
 - Tool, resource, and prompt registration.
 - Server state refresh.
+- `refresh_inventory()` refreshes MCP tools, resources, and prompts in one
+  auditable pass and returns per-server prompt-safe inventory manifests.
 - SDK-free stdio JSON-RPC connector.
 - `CapabilityQuery`, `CapabilityMatch`, and `CapabilityDiscoveryResult` for
   unified discovery across actions, local tools, skills, MCP tools, MCP

@@ -125,6 +125,11 @@ class FailingMCPConnector(FakeMCPConnector):
         raise RuntimeError(f"cannot refresh {server.name}")
 
 
+class PartialMCPConnector(FakeMCPConnector):
+    async def list_resources(self, server: MCPServerSpec) -> tuple[MCPResourceSpec, ...]:
+        raise RuntimeError(f"cannot list resources for {server.name}")
+
+
 @pytest.mark.asyncio
 async def test_mcp_center_refreshes_searches_manifests_and_invokes_tools() -> None:
     center = MCPCenter()
@@ -153,6 +158,55 @@ async def test_mcp_center_refreshes_searches_manifests_and_invokes_tools() -> No
     assert result.metadata["mcp"]["server_name"] == "fs"
     assert connector.invocations == [("fs", "read_file", {"path": "README.md"})]
     assert manifest["servers"][0]["state"]["status"] == "refreshed"
+
+
+@pytest.mark.asyncio
+async def test_mcp_center_refresh_inventory_records_tools_resources_and_prompts() -> None:
+    center = MCPCenter()
+    center.register_server(MCPServerSpec(name="fs", transport="stdio", tags=("local",)))
+    center.register_connector("stdio", FakeMCPConnector())
+
+    results = await center.refresh_inventory()
+    manifest = center.manifest()
+    state = center.state("fs")
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert results[0].manifest()["schema_version"] == "agent-core-mcp-inventory-refresh-result/v1"
+    assert results[0].manifest()["tool_result"]["tool_count"] == 1
+    assert results[0].manifest()["resource_count"] == 1
+    assert results[0].manifest()["prompt_count"] == 1
+    assert state is not None
+    assert state.status == "refreshed"
+    assert state.tool_count == 1
+    assert state.resource_count == 1
+    assert state.prompt_count == 1
+    assert manifest["last_inventory_refresh"][0]["status"] == "refreshed"
+    assert manifest["servers"][0]["state"]["resource_count"] == 1
+    assert manifest["servers"][0]["state"]["prompt_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_center_refresh_inventory_records_partial_asset_failures() -> None:
+    center = MCPCenter()
+    center.register_server(MCPServerSpec(name="fs", transport="stdio"))
+    center.register_connector("stdio", PartialMCPConnector())
+
+    results = await center.refresh_inventory(fail_fast=False)
+    manifest = results[0].manifest()
+    state = center.state("fs")
+
+    assert results[0].ok is False
+    assert manifest["status"] == "partial"
+    assert manifest["tool_count"] == 1
+    assert manifest["resource_count"] == 0
+    assert manifest["prompt_count"] == 1
+    assert manifest["resource_error"] == "cannot list resources for fs"
+    assert state is not None
+    assert state.status == "partial"
+    assert state.tool_count == 1
+    assert state.prompt_count == 1
+    assert state.last_error == "cannot list resources for fs"
 
 
 @pytest.mark.asyncio

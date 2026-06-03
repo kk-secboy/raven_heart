@@ -173,6 +173,13 @@ which subsystem supplied the match. Runtimes still own concrete MCP sessions,
 tool credentials, external search indexes, UI filtering, and distributed
 capability refresh.
 
+`MCPCenter.refresh_inventory()` provides one auditable refresh pass across MCP
+tools, resources, and prompts. It returns per-server
+`MCPInventoryRefreshResult` manifests with tool/resource/prompt counts and
+partial-failure errors, while `MCPServerState` keeps prompt-safe inventory
+counts. Runtime code still decides how MCP servers are launched, authenticated,
+isolated, and retried.
+
 `RunTraceStorePort` gives the bundle a persistence boundary. The SDK ships
 in-memory, SQLite, and Markdown stores for lightweight use, while production
 PG/object-storage/observability integrations should live in runtime or adapter

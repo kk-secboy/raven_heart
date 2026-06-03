@@ -28,6 +28,8 @@ class MCPServerState:
     server_name: str
     status: str = "registered"
     tool_count: int = 0
+    resource_count: int = 0
+    prompt_count: int = 0
     refresh_count: int = 0
     last_error: str = ""
     last_refreshed_at: str = ""
@@ -42,6 +44,8 @@ class MCPServerState:
             "status": self.status,
             "healthy": self.healthy,
             "tool_count": self.tool_count,
+            "resource_count": self.resource_count,
+            "prompt_count": self.prompt_count,
             "refresh_count": self.refresh_count,
             "last_error": self.last_error,
             "last_refreshed_at": self.last_refreshed_at,
@@ -58,6 +62,57 @@ class MCPRefreshResult:
     @property
     def ok(self) -> bool:
         return self.status == "refreshed"
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-mcp-refresh-result/v1",
+            "server_name": self.server_name,
+            "status": self.status,
+            "ok": self.ok,
+            "tool_count": len(self.tools),
+            "tools": [
+                {
+                    "name": tool.reference.resolved_public_name(),
+                    "server_name": tool.reference.server_name,
+                    "tool_name": tool.reference.tool_name,
+                    "enabled": tool.enabled,
+                    "tags": list(tool.tags),
+                }
+                for tool in self.tools
+            ],
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
+class MCPInventoryRefreshResult:
+    server_name: str
+    status: str
+    tool_result: MCPRefreshResult
+    resources: tuple["MCPResourceSpec", ...] = ()
+    prompts: tuple["MCPPromptSpec", ...] = ()
+    resource_error: str = ""
+    prompt_error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "refreshed"
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-mcp-inventory-refresh-result/v1",
+            "server_name": self.server_name,
+            "status": self.status,
+            "ok": self.ok,
+            "tool_result": self.tool_result.manifest(),
+            "tool_count": len(self.tool_result.tools),
+            "resource_count": len(self.resources),
+            "prompt_count": len(self.prompts),
+            "resources": [resource.manifest() for resource in self.resources],
+            "prompts": [prompt.manifest() for prompt in self.prompts],
+            "resource_error": self.resource_error,
+            "prompt_error": self.prompt_error,
+        }
 
 
 @dataclass(frozen=True)
@@ -228,6 +283,7 @@ class MCPCenter(ToolRuntimePort):
         self._resources: dict[str, MCPResourceSpec] = {}
         self._prompts: dict[str, MCPPromptSpec] = {}
         self._states: dict[str, MCPServerState] = {}
+        self._last_inventory_refresh: tuple[MCPInventoryRefreshResult, ...] = ()
 
     def register_server(self, spec: MCPServerSpec) -> None:
         name = spec.name.strip()
@@ -310,15 +366,84 @@ class MCPCenter(ToolRuntimePort):
             self._remove_server_tools(server.name)
             for tool in tools:
                 self._tools[tool.reference.resolved_public_name()] = tool
+            current = self._states.get(server.name) or MCPServerState(server.name)
             self._states[server.name] = MCPServerState(
                 server_name=server.name,
                 status="refreshed",
                 tool_count=len(tools),
-                refresh_count=(self._states.get(server.name) or MCPServerState(server.name)).refresh_count + 1,
+                resource_count=current.resource_count,
+                prompt_count=current.prompt_count,
+                refresh_count=current.refresh_count + 1,
                 last_refreshed_at=_utc_now_iso(),
             )
             results.append(MCPRefreshResult(server_name=server.name, status="refreshed", tools=tools))
         return tuple(results)
+
+    async def refresh_inventory(
+        self,
+        server_name: str | None = None,
+        *,
+        fail_fast: bool = True,
+    ) -> tuple[MCPInventoryRefreshResult, ...]:
+        """Refresh tools, resources, and prompts as one auditable inventory pass."""
+
+        tool_results = await self.refresh_status(server_name, fail_fast=fail_fast)
+        results: list[MCPInventoryRefreshResult] = []
+        for tool_result in tool_results:
+            resources: tuple[MCPResourceSpec, ...] = ()
+            prompts: tuple[MCPPromptSpec, ...] = ()
+            resource_error = ""
+            prompt_error = ""
+            if tool_result.status == "disabled":
+                results.append(
+                    MCPInventoryRefreshResult(
+                        server_name=tool_result.server_name,
+                        status="disabled",
+                        tool_result=tool_result,
+                    )
+                )
+                continue
+            if not tool_result.ok:
+                results.append(
+                    MCPInventoryRefreshResult(
+                        server_name=tool_result.server_name,
+                        status="failed",
+                        tool_result=tool_result,
+                    )
+                )
+                continue
+            try:
+                resources = await self.refresh_resources(tool_result.server_name)
+            except Exception as exc:
+                if fail_fast:
+                    raise
+                resource_error = str(exc)
+            try:
+                prompts = await self.refresh_prompts(tool_result.server_name)
+            except Exception as exc:
+                if fail_fast:
+                    raise
+                prompt_error = str(exc)
+            status = "partial" if resource_error or prompt_error else "refreshed"
+            if status == "partial":
+                self._mark_partial(
+                    tool_result.server_name,
+                    resource_error=resource_error,
+                    prompt_error=prompt_error,
+                )
+            results.append(
+                MCPInventoryRefreshResult(
+                    server_name=tool_result.server_name,
+                    status=status,
+                    tool_result=tool_result,
+                    resources=resources,
+                    prompts=prompts,
+                    resource_error=resource_error,
+                    prompt_error=prompt_error,
+                )
+            )
+        self._last_inventory_refresh = tuple(results)
+        return self._last_inventory_refresh
 
     async def close(self, server_name: str | None = None) -> None:
         selected = (
@@ -340,6 +465,8 @@ class MCPCenter(ToolRuntimePort):
                 server_name=server.name,
                 status="closed",
                 refresh_count=current.refresh_count,
+                resource_count=0,
+                prompt_count=0,
                 last_error=current.last_error,
                 last_refreshed_at=current.last_refreshed_at,
             )
@@ -365,6 +492,7 @@ class MCPCenter(ToolRuntimePort):
             self._remove_server_resources(server.name)
             for resource in resources:
                 self._resources[resource.uri] = resource
+            self._update_asset_counts(server.name)
             refreshed.extend(resources)
         return tuple(refreshed)
 
@@ -429,6 +557,7 @@ class MCPCenter(ToolRuntimePort):
             self._remove_server_prompts(server.name)
             for prompt in prompts:
                 self._prompts[prompt.prompt_id()] = prompt
+            self._update_asset_counts(server.name)
             refreshed.extend(prompts)
         return tuple(refreshed)
 
@@ -526,6 +655,9 @@ class MCPCenter(ToolRuntimePort):
             ],
             "resources": [resource.manifest() for resource in self.resources()],
             "prompts": [prompt.manifest() for prompt in self.prompts()],
+            "last_inventory_refresh": [
+                result.manifest() for result in self._last_inventory_refresh
+            ],
         }
 
     async def invoke(self, invocation: ToolInvocation) -> ToolResult:
@@ -600,10 +732,13 @@ class MCPCenter(ToolRuntimePort):
         if callable(connect):
             await connect(server)
         current = self._states.get(server.name) or MCPServerState(server.name)
+        status = current.status if current.status in {"refreshed", "partial"} else "connected"
         self._states[server.name] = MCPServerState(
             server_name=server.name,
-            status="connected",
+            status=status,
             tool_count=current.tool_count,
+            resource_count=current.resource_count,
+            prompt_count=current.prompt_count,
             refresh_count=current.refresh_count,
             last_refreshed_at=current.last_refreshed_at,
         )
@@ -613,8 +748,49 @@ class MCPCenter(ToolRuntimePort):
         self._states[server_name] = MCPServerState(
             server_name=server_name,
             status="failed",
+            tool_count=current.tool_count,
+            resource_count=current.resource_count,
+            prompt_count=current.prompt_count,
             refresh_count=current.refresh_count,
             last_error=error,
+            last_refreshed_at=current.last_refreshed_at,
+        )
+
+    def _mark_partial(
+        self,
+        server_name: str,
+        *,
+        resource_error: str = "",
+        prompt_error: str = "",
+    ) -> None:
+        current = self._states.get(server_name) or MCPServerState(server_name)
+        self._states[server_name] = MCPServerState(
+            server_name=server_name,
+            status="partial",
+            tool_count=current.tool_count,
+            resource_count=current.resource_count,
+            prompt_count=current.prompt_count,
+            refresh_count=current.refresh_count,
+            last_error="; ".join(error for error in (resource_error, prompt_error) if error),
+            last_refreshed_at=current.last_refreshed_at,
+        )
+
+    def _update_asset_counts(self, server_name: str) -> None:
+        current = self._states.get(server_name) or MCPServerState(server_name)
+        self._states[server_name] = MCPServerState(
+            server_name=server_name,
+            status=current.status,
+            tool_count=sum(
+                1 for tool in self._tools.values() if tool.reference.server_name == server_name
+            ),
+            resource_count=sum(
+                1 for resource in self._resources.values() if resource.server_name == server_name
+            ),
+            prompt_count=sum(
+                1 for prompt in self._prompts.values() if prompt.server_name == server_name
+            ),
+            refresh_count=current.refresh_count,
+            last_error=current.last_error,
             last_refreshed_at=current.last_refreshed_at,
         )
 
