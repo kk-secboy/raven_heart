@@ -15,7 +15,9 @@ from agent_core.providers import (
     LLMProviderNotFoundError,
     LLMRequest,
     LLMResponse,
+    LLMRetryPolicy,
     LLMStreamEvent,
+    LLMUsageLimits,
     RetryHint,
     UsageInfo,
 )
@@ -24,15 +26,20 @@ from agent_core.testing import MockLLMProvider, MockToolRuntime
 
 
 class _FailingProvider:
-    def __init__(self, *, retryable: bool) -> None:
+    def __init__(self, *, retryable: bool, after_seconds: float | None = None) -> None:
         self.retryable = retryable
+        self.after_seconds = after_seconds
         self.requests: list[LLMRequest] = []
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         self.requests.append(request)
         raise LLMProviderError(
             "provider failed",
-            retry_hint=RetryHint(retryable=self.retryable, reason="test"),
+            retry_hint=RetryHint(
+                retryable=self.retryable,
+                after_seconds=self.after_seconds,
+                reason="test",
+            ),
         )
 
 
@@ -139,6 +146,8 @@ def test_provider_center_search_manifest_and_missing_provider() -> None:
     assert [spec.name for spec in center.search(tag="cheap")] == ["fast"]
     assert [spec.name for spec in center.search(model="strong-pro")] == ["strong"]
     assert center.manifest()["providers"][0]["name"] == "strong"
+    assert center.manifest()["retry_policy"]["schema_version"] == "agent-core-llm-retry-policy/v1"
+    assert center.manifest()["usage_limits"]["schema_version"] == "agent-core-llm-usage-limits/v1"
     assert LLMRequest(messages=[LLMMessage(role="user", content="hello")]).manifest()[
         "messages"
     ][0]["content_bytes"] == 5
@@ -164,6 +173,25 @@ async def test_provider_center_retries_retryable_provider_errors() -> None:
     assert center.manifest()["call_count"] == 3
     assert center.manifest()["calls"][0]["retryable"] is True
     assert fallback.requests[0].metadata["provider"] == "fallback"
+
+
+@pytest.mark.asyncio
+async def test_provider_center_honors_retry_after_policy() -> None:
+    failing = _FailingProvider(retryable=True, after_seconds=30.0)
+    fallback = MockLLMProvider(["ok"])
+    center = LLMProviderCenter(
+        default_provider="primary",
+        retry_policy=LLMRetryPolicy(max_retries=2, max_retry_after_seconds=5.0),
+    )
+    center.register("primary", failing, priority=10)
+    center.register("fallback", fallback, priority=1)
+
+    response = await center.complete(LLMRequest(messages=[]))
+
+    assert response.content == "ok"
+    assert len(failing.requests) == 1
+    assert center.calls[0].retryable is False
+    assert center.manifest()["retry_policy"]["max_retry_after_seconds"] == 5.0
 
 
 @pytest.mark.asyncio
@@ -216,6 +244,44 @@ async def test_provider_center_enforces_estimated_and_actual_cost_budget() -> No
     response = await center.complete(LLMRequest(messages=[], metadata={"max_cost_usd": 0.02}))
     assert response.content == "ok"
     assert center.usage.cost_usd == 0.01
+
+
+@pytest.mark.asyncio
+async def test_provider_center_enforces_call_attempt_and_token_limits() -> None:
+    provider = MockLLMProvider(
+        [
+            LLMResponse(content="first", usage=UsageInfo(input_tokens=2, output_tokens=3, total_tokens=5)),
+            LLMResponse(content="second", usage=UsageInfo(input_tokens=2, output_tokens=3, total_tokens=5)),
+        ]
+    )
+    center = LLMProviderCenter(
+        default_provider="local",
+        usage_limits=LLMUsageLimits(max_call_attempts=1, max_total_tokens=8),
+    )
+    center.register("local", provider)
+
+    first = await center.complete(LLMRequest(messages=[]))
+    with pytest.raises(LLMBudgetExceededError):
+        await center.complete(LLMRequest(messages=[]))
+
+    assert first.content == "first"
+    assert center.usage.total_tokens == 5
+    assert center.manifest()["usage_limits"]["max_call_attempts"] == 1
+
+    token_limited = LLMProviderCenter(
+        default_provider="local",
+        usage_limits=LLMUsageLimits(max_input_tokens=4, max_output_tokens=4, max_total_tokens=6),
+    )
+    token_limited.register(
+        "local",
+        MockLLMProvider([LLMResponse(content="too many", usage=UsageInfo(total_tokens=7))]),
+    )
+    with pytest.raises(LLMBudgetExceededError):
+        await token_limited.complete(LLMRequest(messages=[], metadata={"estimated_input_tokens": 5}))
+    with pytest.raises(LLMBudgetExceededError):
+        await token_limited.complete(LLMRequest(messages=[]))
+
+    assert token_limited.usage.total_tokens == 0
 
 
 @pytest.mark.asyncio

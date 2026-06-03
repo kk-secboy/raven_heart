@@ -224,7 +224,8 @@ reducer while keeping the same core contract.
 
 - `LLMProviderPort` protocol.
 - Provider registry and routing.
-- Retry and fallback.
+- `LLMRetryPolicy` for retry/fallback behavior.
+- `LLMUsageLimits` for cost, call-attempt, and token budgets.
 - Usage/failure accounting.
 - Budget checks.
 - Request, response, stream event, route, and call record manifests.

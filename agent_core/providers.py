@@ -58,6 +58,68 @@ class RetryHint:
 
 
 @dataclass(frozen=True)
+class LLMRetryPolicy:
+    max_retries: int = 0
+    fallback_enabled: bool = True
+    retry_on_stream_errors: bool = True
+    max_retry_after_seconds: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_retries", max(0, int(self.max_retries)))
+        if self.max_retry_after_seconds is not None:
+            object.__setattr__(
+                self,
+                "max_retry_after_seconds",
+                max(0.0, float(self.max_retry_after_seconds)),
+            )
+
+    def allows(self, hint: RetryHint, *, streamed: bool = False) -> bool:
+        if not hint.retryable:
+            return False
+        if streamed and not self.retry_on_stream_errors:
+            return False
+        if (
+            self.max_retry_after_seconds is not None
+            and hint.after_seconds is not None
+            and hint.after_seconds > self.max_retry_after_seconds
+        ):
+            return False
+        return True
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-retry-policy/v1",
+            "max_retries": self.max_retries,
+            "fallback_enabled": self.fallback_enabled,
+            "retry_on_stream_errors": self.retry_on_stream_errors,
+            "max_retry_after_seconds": self.max_retry_after_seconds,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class LLMUsageLimits:
+    max_cost_usd: float | None = None
+    max_call_attempts: int | None = None
+    max_input_tokens: int | None = None
+    max_output_tokens: int | None = None
+    max_total_tokens: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-usage-limits/v1",
+            "max_cost_usd": self.max_cost_usd,
+            "max_call_attempts": self.max_call_attempts,
+            "max_input_tokens": self.max_input_tokens,
+            "max_output_tokens": self.max_output_tokens,
+            "max_total_tokens": self.max_total_tokens,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class LLMRequest:
     messages: list[LLMMessage]
     model: str = ""
@@ -224,12 +286,19 @@ class LLMProviderCenter(LLMProviderPort):
         max_retries: int = 0,
         max_cost_usd: float | None = None,
         fallback_enabled: bool = True,
+        retry_policy: LLMRetryPolicy | None = None,
+        usage_limits: LLMUsageLimits | None = None,
     ) -> None:
         self.default_provider = default_provider
         self.default_model = default_model
-        self.max_retries = max(0, max_retries)
-        self.max_cost_usd = max_cost_usd
-        self.fallback_enabled = fallback_enabled
+        self.retry_policy = retry_policy or LLMRetryPolicy(
+            max_retries=max_retries,
+            fallback_enabled=fallback_enabled,
+        )
+        self.usage_limits = usage_limits or LLMUsageLimits(max_cost_usd=max_cost_usd)
+        self.max_retries = self.retry_policy.max_retries
+        self.max_cost_usd = self.usage_limits.max_cost_usd
+        self.fallback_enabled = self.retry_policy.fallback_enabled
         self.usage = UsageInfo()
         self.failures: list[dict[str, Any]] = []
         self.calls: list[LLMCallRecord] = []
@@ -291,6 +360,8 @@ class LLMProviderCenter(LLMProviderPort):
             "fallback_enabled": self.fallback_enabled,
             "max_retries": self.max_retries,
             "max_cost_usd": self.max_cost_usd,
+            "retry_policy": self.retry_policy.manifest(),
+            "usage_limits": self.usage_limits.manifest(),
             "usage": self.usage.manifest(),
             "call_count": len(self.calls),
             "failure_count": len(self.failures),
@@ -309,12 +380,13 @@ class LLMProviderCenter(LLMProviderPort):
         )
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
-        self._check_estimated_budget(request)
+        self._check_estimated_usage(request)
         last_error: Exception | None = None
         for entry in self._candidate_entries(request):
             routed = self._route_request(request, entry)
             attempts = self.max_retries + 1
             for attempt in range(attempts):
+                self._check_call_attempt_limit()
                 try:
                     response = await entry.provider.complete(routed)
                     self._record_usage(response.usage, provider=entry.spec.name, request=request)
@@ -353,12 +425,13 @@ class LLMProviderCenter(LLMProviderPort):
         raise LLMProviderNotFoundError(request.model or "<default>")
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
-        self._check_estimated_budget(request)
+        self._check_estimated_usage(request)
         last_error: Exception | None = None
         for entry in self._candidate_entries(request):
             routed = self._route_request(request, entry)
             attempts = self.max_retries + 1
             for attempt in range(attempts):
+                self._check_call_attempt_limit()
                 try:
                     events, usage = await self._collect_stream_attempt(
                         entry,
@@ -394,7 +467,7 @@ class LLMProviderCenter(LLMProviderPort):
                         streamed=True,
                         metadata={"request": request.manifest()},
                     )
-                    if not self._is_retryable(exc) or attempt + 1 >= attempts:
+                    if not self._is_retryable(exc, streamed=True) or attempt + 1 >= attempts:
                         break
         if last_error is not None:
             raise last_error
@@ -488,16 +561,33 @@ class LLMProviderCenter(LLMProviderPort):
         }
         return replace(request, model=model, metadata=metadata)
 
-    def _check_estimated_budget(self, request: LLMRequest) -> None:
+    def _check_estimated_usage(self, request: LLMRequest) -> None:
+        self._check_call_attempt_limit()
         max_cost = self._max_cost(request)
-        if max_cost is None:
-            return
         estimated = float(request.metadata.get("estimated_cost_usd") or 0.0)
-        if self.usage.cost_usd + estimated > max_cost:
+        if max_cost is not None and self.usage.cost_usd + estimated > max_cost:
             raise LLMBudgetExceededError(
                 f"llm budget exceeded: spent={self.usage.cost_usd:.6f}, "
                 f"estimated={estimated:.6f}, limit={max_cost:.6f}"
             )
+        self._check_token_limit(
+            "input",
+            current=self.usage.input_tokens,
+            incoming=_metadata_int(request.metadata, "estimated_input_tokens"),
+            limit=self._limit_value(request, "max_input_tokens", self.usage_limits.max_input_tokens),
+        )
+        self._check_token_limit(
+            "output",
+            current=self.usage.output_tokens,
+            incoming=_metadata_int(request.metadata, "estimated_output_tokens"),
+            limit=self._limit_value(request, "max_output_tokens", self.usage_limits.max_output_tokens),
+        )
+        self._check_token_limit(
+            "total",
+            current=self.usage.total_tokens,
+            incoming=_metadata_int(request.metadata, "estimated_total_tokens"),
+            limit=self._limit_value(request, "max_total_tokens", self.usage_limits.max_total_tokens),
+        )
 
     def _record_usage(self, usage: UsageInfo, *, provider: str, request: LLMRequest) -> None:
         if usage.cost_usd:
@@ -507,6 +597,24 @@ class LLMProviderCenter(LLMProviderPort):
                     f"llm budget exceeded: spent={self.usage.cost_usd:.6f}, "
                     f"actual={usage.cost_usd:.6f}, limit={max_cost:.6f}"
                 )
+        self._check_token_limit(
+            "input",
+            current=self.usage.input_tokens,
+            incoming=usage.input_tokens,
+            limit=self._limit_value(request, "max_input_tokens", self.usage_limits.max_input_tokens),
+        )
+        self._check_token_limit(
+            "output",
+            current=self.usage.output_tokens,
+            incoming=usage.output_tokens,
+            limit=self._limit_value(request, "max_output_tokens", self.usage_limits.max_output_tokens),
+        )
+        self._check_token_limit(
+            "total",
+            current=self.usage.total_tokens,
+            incoming=usage.total_tokens,
+            limit=self._limit_value(request, "max_total_tokens", self.usage_limits.max_total_tokens),
+        )
         self.usage = UsageInfo(
             input_tokens=self.usage.input_tokens + usage.input_tokens,
             output_tokens=self.usage.output_tokens + usage.output_tokens,
@@ -516,10 +624,38 @@ class LLMProviderCenter(LLMProviderPort):
         )
 
     def _max_cost(self, request: LLMRequest) -> float | None:
-        value = request.metadata.get("max_cost_usd")
+        value = self._limit_value(request, "max_cost_usd", self.usage_limits.max_cost_usd)
+        return float(value) if value is not None else None
+
+    def _check_call_attempt_limit(self) -> None:
+        limit = self.usage_limits.max_call_attempts
+        if limit is not None and len(self.calls) + 1 > int(limit):
+            raise LLMBudgetExceededError(
+                f"llm call attempt budget exceeded: attempts={len(self.calls)}, limit={int(limit)}"
+            )
+
+    @staticmethod
+    def _limit_value(request: LLMRequest, key: str, default: int | float | None) -> Any:
+        value = request.metadata.get(key)
         if value is not None:
-            return float(value)
-        return self.max_cost_usd
+            return value
+        return default
+
+    @staticmethod
+    def _check_token_limit(
+        kind: str,
+        *,
+        current: int,
+        incoming: int,
+        limit: int | None,
+    ) -> None:
+        if limit is None or incoming <= 0:
+            return
+        if current + incoming > int(limit):
+            raise LLMBudgetExceededError(
+                f"llm {kind} token budget exceeded: spent={current}, "
+                f"incoming={incoming}, limit={int(limit)}"
+            )
 
     def _record_call(
         self,
@@ -558,7 +694,7 @@ class LLMProviderCenter(LLMProviderPort):
         streamed: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        retryable = self._is_retryable(exc)
+        retryable = self._is_retryable(exc, streamed=streamed)
         self.failures.append(
             {
                 "provider": provider,
@@ -580,10 +716,9 @@ class LLMProviderCenter(LLMProviderPort):
             metadata=metadata,
         )
 
-    @staticmethod
-    def _is_retryable(exc: Exception) -> bool:
+    def _is_retryable(self, exc: Exception, *, streamed: bool = False) -> bool:
         if isinstance(exc, LLMProviderError):
-            return exc.retry_hint.retryable
+            return self.retry_policy.allows(exc.retry_hint, streamed=streamed)
         return False
 
 
@@ -602,4 +737,14 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _metadata_int(metadata: dict[str, Any], key: str) -> int:
+    value = metadata.get(key)
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 

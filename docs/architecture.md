@@ -112,6 +112,10 @@ runtime responsibilities.
 failed attempts. The core records provider name, model, attempt, streamed flag,
 usage, retryability, and request shape. Concrete provider clients, credentials,
 rate limits, and vendor-specific response payloads remain runtime-owned.
+`LLMRetryPolicy` and `LLMUsageLimits` give the SDK a provider-neutral way to
+describe retry/fallback behavior, call-attempt ceilings, token ceilings, and
+cost ceilings. Runtime code can derive these policies from tenants, tasks, or
+model classes, while real rate limiters and vendor quotas stay outside core.
 For streaming calls, core treats provider `error` events as failed attempts,
 records streamed failure metadata, and applies retry/fallback and budget checks
 before yielding a successful stream to callers.
