@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.prompt import PromptAssembler, PromptBucketRole, PromptIR
@@ -61,6 +61,137 @@ class ContextInjection:
         }
 
 
+ContextInjectionDecisionStatus = Literal[
+    "included",
+    "trimmed",
+    "empty",
+    "target_denied",
+    "total_budget_exceeded",
+]
+
+
+@dataclass(frozen=True)
+class ContextInjectionDecision:
+    injection: ContextInjection
+    status: ContextInjectionDecisionStatus
+    original_bytes: int
+    final_bytes: int = 0
+    excluded_reason: str = ""
+
+    @property
+    def included(self) -> bool:
+        return self.status in {"included", "trimmed"} and self.final_bytes > 0
+
+    def manifest(self) -> dict[str, Any]:
+        manifest = self.injection.manifest()
+        manifest.update(
+            {
+                "status": self.status,
+                "included": self.included,
+                "original_bytes": self.original_bytes,
+                "final_bytes": self.final_bytes,
+                "trimmed": self.final_bytes < self.original_bytes if self.included else False,
+                "excluded_reason": self.excluded_reason,
+            }
+        )
+        return manifest
+
+
+@dataclass(frozen=True)
+class ContextInjectionPolicy:
+    """Provider-neutral guardrail for prompt context injection."""
+
+    max_injection_bytes: int | None = None
+    max_total_bytes: int | None = None
+    allowed_targets: tuple[PromptBucketRole, ...] = ()
+    trim_marker: str = "\n[...context injection trimmed...]\n"
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-context-injection-policy/v1",
+            "max_injection_bytes": self.max_injection_bytes,
+            "max_total_bytes": self.max_total_bytes,
+            "allowed_targets": [target.value for target in self.allowed_targets],
+            "trim_marker_bytes": len(self.trim_marker.encode("utf-8")),
+        }
+
+    def apply(
+        self,
+        injections: tuple[ContextInjection, ...],
+    ) -> tuple[ContextInjectionDecision, ...]:
+        decisions: list[ContextInjectionDecision] = []
+        total_bytes = 0
+        allowed_targets = set(self.allowed_targets)
+        for injection in injections:
+            original_bytes = len(injection.content.encode("utf-8"))
+            if allowed_targets and injection.target not in allowed_targets:
+                decisions.append(
+                    ContextInjectionDecision(
+                        injection=injection,
+                        status="target_denied",
+                        original_bytes=original_bytes,
+                        excluded_reason="target_not_allowed",
+                    )
+                )
+                continue
+            if not injection.content.strip():
+                decisions.append(
+                    ContextInjectionDecision(
+                        injection=injection,
+                        status="empty",
+                        original_bytes=original_bytes,
+                        excluded_reason="empty_content",
+                    )
+                )
+                continue
+
+            content = injection.content
+            status: ContextInjectionDecisionStatus = "included"
+            if self.max_injection_bytes is not None and original_bytes > self.max_injection_bytes:
+                content = _trim_text_to_bytes(content, self.max_injection_bytes, self.trim_marker)
+                status = "trimmed"
+
+            final_bytes = len(content.encode("utf-8"))
+            if self.max_total_bytes is not None and total_bytes + final_bytes > self.max_total_bytes:
+                remaining = max(0, self.max_total_bytes - total_bytes)
+                if remaining <= 0:
+                    decisions.append(
+                        ContextInjectionDecision(
+                            injection=injection,
+                            status="total_budget_exceeded",
+                            original_bytes=original_bytes,
+                            excluded_reason="total_budget_exceeded",
+                        )
+                    )
+                    continue
+                content = _trim_text_to_bytes(content, remaining, self.trim_marker)
+                final_bytes = len(content.encode("utf-8"))
+                status = "trimmed"
+
+            total_bytes += final_bytes
+            governed = replace(
+                injection,
+                content=content,
+                metadata={
+                    **injection.metadata,
+                    "context_injection_policy": {
+                        "original_bytes": original_bytes,
+                        "final_bytes": final_bytes,
+                        "status": status,
+                    },
+                },
+            )
+            decisions.append(
+                ContextInjectionDecision(
+                    injection=governed,
+                    status=status,
+                    original_bytes=original_bytes,
+                    final_bytes=final_bytes,
+                )
+            )
+        return tuple(decisions)
+
+
 class ContextAssemblerPort(Protocol):
     async def assemble(self, task: str, budget: ContextBudget) -> PromptIR:
         """Build a prompt IR for one agent turn."""
@@ -95,32 +226,39 @@ class AgentPromptBuilder:
         timeline: TimelineStore | None = None,
         timeline_budget: TimelineBudget | None = None,
         capabilities: CapabilityCatalog | None = None,
+        injection_policy: ContextInjectionPolicy | None = None,
     ) -> None:
         self.tools = tools
         self.skills = skills
         self.timeline = timeline
         self.timeline_budget = timeline_budget or TimelineBudget()
         self.capabilities = capabilities
+        self.injection_policy = injection_policy or ContextInjectionPolicy()
 
     def build(self, context: AgentContextPack) -> PromptIR:
         assembler = PromptAssembler()
+        injection_decisions = self.injection_policy.apply(
+            self._ordered_injections(context.injections)
+        )
+        injections = tuple(decision.injection for decision in injection_decisions if decision.included)
         assembler.add(PromptBucketRole.HIGH_STATIC, context.system)
-        self._add_injections(assembler, context, PromptBucketRole.HIGH_STATIC)
+        self._add_injections(assembler, injections, PromptBucketRole.HIGH_STATIC)
         assembler.add(PromptBucketRole.FROZEN, self._frozen_materials())
-        self._add_injections(assembler, context, PromptBucketRole.FROZEN)
+        self._add_injections(assembler, injections, PromptBucketRole.FROZEN)
         assembler.add(PromptBucketRole.SEMI_DYNAMIC_1, self._semi_dynamic_1(context))
-        self._add_injections(assembler, context, PromptBucketRole.SEMI_DYNAMIC_1)
+        self._add_injections(assembler, injections, PromptBucketRole.SEMI_DYNAMIC_1)
         assembler.add(PromptBucketRole.SEMI_DYNAMIC_2, self._semi_dynamic_2(context))
-        self._add_injections(assembler, context, PromptBucketRole.SEMI_DYNAMIC_2)
+        self._add_injections(assembler, injections, PromptBucketRole.SEMI_DYNAMIC_2)
         assembler.add(PromptBucketRole.TIMELINE_OPEN, self._timeline_open(context))
-        self._add_injections(assembler, context, PromptBucketRole.TIMELINE_OPEN)
+        self._add_injections(assembler, injections, PromptBucketRole.TIMELINE_OPEN)
         assembler.add(PromptBucketRole.DYNAMIC, context.dynamic_task)
-        self._add_injections(assembler, context, PromptBucketRole.DYNAMIC)
+        self._add_injections(assembler, injections, PromptBucketRole.DYNAMIC)
         metadata = dict(context.metadata)
         if context.injections:
             metadata["context_injections"] = [
-                injection.manifest() for injection in self._ordered_injections(context.injections)
+                decision.manifest() for decision in injection_decisions
             ]
+            metadata["context_injection_policy"] = self.injection_policy.manifest()
         return assembler.build(metadata=metadata)
 
     def _frozen_materials(self) -> str:
@@ -183,10 +321,10 @@ class AgentPromptBuilder:
     def _add_injections(
         self,
         assembler: PromptAssembler,
-        context: AgentContextPack,
+        injections: tuple[ContextInjection, ...],
         role: PromptBucketRole,
     ) -> None:
-        for injection in self._ordered_injections(context.injections):
+        for injection in injections:
             if injection.target != role:
                 continue
             rendered = injection.render()
@@ -201,4 +339,22 @@ class AgentPromptBuilder:
                 key=lambda item: (-item.priority, item.target.value, item.name),
             )
         )
+
+
+def _trim_text_to_bytes(text: str, max_bytes: int, marker: str) -> str:
+    target = max(0, int(max_bytes))
+    raw = text.encode("utf-8")
+    if len(raw) <= target:
+        return text
+    if target <= 0:
+        return ""
+    marker_bytes = marker.encode("utf-8")
+    if target <= len(marker_bytes):
+        return raw[:target].decode("utf-8", errors="ignore")
+    keep = target - len(marker_bytes)
+    head_bytes = max(1, keep // 2)
+    tail_bytes = max(0, keep - head_bytes)
+    head = raw[:head_bytes].decode("utf-8", errors="ignore")
+    tail = raw[-tail_bytes:].decode("utf-8", errors="ignore") if tail_bytes else ""
+    return f"{head}{marker}{tail}".strip()
 

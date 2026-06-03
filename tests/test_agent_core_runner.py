@@ -6,7 +6,7 @@ import pytest
 
 from agent_core.approvals import ApprovalDecisionRecord, ApprovalResumeContext, InMemoryApprovalStore
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
-from agent_core.context import AgentContextPack
+from agent_core.context import AgentContextPack, ContextInjectionPolicy
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
 from agent_core.mcp import MCPCenter, MCPServerSpec
@@ -139,6 +139,40 @@ async def test_agent_runner_respects_profile_memory_disabled() -> None:
 
     assert outcome.result.status == "completed"
     assert all(message.name != "memory" for message in provider.requests[0].messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_applies_context_injection_policy_to_memory_recall() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    memory = InMemoryMemoryStore(
+        (
+            MemoryRecord(
+                content="target admin UI " * 80,
+                source="memory",
+                metadata={"scope": "project"},
+            ),
+        )
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="injection-policy"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        memory=memory,
+        context_injection_policy=ContextInjectionPolicy(max_injection_bytes=120),
+    )
+
+    outcome = await AgentRunner(session).run("inspect target")
+    injection = outcome.prompt_manifest["metadata"]["context_injections"][0]
+    prompt_text = provider.requests[0].messages[0].content
+
+    assert outcome.result.status == "completed"
+    assert injection["name"] == "memory_recall"
+    assert injection["status"] == "trimmed"
+    assert injection["included"] is True
+    assert injection["final_bytes"] <= 120
+    assert "[...context injection trimmed...]" in prompt_text
+    assert outcome.session_manifest["context_injection_policy"]["max_injection_bytes"] == 120
+    assert outcome.trace_manifest["prompt"]["metadata"]["context_injections"][0]["status"] == "trimmed"
 
 
 @pytest.mark.asyncio

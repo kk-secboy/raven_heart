@@ -24,6 +24,7 @@ ops agents, research agents, and future automation systems.
 - Context reducer port and deterministic timeline reduction.
 - Runner-level automatic timeline reduction before prompt assembly.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
+- Context injection policy for bucket allow-lists, per-injection trimming, total injection budget, and audit manifests.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Unified storage backend manifests for core stores and runtime-owned backends.
 - Pluggable journal stores for harness checkpoint/resume persistence.
@@ -419,6 +420,12 @@ path today. `AgentRunner` also injects memory recall through this path when
 memory is enabled; operator hints and runtime-specific context can use the same
 SDK-level mechanism later.
 
+`ContextInjectionPolicy` governs those insertions before prompt assembly. It can
+limit allowed target buckets, trim oversized injected material, cap total
+injection bytes, and record included/excluded/trimmed decisions in the prompt
+manifest. `AgentSession.context_injection_policy` lets runners apply the same
+policy to resume, memory, approval, and runtime-provided injections.
+
 ## Yaklang Influence
 
 This project studies Yaklang-style agent ideas at the architecture level:
@@ -518,6 +525,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |
+| Context injection policy | MVP implemented |
 | Context reducer | runner-integrated MVP |
 | Runtime adapter code | intentionally excluded |
 | Full OpenAI Agents SDK replacement | in progress |

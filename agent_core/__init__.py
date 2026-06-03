@@ -49,7 +49,14 @@ from agent_core.capabilities import (
     CapabilityQuery,
 )
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
-from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
+from agent_core.context import (
+    AgentContextPack,
+    AgentPromptBuilder,
+    ContextInjection,
+    ContextInjectionDecision,
+    ContextInjectionDecisionStatus,
+    ContextInjectionPolicy,
+)
 from agent_core.events import (
     AgentEvent,
     EventLogPort,
@@ -351,6 +358,9 @@ __all__ = [
     "CompositePolicy",
     "Checkpoint",
     "ContextInjection",
+    "ContextInjectionDecision",
+    "ContextInjectionDecisionStatus",
+    "ContextInjectionPolicy",
     "ContextReducerPort",
     "CostTrace",
     "InMemoryRunTraceStore",

@@ -21,7 +21,12 @@ from agent_core.artifacts import ArtifactStorePort
 from agent_core.backends import storage_backend_manifest
 from agent_core.capabilities import CapabilityCatalog, CapabilityQuery
 from agent_core.config import AgentProfile, RuntimeBudget
-from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
+from agent_core.context import (
+    AgentContextPack,
+    AgentPromptBuilder,
+    ContextInjection,
+    ContextInjectionPolicy,
+)
 from agent_core.events import EventSinkPort
 from agent_core.errors import ResumeError
 from agent_core.harness import (
@@ -62,6 +67,7 @@ class AgentSession:
     memory: MemoryPort = field(default_factory=NullMemory)
     timeline: TimelineStore = field(default_factory=TimelineStore)
     context_reducer: ContextReducerPort | None = None
+    context_injection_policy: ContextInjectionPolicy = field(default_factory=ContextInjectionPolicy)
     event_sink: EventSinkPort | None = None
     policy: PolicyPort | None = None
     policy_decision_store: PolicyDecisionStorePort = field(default_factory=NullPolicyDecisionStore)
@@ -114,6 +120,7 @@ class AgentSession:
             "trace_store": _component_manifest_sync(self.trace_store),
             "artifact_store": _component_manifest_sync(self.artifact_store),
             "context_reducer": _context_reducer_manifest(self.context_reducer),
+            "context_injection_policy": self.context_injection_policy.manifest(),
             "timeline_items": len(self.timeline.items),
             "metadata": dict(self.metadata),
         }
@@ -595,6 +602,7 @@ class AgentRunner:
             timeline=self.session.timeline,
             timeline_budget=self._timeline_budget(),
             capabilities=self.session.capability_catalog(),
+            injection_policy=self.session.context_injection_policy,
         )
 
     def _timeline_budget(self) -> TimelineBudget:

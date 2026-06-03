@@ -306,6 +306,12 @@ continuity, operator hints, and runtime-supplied context. It declares the target
 bucket, source, priority, and metadata. The runtime still owns the actual content
 and policy for adding it.
 
+`ContextInjectionPolicy` is the SDK-level guardrail applied before prompt
+assembly. It can restrict target buckets, trim each injected block, cap total
+injection bytes, and emit per-injection decisions into the prompt manifest. This
+keeps resume, memory, approval, and runtime-supplied context on one auditable
+path without adding Raven-specific prompt content to core.
+
 When memory is enabled on an `AgentSession`, `AgentRunner` recalls memory through
 `MemoryPort` and injects the rendered hits as `ContextInjection(source="memory")`.
 Standalone `ReActExecutor` still supports direct memory messages for tests and

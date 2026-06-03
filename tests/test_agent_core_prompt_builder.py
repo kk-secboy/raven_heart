@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
+from agent_core.context import (
+    AgentContextPack,
+    AgentPromptBuilder,
+    ContextInjection,
+    ContextInjectionPolicy,
+)
 from agent_core.prompt import PromptBucketRole
 from agent_core.skills import (
     SkillRegistry,
@@ -106,6 +111,58 @@ def test_prompt_builder_places_context_injections_by_target_bucket() -> None:
     assert manifest[0]["name"] == "resume_checkpoint"
     assert manifest[1]["name"] == "operator_hint"
     assert manifest[1]["metadata"]["request_id"] == "r1"
+
+
+def test_prompt_builder_applies_context_injection_policy() -> None:
+    prompt = AgentPromptBuilder(
+        injection_policy=ContextInjectionPolicy(
+            max_injection_bytes=80,
+            max_total_bytes=110,
+            allowed_targets=(PromptBucketRole.TIMELINE_OPEN, PromptBucketRole.DYNAMIC),
+        )
+    ).build(
+        AgentContextPack(
+            dynamic_task="inspect",
+            injections=(
+                ContextInjection(
+                    name="large_hint",
+                    content="alpha " * 80,
+                    target=PromptBucketRole.DYNAMIC,
+                    source="runtime",
+                    priority=10,
+                ),
+                ContextInjection(
+                    name="denied_static",
+                    content="do not place this in high static",
+                    target=PromptBucketRole.HIGH_STATIC,
+                    source="runtime",
+                    priority=9,
+                ),
+                ContextInjection(
+                    name="overflow",
+                    content="beta " * 80,
+                    target=PromptBucketRole.TIMELINE_OPEN,
+                    source="runtime",
+                    priority=1,
+                ),
+            ),
+        )
+    )
+    manifest = prompt.manifest()["metadata"]["context_injections"]
+
+    assert "[...context injection trimmed...]" in prompt.bucket(PromptBucketRole.DYNAMIC).content
+    assert "denied_static" not in prompt.render()
+    assert manifest[0]["name"] == "large_hint"
+    assert manifest[0]["status"] == "trimmed"
+    assert manifest[0]["included"] is True
+    assert manifest[1]["name"] == "denied_static"
+    assert manifest[1]["status"] == "target_denied"
+    assert manifest[1]["included"] is False
+    assert manifest[2]["name"] == "overflow"
+    assert manifest[2]["status"] in {"trimmed", "total_budget_exceeded"}
+    assert prompt.manifest()["metadata"]["context_injection_policy"][
+        "schema_version"
+    ] == "agent-core-context-injection-policy/v1"
 
 
 def test_skills_context_renders_loaded_and_available_sections() -> None:
