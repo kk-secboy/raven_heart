@@ -271,6 +271,52 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
     assert manifest["steps"][4]["payload"]["provider_name"] == "mock"
 
 
+def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
+    trace = _trace_manifest()
+    trace["session"] = {
+        "lifecycle_hooks": {
+            "records": [
+                {
+                    "hook_name": "audit",
+                    "event_type": "run_starting",
+                    "status": "completed",
+                    "event": {
+                        "schema_version": "agent-core-lifecycle-event/v1",
+                        "type": "run_starting",
+                        "task_bytes": 12,
+                        "task_sha256": "hash",
+                    },
+                },
+                {
+                    "hook_name": "audit",
+                    "event_type": "run_completed",
+                    "status": "failed",
+                    "error": "audit failed",
+                    "event": {
+                        "schema_version": "agent-core-lifecycle-event/v1",
+                        "type": "run_completed",
+                        "task_bytes": 12,
+                        "task_sha256": "hash",
+                    },
+                },
+            ],
+        }
+    }
+
+    replay = TraceReplayHarness().replay(trace)
+    lifecycle_steps = tuple(step for step in replay.steps if step.source == "lifecycle_hooks")
+
+    assert [step.event_type for step in lifecycle_steps] == [
+        "lifecycle_hook_run_starting",
+        "lifecycle_hook_run_completed",
+    ]
+    assert lifecycle_steps[0].payload["hook_name"] == "audit"
+    assert lifecycle_steps[0].payload["status"] == "completed"
+    assert lifecycle_steps[1].payload["status"] == "failed"
+    assert lifecycle_steps[1].payload["error"] == "audit failed"
+    assert lifecycle_steps[1].payload["event"]["task_sha256"] == "hash"
+
+
 def test_default_trace_evaluator_accepts_expected_trace() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),

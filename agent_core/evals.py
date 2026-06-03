@@ -479,6 +479,16 @@ class TraceReplayHarness:
                     payload=_embedding_call_replay_payload(item),
                 )
             )
+        for item in _lifecycle_hook_records(_lifecycle_hooks(trace)):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="lifecycle_hooks",
+                    event_type=_lifecycle_hook_replay_event_type(item),
+                    run_id=run_id,
+                    payload=_lifecycle_hook_replay_payload(item),
+                )
+            )
         return TraceReplayResult(
             run_id=run_id,
             steps=tuple(steps),
@@ -2237,6 +2247,22 @@ def _lifecycle_hook_statuses(records: tuple[dict[str, Any], ...]) -> set[str]:
 
 def _lifecycle_hook_failure_count(records: tuple[dict[str, Any], ...]) -> int:
     return sum(1 for item in records if str(item.get("status") or "") == "failed")
+
+
+def _lifecycle_hook_replay_event_type(record: dict[str, Any]) -> str:
+    event_type = str(record.get("event_type") or "unknown")
+    return f"lifecycle_hook_{event_type}"
+
+
+def _lifecycle_hook_replay_payload(record: dict[str, Any]) -> dict[str, Any]:
+    event = record.get("event")
+    return {
+        "hook_name": str(record.get("hook_name") or ""),
+        "event_type": str(record.get("event_type") or ""),
+        "status": str(record.get("status") or ""),
+        "error": str(record.get("error") or ""),
+        "event": dict(event) if isinstance(event, dict) else {},
+    }
 
 
 def _provider_cost(provider: dict[str, Any]) -> float:
