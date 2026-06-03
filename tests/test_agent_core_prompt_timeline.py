@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 from agent_core import apply_reduction_to_timeline
-from agent_core.prompt import PromptBucketRole, PromptIR, PromptTrimRule
+from agent_core.prompt import (
+    PromptBucketBudgetPolicy,
+    PromptBucketBudgetRule,
+    PromptBucketRole,
+    PromptIR,
+    PromptTrimRule,
+)
 from agent_core.reducer import DefaultContextReducer, ReducerRequest
 from agent_core.timeline import TimelineBudget, TimelineItem, TimelineStore
 
@@ -133,6 +139,51 @@ def test_prompt_trim_rules_can_protect_semantic_buckets() -> None:
     assert trimmed.bucket(PromptBucketRole.DYNAMIC).metadata == {}
     assert trim["steps"][0]["role"] == PromptBucketRole.TIMELINE_OPEN.value
     assert all(step["role"] != PromptBucketRole.DYNAMIC.value for step in trim["trimmed_roles"])
+
+
+def test_prompt_bucket_budget_policy_trims_declared_semantic_buckets() -> None:
+    prompt = PromptIR.from_parts(
+        high_static="system rules",
+        frozen="tools " + ("t" * 200),
+        semi_dynamic_1="memory " + ("m" * 500),
+        timeline_open="timeline " + ("o" * 100),
+        dynamic="current task " + ("d" * 200),
+    )
+    policy = PromptBucketBudgetPolicy(
+        rules=(
+            PromptBucketBudgetRule(
+                role=PromptBucketRole.SEMI_DYNAMIC_1,
+                max_bytes=160,
+                min_keep_bytes=80,
+                preserve_head_ratio=0.25,
+                reason="memory recall must fit its semantic bucket",
+            ),
+            PromptBucketBudgetRule(
+                role=PromptBucketRole.DYNAMIC,
+                max_bytes=80,
+                protected=True,
+                reason="current task remains authoritative",
+            ),
+        )
+    )
+
+    budgeted = policy.apply(prompt)
+    manifest = budgeted.manifest()
+    budget = manifest["metadata"]["bucket_budget"]
+
+    assert budget["schema_version"] == "agent-core-prompt-bucket-budget-result/v1"
+    assert budget["trimmed_count"] == 1
+    assert budget["protected_count"] == 1
+    assert budget["decisions"][2]["role"] == PromptBucketRole.SEMI_DYNAMIC_1.value
+    assert budget["decisions"][2]["status"] == "trimmed"
+    assert budget["decisions"][-1]["status"] == "protected"
+    assert "[...bucket budget trimmed...]" in budgeted.bucket(
+        PromptBucketRole.SEMI_DYNAMIC_1
+    ).content
+    assert budgeted.bucket(PromptBucketRole.DYNAMIC).content.startswith("current task")
+    assert budgeted.bucket(PromptBucketRole.SEMI_DYNAMIC_1).metadata[
+        "bucket_budget_trimmed"
+    ] is True
 
 
 def test_timeline_splits_frozen_and_open_when_over_budget() -> None:

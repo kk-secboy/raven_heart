@@ -315,6 +315,7 @@ class AgentRunTraceBundle:
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
+        prompt_bucket_budget = _prompt_bucket_budget(self.prompt)
         correlation = self.correlation or TraceCorrelationIndex.from_trace_components(
             run_id=self.run_id,
             journal_replay=self.journal_replay,
@@ -372,6 +373,13 @@ class AgentRunTraceBundle:
                 "memory_governance_rewritten_count": int(
                     memory_governance.get("rewritten_count") or 0
                 ),
+                "has_prompt_bucket_budget": bool(prompt_bucket_budget),
+                "prompt_bucket_budget_trimmed_count": int(
+                    prompt_bucket_budget.get("trimmed_count") or 0
+                ),
+                "prompt_bucket_budget_over_budget_count": int(
+                    prompt_bucket_budget.get("over_budget_count") or 0
+                ),
                 "has_prompt_trim": bool(self.prompt.get("metadata", {}).get("trim")),
             },
             "session": dict(self.session),
@@ -390,6 +398,7 @@ class AgentRunTraceBundle:
             "storage_backends": dict(storage_backends),
             "context_injections": dict(context_injections),
             "memory_governance": dict(memory_governance),
+            "prompt_bucket_budget": dict(prompt_bucket_budget),
             "correlation": dict(correlation),
             "metadata": dict(self.metadata),
         }
@@ -448,6 +457,12 @@ def _count_injection_field(injections: tuple[dict[str, Any], ...], field_name: s
             continue
         counts[value] = counts.get(value, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _prompt_bucket_budget(prompt: dict[str, Any]) -> dict[str, Any]:
+    metadata = prompt.get("metadata") if isinstance(prompt.get("metadata"), dict) else {}
+    budget = metadata.get("bucket_budget") if isinstance(metadata, dict) else {}
+    return dict(budget) if isinstance(budget, dict) else {}
 
 
 class RunTraceStorePort(Protocol):

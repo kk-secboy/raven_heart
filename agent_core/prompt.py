@@ -148,6 +148,197 @@ class PromptTrimResult:
         }
 
 
+@dataclass(frozen=True)
+class PromptBucketBudgetRule:
+    role: PromptBucketRole
+    max_bytes: int | None = None
+    min_keep_bytes: int = 0
+    preserve_head_ratio: float = 0.33
+    protected: bool = False
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        max_bytes = None if self.max_bytes is None else max(1, int(self.max_bytes))
+        min_keep = max(0, int(self.min_keep_bytes))
+        if max_bytes is not None:
+            min_keep = min(min_keep, max_bytes)
+        object.__setattr__(self, "max_bytes", max_bytes)
+        object.__setattr__(self, "min_keep_bytes", min_keep)
+        object.__setattr__(self, "preserve_head_ratio", min(0.9, max(0.1, float(self.preserve_head_ratio))))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "role": self.role.value,
+            "max_bytes": self.max_bytes,
+            "min_keep_bytes": self.min_keep_bytes,
+            "preserve_head_ratio": self.preserve_head_ratio,
+            "protected": self.protected,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class PromptBucketBudgetDecision:
+    role: PromptBucketRole
+    status: str
+    original_bytes: int
+    final_bytes: int
+    max_bytes: int | None = None
+    protected: bool = False
+    reason: str = ""
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "role": self.role.value,
+            "status": self.status,
+            "original_bytes": self.original_bytes,
+            "final_bytes": self.final_bytes,
+            "removed_bytes": max(0, self.original_bytes - self.final_bytes),
+            "max_bytes": self.max_bytes,
+            "protected": self.protected,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class PromptBucketBudgetResult:
+    policy: "PromptBucketBudgetPolicy"
+    decisions: tuple[PromptBucketBudgetDecision, ...]
+    original_prompt_bytes: int
+    final_prompt_bytes: int
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-prompt-bucket-budget-result/v1",
+            "original_prompt_bytes": self.original_prompt_bytes,
+            "final_prompt_bytes": self.final_prompt_bytes,
+            "trimmed_count": sum(1 for item in self.decisions if item.status == "trimmed"),
+            "protected_count": sum(1 for item in self.decisions if item.protected),
+            "over_budget_count": sum(
+                1
+                for item in self.decisions
+                if item.max_bytes is not None and item.final_bytes > item.max_bytes
+            ),
+            "policy": self.policy.manifest(),
+            "decisions": [item.manifest() for item in self.decisions],
+        }
+
+
+@dataclass(frozen=True)
+class PromptBucketBudgetPolicy:
+    rules: tuple[PromptBucketBudgetRule, ...] = ()
+    marker: str = "\n[...bucket budget trimmed...]\n"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-prompt-bucket-budget-policy/v1",
+            "marker_bytes": len(self.marker.encode("utf-8")),
+            "rules": [rule.manifest() for rule in self.rules],
+            "metadata": dict(self.metadata),
+        }
+
+    def apply(self, prompt: "PromptIR") -> "PromptIR":
+        by_role = {bucket.role: bucket for bucket in prompt.ordered_buckets()}
+        rules = {rule.role: rule for rule in self.rules}
+        decisions: list[PromptBucketBudgetDecision] = []
+        original_prompt_bytes = len(prompt.render().encode("utf-8"))
+
+        for role in PROMPT_BUCKET_ORDER:
+            bucket = by_role.get(role, PromptBucket(role))
+            rule = rules.get(role)
+            if not bucket.content:
+                decisions.append(
+                    PromptBucketBudgetDecision(
+                        role=role,
+                        status="empty",
+                        original_bytes=0,
+                        final_bytes=0,
+                        max_bytes=rule.max_bytes if rule else None,
+                        protected=bool(rule.protected) if rule else False,
+                        reason=rule.reason if rule else "",
+                    )
+                )
+                continue
+            if rule is None or rule.max_bytes is None:
+                decisions.append(
+                    PromptBucketBudgetDecision(
+                        role=role,
+                        status="unbounded",
+                        original_bytes=bucket.bytes,
+                        final_bytes=bucket.bytes,
+                        reason=rule.reason if rule else "",
+                    )
+                )
+                continue
+            if rule.protected:
+                decisions.append(
+                    PromptBucketBudgetDecision(
+                        role=role,
+                        status="protected",
+                        original_bytes=bucket.bytes,
+                        final_bytes=bucket.bytes,
+                        max_bytes=rule.max_bytes,
+                        protected=True,
+                        reason=rule.reason,
+                    )
+                )
+                continue
+            if bucket.bytes <= rule.max_bytes:
+                decisions.append(
+                    PromptBucketBudgetDecision(
+                        role=role,
+                        status="within_budget",
+                        original_bytes=bucket.bytes,
+                        final_bytes=bucket.bytes,
+                        max_bytes=rule.max_bytes,
+                        reason=rule.reason,
+                    )
+                )
+                continue
+
+            new_content = _trim_bucket_content(
+                bucket.content,
+                bucket.bytes - rule.max_bytes,
+                marker=self.marker,
+                min_keep_bytes=rule.min_keep_bytes,
+                preserve_head_ratio=rule.preserve_head_ratio,
+            )
+            new_bytes = len(new_content.encode("utf-8"))
+            by_role[role] = bucket.with_content(
+                new_content,
+                {
+                    "bucket_budget_trimmed": True,
+                    "bucket_budget_original_bytes": bucket.bytes,
+                    "bucket_budget_final_bytes": new_bytes,
+                    "bucket_budget_max_bytes": rule.max_bytes,
+                    "bucket_budget_reason": rule.reason,
+                },
+            )
+            decisions.append(
+                PromptBucketBudgetDecision(
+                    role=role,
+                    status="trimmed",
+                    original_bytes=bucket.bytes,
+                    final_bytes=new_bytes,
+                    max_bytes=rule.max_bytes,
+                    reason=rule.reason,
+                )
+            )
+
+        final_prompt_bytes = _rendered_bytes_by_role(by_role)
+        result = PromptBucketBudgetResult(
+            policy=self,
+            decisions=tuple(decisions),
+            original_prompt_bytes=original_prompt_bytes,
+            final_prompt_bytes=final_prompt_bytes,
+        )
+        return PromptIR(
+            buckets=tuple(by_role.get(role, PromptBucket(role)) for role in PROMPT_BUCKET_ORDER),
+            metadata={**prompt.metadata, "bucket_budget": result.manifest()},
+        )
+
+
 def _default_min_keep_bytes(role: PromptBucketRole) -> int:
     if role == PromptBucketRole.HIGH_STATIC:
         return 4096

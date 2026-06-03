@@ -94,6 +94,19 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
                         "trimmed": False,
                     },
                 ],
+                "bucket_budget": {
+                    "schema_version": "agent-core-prompt-bucket-budget-result/v1",
+                    "trimmed_count": 1,
+                    "over_budget_count": 0,
+                    "decisions": [
+                        {
+                            "role": "semi_dynamic_1",
+                            "status": "trimmed",
+                            "original_bytes": 500,
+                            "final_bytes": 140,
+                        }
+                    ],
+                },
             }
         },
     )
@@ -123,6 +136,9 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["memory_governance_denied_count"] == 1
     assert manifest["summary"]["memory_governance_rewritten_count"] == 1
     assert manifest["memory_governance"]["decisions_by_status"] == {"deny": 1, "rewrite": 1}
+    assert manifest["summary"]["has_prompt_bucket_budget"] is True
+    assert manifest["summary"]["prompt_bucket_budget_trimmed_count"] == 1
+    assert manifest["prompt_bucket_budget"]["trimmed_count"] == 1
     assert manifest["summary"]["has_prompt_trim"] is True
     assert manifest["capability_discovery"]["match_count"] == 4
     assert manifest["memory_search"]["hit_count"] == 2

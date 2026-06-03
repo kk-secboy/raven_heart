@@ -12,6 +12,7 @@ from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
 from agent_core.mcp import MCPCenter, MCPServerSpec
 from agent_core.providers import LLMProviderCenter
 from agent_core.providers import LLMRequest, LLMResponse
+from agent_core.prompt import PromptBucketBudgetPolicy, PromptBucketBudgetRule, PromptBucketRole
 from agent_core.reducer import DefaultContextReducer
 from agent_core.runner import (
     AgentManagerCapacityError,
@@ -206,6 +207,54 @@ async def test_agent_runner_trims_prompt_to_profile_budget() -> None:
     assert trim["target_bytes"] == 900
     assert outcome.trace_manifest["summary"]["has_prompt_trim"] is True
     assert outcome.trace_manifest["metadata"]["prompt_trim"]["target_bytes"] == 900
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_applies_prompt_bucket_budget_policy_before_global_trim() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="bucket-budget", budget=RuntimeBudget(max_prompt_bytes=4000)),
+        provider=provider,
+        tools=MockToolRuntime(),
+        prompt_bucket_budget_policy=PromptBucketBudgetPolicy(
+            rules=(
+                PromptBucketBudgetRule(
+                    role=PromptBucketRole.SEMI_DYNAMIC_1,
+                    max_bytes=140,
+                    min_keep_bytes=80,
+                    reason="cap memory and skills before global prompt trim",
+                ),
+                PromptBucketBudgetRule(
+                    role=PromptBucketRole.DYNAMIC,
+                    max_bytes=80,
+                    protected=True,
+                    reason="preserve current task",
+                ),
+            )
+        ),
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="inspect",
+            context=AgentContextPack(
+                recent_tools_cache="recent tool " + ("x" * 600),
+                dynamic_task="current task " + ("d" * 120),
+            ),
+        )
+    )
+    prompt_text = provider.requests[0].messages[0].content
+    bucket_budget = outcome.prompt_manifest["metadata"]["bucket_budget"]
+
+    assert outcome.result.status == "completed"
+    assert bucket_budget["trimmed_count"] == 1
+    assert bucket_budget["protected_count"] == 1
+    assert "[...bucket budget trimmed...]" in prompt_text
+    assert "current task" in prompt_text
+    assert outcome.session_manifest["prompt_bucket_budget_policy"]["enabled"] is True
+    assert outcome.trace_manifest["summary"]["has_prompt_bucket_budget"] is True
+    assert outcome.trace_manifest["summary"]["prompt_bucket_budget_trimmed_count"] == 1
+    assert outcome.trace_manifest["prompt_bucket_budget"]["trimmed_count"] == 1
 
 
 @pytest.mark.asyncio

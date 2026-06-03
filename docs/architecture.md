@@ -33,6 +33,7 @@ agent_core
 | Manager run state and `AgentRunStorePort` | Product workflow DB, scheduling, distributed workers |
 | Multi-agent handoff protocol | Product queues, distributed workers, business orchestration |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
+| Prompt bucket budget policy | Domain-specific budget numbers and release gates |
 | Structured output specs and validation lifecycle | Domain schemas, typed business objects, persistence |
 | Context reducer protocol and reduction manifests | Domain summarizers, archive stores, retrieval policy |
 | Planner protocol and plan state | Domain-specific plan generation and workflow policy |
@@ -307,6 +308,14 @@ volatile timeline material first, then semi-dynamic recall/schema buckets, then
 capability inventory, while protecting high-static system rules and preserving a
 minimum dynamic task window. Runtimes can provide custom rules for code, ops, or
 security agents without changing bucket order or provider calls.
+
+`PromptBucketBudgetPolicy` adds an earlier bucket-local budget pass. It can cap
+specific semantic buckets such as memory, skills, capability inventory, or open
+timeline context, while marking high-static or current-task buckets as
+protected. `AgentSession.prompt_bucket_budget_policy` lets the runner apply this
+before the global prompt trim. The SDK records the policy, per-bucket decisions,
+trimmed count, protected count, and any over-budget buckets in prompt and trace
+manifests. Runtimes own the actual budget numbers and rollout policy.
 
 `ContextInjection` is the SDK-level insertion record for resumable state, memory
 continuity, operator hints, and runtime-supplied context. It declares the target

@@ -21,6 +21,7 @@ ops agents, research agents, and future automation systems.
 - MCP center and SDK-free stdio connector.
 - Prompt buckets and context trimming.
 - Provider-neutral prompt IR with semantic bucket trimming.
+- Prompt bucket budget policy for per-bucket caps and audit manifests.
 - Context reducer port and deterministic timeline reduction.
 - Runner-level automatic timeline reduction before prompt assembly.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
@@ -182,7 +183,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   prompt trim manifests when available.
 - Summary counters include capability discovery matches, memory hits, and
   storage backend, context injection, and memory governance counts, plus whether
-  the prompt was semantically trimmed.
+  the prompt was semantically trimmed or bucket-budgeted.
 - `StorageBackendTrace` collects backend manifests from session, memory,
   replay, approval, policy, event, artifact, and trace components into one
   run-level backend inventory.
@@ -421,6 +422,12 @@ timeline reduction against `RuntimeBudget.max_timeline_bytes`. This gives the SD
 Yaklang-style automatic context compaction without forcing a Raven-specific
 summarizer or storage backend into core.
 
+`PromptBucketBudgetPolicy` can apply per-bucket caps before global prompt
+trimming. For example, a code agent can cap recalled memory while preserving the
+current task, and a security runtime can cap capability inventory while keeping
+high-static rules protected. The result is recorded in prompt and run trace
+manifests as `agent-core-prompt-bucket-budget-result/v1`.
+
 `ContextInjection` lets runtimes or core services place structured material into
 a target bucket without rewriting the prompt builder. Resume checkpoints use this
 path today. `AgentRunner` also injects memory recall through this path when
@@ -533,6 +540,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |
+| Prompt bucket budget policy | MVP implemented |
 | Context injection policy | MVP implemented |
 | Context reducer | runner-integrated MVP |
 | Runtime adapter code | intentionally excluded |
