@@ -173,6 +173,12 @@ can persist approval state without adopting a product database. Production
 approval services, ticketing systems, and RBAC should live in the runtime or a
 separate adapter package.
 
+`ApprovalCenter` is the SDK-facing approval operation facade. It can inspect
+queues through `ApprovalQueueView`, apply approve/reject/cancel decisions as
+`ApprovalResolution` manifests, and build `ApprovalResumeContext` from resolved
+records. Runtime code still owns who can decide, how approvals are routed, and
+which external workflow system stores or mirrors those decisions.
+
 `ApprovalResumeContext` is the core continuation contract. A runtime can resolve
 an approval through any backend, convert the resulting `ApprovalRecord` into a
 grant, and pass that context into `AgentRunRequest`. `ReActExecutor` only uses

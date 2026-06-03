@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import re
 import sqlite3
@@ -156,6 +157,67 @@ class ApprovalResumeContext:
         }
 
 
+@dataclass(frozen=True)
+class ApprovalQueueFilter:
+    statuses: tuple[ApprovalStatus, ...] = ("pending",)
+    run_id: str = ""
+    subject: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def matches(self, record: ApprovalRecord) -> bool:
+        if self.statuses and record.status not in self.statuses:
+            return False
+        if self.run_id and record.run_id != self.run_id:
+            return False
+        if self.subject and record.request.subject != self.subject:
+            return False
+        return True
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-approval-queue-filter/v1",
+            "statuses": list(self.statuses),
+            "run_id": self.run_id,
+            "subject": self.subject,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ApprovalQueueView:
+    records: tuple[ApprovalRecord, ...] = ()
+    filter: ApprovalQueueFilter = field(default_factory=ApprovalQueueFilter)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-approval-queue-view/v1",
+            "record_count": len(self.records),
+            "pending_count": sum(1 for record in self.records if record.pending),
+            "approved_count": sum(1 for record in self.records if record.status == "approved"),
+            "rejected_count": sum(1 for record in self.records if record.status == "rejected"),
+            "cancelled_count": sum(1 for record in self.records if record.status == "cancelled"),
+            "filter": self.filter.manifest(),
+            "records": [record.manifest() for record in self.records],
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ApprovalResolution:
+    record: ApprovalRecord
+    resume_context: ApprovalResumeContext = field(default_factory=ApprovalResumeContext)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-approval-resolution/v1",
+            "record": self.record.manifest(),
+            "resume_context": self.resume_context.manifest(),
+            "metadata": dict(self.metadata),
+        }
+
+
 class ApprovalStorePort(Protocol):
     async def submit(
         self,
@@ -175,6 +237,165 @@ class ApprovalStorePort(Protocol):
 
     async def pending(self) -> tuple[ApprovalRecord, ...]:
         """Return currently pending approval records."""
+
+
+class ApprovalCenter:
+    """Runtime-facing helper around an approval store."""
+
+    def __init__(self, store: ApprovalStorePort) -> None:
+        self.store = store
+
+    async def submit(
+        self,
+        request: ApprovalRequest,
+        *,
+        run_id: str = "",
+        turn_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> ApprovalRecord:
+        return await self.store.submit(
+            request,
+            run_id=run_id,
+            turn_id=turn_id,
+            metadata=metadata,
+        )
+
+    async def view(
+        self,
+        filter: ApprovalQueueFilter | None = None,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> ApprovalQueueView:
+        queue_filter = filter or ApprovalQueueFilter()
+        records = await self._records_for_filter(queue_filter)
+        return ApprovalQueueView(
+            records=tuple(record for record in records if queue_filter.matches(record)),
+            filter=queue_filter,
+            metadata=dict(metadata or {}),
+        )
+
+    async def decide(
+        self,
+        approval_id: str,
+        decision: ApprovalDecisionRecord,
+        *,
+        include_resume_context: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> ApprovalResolution:
+        record = await self.store.decide(approval_id, decision)
+        resume = (
+            ApprovalResumeContext.from_records((record,), metadata={"source": "approval_center"})
+            if include_resume_context and record.decision is not None
+            else ApprovalResumeContext()
+        )
+        return ApprovalResolution(record=record, resume_context=resume, metadata=dict(metadata or {}))
+
+    async def approve(
+        self,
+        approval_id: str,
+        *,
+        actor: str = "",
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> ApprovalResolution:
+        return await self.decide(
+            approval_id,
+            ApprovalDecisionRecord(
+                status="approved",
+                actor=actor,
+                reason=reason,
+                metadata=dict(metadata or {}),
+            ),
+        )
+
+    async def reject(
+        self,
+        approval_id: str,
+        *,
+        actor: str = "",
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> ApprovalResolution:
+        return await self.decide(
+            approval_id,
+            ApprovalDecisionRecord(
+                status="rejected",
+                actor=actor,
+                reason=reason,
+                metadata=dict(metadata or {}),
+            ),
+        )
+
+    async def cancel(
+        self,
+        approval_id: str,
+        *,
+        actor: str = "",
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> ApprovalResolution:
+        return await self.decide(
+            approval_id,
+            ApprovalDecisionRecord(
+                status="cancelled",
+                actor=actor,
+                reason=reason,
+                metadata=dict(metadata or {}),
+            ),
+        )
+
+    async def resume_context(
+        self,
+        *,
+        approval_ids: tuple[str, ...] = (),
+        run_id: str = "",
+        subject: str = "",
+        include_statuses: tuple[ApprovalDecisionStatus, ...] = ("approved",),
+        metadata: dict[str, Any] | None = None,
+    ) -> ApprovalResumeContext:
+        records = await self._records_for_filter(
+            ApprovalQueueFilter(
+                statuses=tuple(_approval_status(status) for status in include_statuses),
+                run_id=run_id,
+                subject=subject,
+            )
+        )
+        if approval_ids:
+            wanted = set(approval_ids)
+            records = tuple(record for record in records if record.approval_id in wanted)
+        resolved = tuple(
+            record
+            for record in records
+            if record.decision is not None and record.decision.status in include_statuses
+        )
+        return ApprovalResumeContext.from_records(
+            resolved,
+            metadata={"source": "approval_center", **dict(metadata or {})},
+        )
+
+    async def manifest(self) -> dict[str, Any]:
+        view = await self.view(ApprovalQueueFilter(statuses=("pending", "approved", "rejected", "cancelled")))
+        store_manifest = getattr(self.store, "manifest", None)
+        raw_store = store_manifest() if callable(store_manifest) else {}
+        if inspect.isawaitable(raw_store):
+            raw_store = await raw_store
+        return {
+            "schema_version": "agent-core-approval-center/v1",
+            "store": dict(raw_store) if isinstance(raw_store, dict) else {},
+            "queue": view.manifest(),
+        }
+
+    async def _records_for_filter(self, filter: ApprovalQueueFilter) -> tuple[ApprovalRecord, ...]:
+        records = getattr(self.store, "records", None)
+        if callable(records):
+            value = records()
+            if inspect.isawaitable(value):
+                value = await value
+            return tuple(value)
+        if filter.statuses and set(filter.statuses) <= {"pending"}:
+            return await self.store.pending()
+        pending = await self.store.pending()
+        return tuple(pending)
 
 
 class NullApprovalStore(ApprovalStorePort):

@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from agent_core import (
+    ApprovalCenter,
     ApprovalDecisionRecord,
+    ApprovalQueueFilter,
     ApprovalRequest,
     ApprovalResumeContext,
     InMemoryApprovalStore,
@@ -84,6 +86,70 @@ async def test_approval_resume_context_exports_approved_subject_grants() -> None
     assert manifest["approved_count"] == 1
     assert manifest["grants"][0]["decision_metadata"]["ticket"] == "APP-1"
     assert manifest["metadata"]["source"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_approval_center_views_resolves_and_builds_resume_context() -> None:
+    store = InMemoryApprovalStore()
+    center = ApprovalCenter(store)
+    deploy = await center.submit(
+        ApprovalRequest(
+            reason="release requires approval",
+            subject="tool:deploy",
+            metadata={"rule": "release"},
+        ),
+        run_id="run-1",
+        turn_id="turn-1",
+    )
+    finish = await center.submit(
+        ApprovalRequest(
+            reason="final answer requires approval",
+            subject="action:finish",
+            metadata={"rule": "finish"},
+        ),
+        run_id="run-2",
+        turn_id="turn-1",
+    )
+
+    pending_deploy = await center.view(ApprovalQueueFilter(subject="tool:deploy"))
+    approved = await center.approve(deploy.approval_id, actor="operator", reason="ok")
+    rejected = await center.reject(finish.approval_id, actor="operator", reason="not yet")
+    resume = await center.resume_context(run_id="run-1")
+    manifest = await center.manifest()
+
+    assert pending_deploy.records[0].approval_id == deploy.approval_id
+    assert approved.record.status == "approved"
+    assert approved.resume_context.approved_for(deploy.request) is not None
+    assert rejected.record.status == "rejected"
+    assert rejected.resume_context.approved_for(finish.request) is None
+    assert resume.approved_for(deploy.request) is not None
+    assert resume.approved_for(finish.request) is None
+    assert manifest["schema_version"] == "agent-core-approval-center/v1"
+    assert manifest["queue"]["record_count"] == 2
+    assert manifest["queue"]["approved_count"] == 1
+    assert manifest["queue"]["rejected_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_approval_center_works_with_durable_stores(tmp_path) -> None:
+    path = tmp_path / "approvals.sqlite"
+    first = ApprovalCenter(SQLiteApprovalStore(path))
+    record = await first.submit(
+        ApprovalRequest(reason="release requires approval", subject="tool:deploy"),
+        run_id="run-1",
+    )
+    await first.approve(record.approval_id, actor="operator", metadata={"ticket": "APP-1"})
+
+    second = ApprovalCenter(SQLiteApprovalStore(path))
+    view = await second.view(
+        ApprovalQueueFilter(statuses=("approved",), run_id="run-1", subject="tool:deploy")
+    )
+    resume = await second.resume_context(approval_ids=(record.approval_id,))
+
+    assert view.records[0].decision is not None
+    assert view.records[0].decision.metadata["ticket"] == "APP-1"
+    assert resume.grants[0].approval_id == record.approval_id
+    assert resume.grants[0].approved is True
 
 
 @pytest.mark.asyncio

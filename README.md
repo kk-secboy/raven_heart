@@ -203,14 +203,16 @@ retention.
   inspectable SDK runs.
 - `NullApprovalStore` for runtimes that only need per-run approval metadata.
 - `ApprovalRecord` and `ApprovalDecisionRecord` manifests for audit/replay.
+- `ApprovalCenter`, `ApprovalQueueView`, and `ApprovalResolution` for queue
+  inspection, approve/reject/cancel helpers, and resume-context generation.
 - `ApprovalResumeContext` for passing approved decisions into resumed runs.
 - `approval_resumed` events when a matching approved subject unlocks an
   action/tool policy gate.
 
-The SDK owns policy decision records, approval state contracts, and event
-emission. Runtimes own the organization policy source, operator UI, identity,
-authorization, notification routing, SLA policy, SIEM export, and durable
-workflow storage.
+The SDK owns policy decision records, approval state contracts, queue/resolution
+manifests, resume context generation, and event emission. Runtimes own the
+organization policy source, operator UI, identity, authorization, notification
+routing, SLA policy, SIEM export, and durable workflow storage.
 
 ### Context Reduction
 
