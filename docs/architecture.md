@@ -114,9 +114,10 @@ provider-neutral evaluation reports. The core checks generic contracts such as
 final status, iteration limits, provider call limits, required events, required
 tools, cost ceilings, event ordering, journal integrity, resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, tool execution presence,
-tool retry, and minimum tool attempt counts. Runtime code owns domain-specific
-eval datasets, baseline selection, scoring policy, dashboards, and release
-gates.
+tool retry, minimum tool attempt counts, required storage backend roles/kinds,
+forbidden backend kinds, and external-backend limits. Runtime code owns
+domain-specific eval datasets, baseline selection, scoring policy, dashboards,
+and release gates.
 
 `AgentRunStorePort` persists manager-level run state such as queued, running,
 cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,

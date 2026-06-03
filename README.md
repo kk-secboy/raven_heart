@@ -203,7 +203,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
   iteration limits, provider call limits, required events, required tools,
   resume-plan presence, resume-plan readiness, expected checkpoint id, tool
-  execution presence, tool retry, and minimum tool attempt counts.
+  execution presence, tool retry, minimum tool attempt counts, and storage
+  backend role/kind constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.

@@ -88,6 +88,12 @@ class TraceEvalSpec:
     required_tool_retry_names: tuple[str, ...] = ()
     forbidden_tool_retry_names: tuple[str, ...] = ()
     min_tool_attempts: dict[str, int] = field(default_factory=dict)
+    require_storage_backends: bool = False
+    required_storage_backend_roles: tuple[str, ...] = ()
+    required_storage_backend_kinds: tuple[str, ...] = ()
+    forbidden_storage_backend_kinds: tuple[str, ...] = ()
+    forbid_external_storage_backends: bool = False
+    max_external_storage_backends: int | None = None
     forbidden_event_types: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -112,6 +118,12 @@ class TraceEvalSpec:
             "required_tool_retry_names": list(self.required_tool_retry_names),
             "forbidden_tool_retry_names": list(self.forbidden_tool_retry_names),
             "min_tool_attempts": dict(self.min_tool_attempts),
+            "require_storage_backends": self.require_storage_backends,
+            "required_storage_backend_roles": list(self.required_storage_backend_roles),
+            "required_storage_backend_kinds": list(self.required_storage_backend_kinds),
+            "forbidden_storage_backend_kinds": list(self.forbidden_storage_backend_kinds),
+            "forbid_external_storage_backends": self.forbid_external_storage_backends,
+            "max_external_storage_backends": self.max_external_storage_backends,
             "forbidden_event_types": list(self.forbidden_event_types),
             "metadata": dict(self.metadata),
         }
@@ -298,6 +310,12 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
+        storage_backends = _storage_backends(trace)
+        storage_backend_roles = _storage_backend_values(storage_backends, "role")
+        storage_backend_kinds = _storage_backend_values(storage_backends, "kind")
+        external_storage_backends = tuple(
+            backend for backend in storage_backends if backend.get("core_builtin") is False
+        )
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -369,6 +387,66 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         },
                     )
                 )
+
+        if spec.require_storage_backends and not storage_backends:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "storage_backends_missing",
+                    "storage backend trace is required",
+                )
+            )
+        for role in spec.required_storage_backend_roles:
+            if role not in storage_backend_roles:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_storage_backend_role",
+                        f"required storage backend role missing: {role}",
+                    )
+                )
+        for kind in spec.required_storage_backend_kinds:
+            if kind not in storage_backend_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_storage_backend_kind",
+                        f"required storage backend kind missing: {kind}",
+                    )
+                )
+        for kind in spec.forbidden_storage_backend_kinds:
+            if kind in storage_backend_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_storage_backend_kind",
+                        f"forbidden storage backend kind present: {kind}",
+                    )
+                )
+        if spec.forbid_external_storage_backends and external_storage_backends:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "external_storage_backend_forbidden",
+                    "external storage backends are forbidden",
+                    metadata={"external_backend_count": len(external_storage_backends)},
+                )
+            )
+        if (
+            spec.max_external_storage_backends is not None
+            and len(external_storage_backends) > spec.max_external_storage_backends
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "external_storage_backend_limit_exceeded",
+                    "external storage backend count exceeded limit",
+                    metadata={
+                        "actual": len(external_storage_backends),
+                        "limit": spec.max_external_storage_backends,
+                    },
+                )
+            )
 
         tool_executions = _tool_execution_summaries(trace)
         if spec.require_tool_execution and not tool_executions:
@@ -496,6 +574,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "resume_plan_ready": bool(resume_plan.get("ready")) if resume_plan else False,
                 "resume_checkpoint_id": str(resume.get("checkpoint_id") or ""),
                 "resume_plan_checkpoint_id": str(resume_plan.get("checkpoint_id") or ""),
+                "storage_backend_count": len(storage_backends),
+                "storage_backend_roles": sorted(storage_backend_roles),
+                "storage_backend_kinds": sorted(storage_backend_kinds),
+                "external_storage_backend_count": len(external_storage_backends),
             },
             metadata={"spec": spec.manifest()},
         )
@@ -818,6 +900,20 @@ def _provider_cost(provider: dict[str, Any]) -> float:
         if isinstance(call_usage, dict):
             total += float(call_usage.get("cost_usd") or 0.0)
     return total
+
+
+def _storage_backends(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    manifest = trace.get("storage_backends")
+    if not isinstance(manifest, dict):
+        return ()
+    backends = manifest.get("backends")
+    if not isinstance(backends, (list, tuple)):
+        return ()
+    return tuple(dict(item) for item in backends if isinstance(item, dict))
+
+
+def _storage_backend_values(backends: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in backends if item.get(key)}
 
 
 def _tool_names(trace: dict[str, Any]) -> set[str]:

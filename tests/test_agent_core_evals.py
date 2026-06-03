@@ -12,6 +12,7 @@ from agent_core.evals import (
     TraceReplayDiffSpec,
     TraceReplayHarness,
 )
+from agent_core.backends import storage_backend_manifest
 from agent_core.runner import AgentRunner, AgentSession
 from agent_core.providers import LLMProviderCenter
 from agent_core.harness import InMemoryAgentJournal
@@ -75,6 +76,24 @@ def _trace_manifest() -> dict[str, object]:
                     "invocation": {"tool_name": "lookup"},
                     "result": {"tool_name": "lookup"},
                 }
+            ],
+        },
+        "storage_backends": {
+            "schema_version": "agent-core-storage-backend-trace/v1",
+            "backend_count": 3,
+            "core_builtin_count": 2,
+            "external_backend_count": 1,
+            "roles": {"memory": 1, "run_trace": 1, "event_log": 1},
+            "kinds": {"postgres": 1, "sqlite": 1, "markdown": 1},
+            "backends": [
+                storage_backend_manifest(
+                    role="memory",
+                    kind="postgres",
+                    name="tenant-memory",
+                    core_builtin=False,
+                ),
+                storage_backend_manifest(role="run_trace", kind="sqlite"),
+                storage_backend_manifest(role="event_log", kind="markdown"),
             ],
         },
     }
@@ -287,6 +306,54 @@ def test_trace_eval_reports_tool_execution_contract_failures() -> None:
         "missing_tool_retry",
         "tool_attempts_below_minimum",
     } <= codes
+
+
+def test_trace_eval_validates_storage_backend_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_storage_backends=True,
+            required_storage_backend_roles=("memory", "run_trace"),
+            required_storage_backend_kinds=("postgres", "sqlite"),
+            max_external_storage_backends=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["storage_backend_count"] == 3
+    assert report.summary["external_storage_backend_count"] == 1
+    assert report.summary["storage_backend_roles"] == ["event_log", "memory", "run_trace"]
+    assert report.summary["storage_backend_kinds"] == ["markdown", "postgres", "sqlite"]
+    assert report.metadata["spec"]["require_storage_backends"] is True
+
+
+def test_trace_eval_reports_storage_backend_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_storage_backend_roles=("approval",),
+            required_storage_backend_kinds=("graph",),
+            forbidden_storage_backend_kinds=("postgres",),
+            forbid_external_storage_backends=True,
+            max_external_storage_backends=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "storage_backends"},
+        TraceEvalSpec(require_storage_backends=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_storage_backend_role",
+        "missing_storage_backend_kind",
+        "forbidden_storage_backend_kind",
+        "external_storage_backend_forbidden",
+        "external_storage_backend_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"storage_backends_missing"}
 
 
 def test_trace_replay_comparator_accepts_matching_trace() -> None:
