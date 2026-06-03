@@ -110,6 +110,8 @@ agent_core never imports runtime
 - `InMemoryAgentRunStore`, `SQLiteAgentRunStore`, and `MarkdownAgentRunStore`
   for lightweight run state persistence.
 - `AgentManagerConcurrencyPolicy` for single-process active-run capacity limits.
+- `AgentManagerScheduleSnapshot` and `AgentManagerCapacityStatus` for
+  provider-neutral schedule/capacity audit before runtime scheduling.
 
 ### ReAct
 
@@ -363,11 +365,12 @@ backends can be swapped without changing ReAct or harness semantics.
 - Manifest export with terminal state, ready steps, and status counts.
 
 The SDK owns generic plan state, update semantics, sequential step execution,
-and single-process manager capacity guards. Runtimes own the actual planning
-strategy: Raven can produce pentest plans, a code agent can produce repair
-plans, and an ops agent can produce incident response plans while all of them
-reuse the same core contract. Runtime code also owns distributed scheduling,
-cross-worker concurrency, retry policy, and business workflow rules.
+single-process manager capacity guards, and schedule/capacity snapshots.
+Runtimes own the actual planning strategy: Raven can produce pentest plans, a
+code agent can produce repair plans, and an ops agent can produce incident
+response plans while all of them reuse the same core contract. Runtime code also
+owns distributed scheduling, cross-worker concurrency, retry policy, and
+business workflow rules.
 
 ### Prompt Buckets
 

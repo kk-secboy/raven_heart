@@ -110,9 +110,13 @@ gates.
 cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,
 and Markdown stores so lightweight managers can restart and inspect state without
 runtime infrastructure. `AgentManagerConcurrencyPolicy` gives the single-process
-manager explicit active-run and per-session capacity guards. Production
-schedulers, distributed workers, PG-backed workflow state, and tenant isolation
-remain runtime or adapter responsibilities.
+manager explicit active-run and per-session capacity guards.
+`AgentManagerScheduleSnapshot` and `AgentManagerCapacityStatus` expose
+provider-neutral schedule/capacity audit manifests so runtimes can inspect
+availability, active claims, interrupted restored runs, and capacity rejection
+reasons without owning core state layout. Production schedulers, distributed
+workers, PG-backed workflow state, and tenant isolation remain runtime or
+adapter responsibilities.
 
 `HandoffSpec`, `HandoffRequest`, `HandoffRouter`, and `MultiAgentCoordinator`
 provide a provider-neutral multi-agent handoff contract. The core can advertise

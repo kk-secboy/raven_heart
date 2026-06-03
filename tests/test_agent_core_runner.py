@@ -498,6 +498,41 @@ def test_markdown_agent_run_store_marks_restored_active_runs_interrupted(tmp_pat
     assert "<!-- agent-core-run " in text
 
 
+def test_agent_session_manager_schedule_snapshot_restores_interrupted_runs_without_capacity_claim(
+    tmp_path,
+) -> None:
+    path = tmp_path / "runs.md"
+    store = MarkdownAgentRunStore(path)
+    store.save(
+        ManagedAgentRun(
+            run_key="run-1",
+            session_name="session",
+            task="long task",
+            status="running",
+        )
+    )
+    manager = AgentSessionManager(
+        run_store=MarkdownAgentRunStore(path),
+        concurrency_policy=AgentManagerConcurrencyPolicy(max_active_runs=1),
+    )
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="session"),
+            provider=MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}]),
+            tools=MockToolRuntime(),
+        )
+    )
+
+    snapshot = manager.schedule_snapshot().manifest()
+    capacity = manager.capacity_status("session").manifest()
+
+    assert snapshot["schema_version"] == "agent-core-manager-schedule-snapshot/v1"
+    assert snapshot["status_counts"]["interrupted"] == 1
+    assert snapshot["active_run_count"] == 0
+    assert capacity["available"] is True
+    assert capacity["manager_active_run_count"] == 0
+
+
 @pytest.mark.asyncio
 async def test_agent_session_manager_runs_with_resume_token() -> None:
     journal = InMemoryAgentJournal()
@@ -607,12 +642,15 @@ async def test_agent_session_manager_background_run_rejects_same_session_concurr
         manager.start("slow", "second task")
 
     assert exc_info.value.metadata["max_active_runs_per_session"] == 1
+    assert exc_info.value.metadata["capacity_status"]["reason"] == "session_capacity_exceeded"
     assert manager.run_state(run_key).status == "running"
+    assert manager.capacity_status("slow").available is False
     provider.release.set()
     outcome = await manager.wait(run_key)
 
     assert outcome.result.status == "completed"
     assert not manager.active_runs()
+    assert manager.capacity_status("slow").available is True
 
 
 @pytest.mark.asyncio
@@ -636,9 +674,13 @@ async def test_agent_session_manager_allows_configured_session_concurrency() -> 
     await asyncio.sleep(0)
 
     manifest = manager.manifest()
+    snapshot = manager.schedule_snapshot().manifest()
 
     assert set(manifest["active_by_session"]["parallel"]) == {first_key, second_key}
+    assert set(manifest["schedule"]["active_by_session"]["parallel"]) == {first_key, second_key}
     assert manifest["concurrency_policy"]["max_active_runs_per_session"] == 2
+    assert snapshot["capacity_by_session"][0]["active_run_count"] == 2
+    assert snapshot["capacity_by_session"][0]["available"] is False
 
     first_provider.release.set()
     second_provider.release.set()
@@ -679,7 +721,9 @@ async def test_agent_session_manager_enforces_global_active_capacity() -> None:
         manager.start("second", "blocked")
 
     assert exc_info.value.metadata["max_active_runs"] == 1
+    assert exc_info.value.metadata["capacity_status"]["reason"] == "manager_capacity_exceeded"
     assert manager.manifest()["active_run_count"] == 1
+    assert manager.capacity_status("second").manager_available is False
 
     first_provider.release.set()
     outcome = await manager.wait(run_key)

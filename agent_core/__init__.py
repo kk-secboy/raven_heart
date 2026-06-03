@@ -209,7 +209,9 @@ from agent_core.reducer import (
 )
 from agent_core.runner import (
     AgentManagerCapacityError,
+    AgentManagerCapacityStatus,
     AgentManagerConcurrencyPolicy,
+    AgentManagerScheduleSnapshot,
     AgentResumeRequest,
     AgentRunner,
     AgentRunOutcome,
@@ -313,7 +315,9 @@ __all__ = [
     "AgentJournalStorePort",
     "AgentJournalReplay",
     "AgentManagerCapacityError",
+    "AgentManagerCapacityStatus",
     "AgentManagerConcurrencyPolicy",
+    "AgentManagerScheduleSnapshot",
     "AgentPromptBuilder",
     "AgentResumeRequest",
     "AgentProfile",

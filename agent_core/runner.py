@@ -9,6 +9,7 @@ import inspect
 import json
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -229,6 +230,77 @@ class AgentManagerCapacityError(RuntimeError):
     def __init__(self, message: str, *, metadata: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.metadata = dict(metadata or {})
+
+
+@dataclass(frozen=True)
+class AgentManagerCapacityStatus:
+    session_name: str
+    active_run_keys: tuple[str, ...] = ()
+    manager_active_run_count: int = 0
+    max_active_runs: int | None = None
+    max_active_runs_per_session: int = 1
+    session_available: bool = True
+    manager_available: bool = True
+    reason: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def active_run_count(self) -> int:
+        return len(self.active_run_keys)
+
+    @property
+    def available(self) -> bool:
+        return self.session_available and self.manager_available
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-manager-capacity-status/v1",
+            "session_name": self.session_name,
+            "available": self.available,
+            "session_available": self.session_available,
+            "manager_available": self.manager_available,
+            "reason": self.reason,
+            "active_run_count": self.active_run_count,
+            "active_run_keys": list(self.active_run_keys),
+            "manager_active_run_count": self.manager_active_run_count,
+            "max_active_runs": self.max_active_runs,
+            "max_active_runs_per_session": self.max_active_runs_per_session,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentManagerScheduleSnapshot:
+    sessions: tuple[str, ...] = ()
+    runs: tuple[ManagedAgentRun, ...] = ()
+    active_by_session: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    capacity_by_session: tuple[AgentManagerCapacityStatus, ...] = ()
+    concurrency_policy: AgentManagerConcurrencyPolicy = field(default_factory=AgentManagerConcurrencyPolicy)
+    run_store: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def status_counts(self) -> dict[str, int]:
+        return dict(Counter(run.status for run in self.runs))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-manager-schedule-snapshot/v1",
+            "sessions": list(self.sessions),
+            "run_count": len(self.runs),
+            "runs": [run.manifest() for run in self.runs],
+            "status_counts": self.status_counts(),
+            "active_by_session": {
+                name: list(keys)
+                for name, keys in sorted(self.active_by_session.items(), key=lambda item: item[0])
+            },
+            "active_run_count": sum(len(keys) for keys in self.active_by_session.values()),
+            "capacity_by_session": [
+                status.manifest() for status in self.capacity_by_session
+            ],
+            "concurrency_policy": self.concurrency_policy.manifest(),
+            "run_store": dict(self.run_store),
+            "metadata": dict(self.metadata),
+        }
 
 
 class AgentRunStorePort(Protocol):
@@ -902,6 +974,27 @@ class AgentSessionManager:
     def active_runs(self) -> tuple[ManagedAgentRun, ...]:
         return tuple(run for run in self.runs() if run.status in {"queued", "running", "cancelling"})
 
+    def capacity_status(self, session_name: str) -> AgentManagerCapacityStatus:
+        if session_name not in self._sessions:
+            raise KeyError(f"unknown session: {session_name}")
+        return self._capacity_status(session_name)
+
+    def schedule_snapshot(self) -> AgentManagerScheduleSnapshot:
+        return AgentManagerScheduleSnapshot(
+            sessions=self.sessions(),
+            runs=self.runs(),
+            active_by_session={
+                name: tuple(keys)
+                for name, keys in sorted(self._active_by_session.items(), key=lambda item: item[0])
+            },
+            capacity_by_session=tuple(
+                self._capacity_status(name) for name in self.sessions()
+            ),
+            concurrency_policy=self.concurrency_policy,
+            run_store=self.run_store.manifest(),
+            metadata={"source": type(self).__name__},
+        )
+
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-session-manager/v1",
@@ -912,6 +1005,7 @@ class AgentSessionManager:
             "runs": [run.manifest() for run in self.runs()],
             "active_by_session": {name: list(keys) for name, keys in sorted(self._active_by_session.items())},
             "active_run_count": len(self.active_runs()),
+            "schedule": self.schedule_snapshot().manifest(),
             "concurrency_policy": self.concurrency_policy.manifest(),
             "run_store": self.run_store.manifest(),
         }
@@ -973,26 +1067,52 @@ class AgentSessionManager:
         return outcome
 
     def _ensure_capacity(self, session_name: str) -> None:
-        policy = self.concurrency_policy
-        active_for_session = tuple(self._active_by_session.get(session_name, ()))
-        if len(active_for_session) >= policy.max_active_runs_per_session:
+        status = self._capacity_status(session_name)
+        if not status.session_available:
             raise AgentManagerCapacityError(
                 f"session active run capacity exceeded: {session_name}",
                 metadata={
                     "session_name": session_name,
-                    "active_run_keys": list(active_for_session),
-                    "max_active_runs_per_session": policy.max_active_runs_per_session,
+                    "active_run_keys": list(status.active_run_keys),
+                    "max_active_runs_per_session": status.max_active_runs_per_session,
+                    "capacity_status": status.manifest(),
                 },
             )
-        active_count = len(self.active_runs())
-        if policy.max_active_runs is not None and active_count >= policy.max_active_runs:
+        if not status.manager_available:
             raise AgentManagerCapacityError(
                 "manager active run capacity exceeded",
                 metadata={
-                    "active_run_count": active_count,
-                    "max_active_runs": policy.max_active_runs,
+                    "active_run_count": status.manager_active_run_count,
+                    "max_active_runs": status.max_active_runs,
+                    "capacity_status": status.manifest(),
                 },
             )
+
+    def _capacity_status(self, session_name: str) -> AgentManagerCapacityStatus:
+        policy = self.concurrency_policy
+        active_keys = tuple(self._active_by_session.get(session_name, ()))
+        manager_active = len(self.active_runs())
+        session_available = len(active_keys) < policy.max_active_runs_per_session
+        manager_available = (
+            policy.max_active_runs is None
+            or manager_active < policy.max_active_runs
+        )
+        if not session_available:
+            reason = "session_capacity_exceeded"
+        elif not manager_available:
+            reason = "manager_capacity_exceeded"
+        else:
+            reason = ""
+        return AgentManagerCapacityStatus(
+            session_name=session_name,
+            active_run_keys=active_keys,
+            manager_active_run_count=manager_active,
+            max_active_runs=policy.max_active_runs,
+            max_active_runs_per_session=policy.max_active_runs_per_session,
+            session_available=session_available,
+            manager_available=manager_available,
+            reason=reason,
+        )
 
     def _claim_run(self, session_name: str, run_key: str) -> None:
         self._active_by_session.setdefault(session_name, []).append(run_key)
