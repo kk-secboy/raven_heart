@@ -98,8 +98,10 @@ from agent_core.planner import (
 from agent_core.prompt import PromptBucket, PromptBucketRole, PromptIR
 from agent_core.prompt import DEFAULT_PROMPT_TRIM_ORDER
 from agent_core.providers import (
+    LLMCallRecord,
     LLMProviderCenter,
     LLMBudgetExceededError,
+    LLMMessage,
     LLMProviderError,
     LLMProviderNotFoundError,
     LLMProviderPort,
@@ -107,6 +109,9 @@ from agent_core.providers import (
     LLMProviderSpec,
     LLMRequest,
     LLMResponse,
+    LLMStreamEvent,
+    RetryHint,
+    UsageInfo,
 )
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
 from agent_core.reducer import (
@@ -198,14 +203,17 @@ __all__ = [
     "NullEventSink",
     "DEFAULT_PROMPT_TRIM_ORDER",
     "LLMProviderPort",
+    "LLMCallRecord",
     "LLMProviderCenter",
     "LLMBudgetExceededError",
+    "LLMMessage",
     "LLMProviderError",
     "LLMProviderNotFoundError",
     "LLMProviderRoute",
     "LLMProviderSpec",
     "LLMRequest",
     "LLMResponse",
+    "LLMStreamEvent",
     "LoopGuard",
     "LoopGuardConfig",
     "LoopGuardDecision",
@@ -241,6 +249,7 @@ __all__ = [
     "ReducerResult",
     "ResumeToken",
     "ReplayIssue",
+    "RetryHint",
     "RunStatus",
     "RunState",
     "RuleBasedPolicy",
@@ -294,5 +303,6 @@ __all__ = [
     "ToolTrace",
     "TurnState",
     "TurnStatus",
+    "UsageInfo",
 ]
 

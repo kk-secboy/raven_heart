@@ -62,6 +62,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "NullApprovalStore",
         "NullEventSink",
         "LLMProviderCenter",
+        "LLMCallRecord",
+        "LLMMessage",
         "ToolCenter",
         "ToolRegistry",
         "SkillRegistry",
@@ -82,8 +84,11 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "RuleBasedPolicy",
         "RuleBasedMemoryGovernance",
         "DEFAULT_PROMPT_TRIM_ORDER",
+        "LLMStreamEvent",
         "ReducerRequest",
         "ReducerResult",
+        "RetryHint",
+        "UsageInfo",
         "apply_reduction_to_timeline",
     }
 

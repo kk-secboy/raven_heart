@@ -13,6 +13,7 @@ ops agents, research agents, and future automation systems.
 - ReAct loop and structured action execution.
 - Harness lifecycle, checkpoint, resume, trace, and replay primitives.
 - LLM provider abstractions and provider routing.
+- Provider call records and usage/failure manifests.
 - Tool registry and tool center.
 - Skill center and skill context injection.
 - MCP center and SDK-free stdio connector.
@@ -49,7 +50,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | --- | --- |
 | Agent loop semantics | Product orchestration |
 | Prompt bucket IR | Domain-specific prompt content |
-| Provider protocol | Concrete LLM clients and credentials |
+| Provider protocol, routing, and call audit | Concrete LLM clients, credentials, and rate limits |
 | Tool registry protocol | Real tools, sandboxing, permissions |
 | Skill registry | Skill distribution UX |
 | MCP center interfaces | MCP server deployment and secrets |
@@ -132,6 +133,8 @@ reducer while keeping the same core contract.
 - Retry and fallback.
 - Usage/failure accounting.
 - Budget checks.
+- Request, response, stream event, route, and call record manifests.
+- Provider call audit records for completed and failed attempts.
 
 ### Tools
 
@@ -301,6 +304,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | --- | --- |
 | Harness/ReAct core | MVP implemented |
 | Provider center | MVP implemented |
+| Provider call audit | MVP implemented |
 | Tool center | MVP implemented |
 | Skill center | MVP implemented |
 | MCP center | MVP implemented |

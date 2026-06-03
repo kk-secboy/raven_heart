@@ -16,6 +16,14 @@ class LLMMessage:
     name: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "name": self.name,
+            "content_bytes": len(self.content.encode("utf-8")),
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass(frozen=True)
 class UsageInfo:
@@ -25,12 +33,28 @@ class UsageInfo:
     cost_usd: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
+            "cost_usd": self.cost_usd,
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass(frozen=True)
 class RetryHint:
     retryable: bool = False
     after_seconds: float | None = None
     reason: str = ""
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "retryable": self.retryable,
+            "after_seconds": self.after_seconds,
+            "reason": self.reason,
+        }
 
 
 @dataclass(frozen=True)
@@ -41,6 +65,17 @@ class LLMRequest:
     max_output_tokens: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-request/v1",
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_output_tokens": self.max_output_tokens,
+            "message_count": len(self.messages),
+            "messages": [message.manifest() for message in self.messages],
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass(frozen=True)
 class LLMResponse:
@@ -49,6 +84,16 @@ class LLMResponse:
     usage: UsageInfo = field(default_factory=UsageInfo)
     finish_reason: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-response/v1",
+            "content_bytes": len(self.content.encode("utf-8")),
+            "has_action": self.action is not None,
+            "usage": self.usage.manifest(),
+            "finish_reason": self.finish_reason,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -59,6 +104,17 @@ class LLMStreamEvent:
     usage: UsageInfo | None = None
     error: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-stream-event/v1",
+            "type": self.type,
+            "delta_bytes": len(self.delta.encode("utf-8")),
+            "has_action": self.action is not None,
+            "usage": self.usage.manifest() if self.usage else None,
+            "error": self.error,
+            "metadata": dict(self.metadata),
+        }
 
 
 class LLMProviderPort(Protocol):
@@ -101,6 +157,41 @@ class LLMProviderRoute:
     model: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-provider-route/v1",
+            "provider_name": self.provider_name,
+            "model": self.model,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class LLMCallRecord:
+    provider_name: str
+    model: str
+    attempt: int
+    status: Literal["completed", "failed"]
+    streamed: bool = False
+    usage: UsageInfo = field(default_factory=UsageInfo)
+    error: str = ""
+    retryable: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-call-record/v1",
+            "provider_name": self.provider_name,
+            "model": self.model,
+            "attempt": self.attempt,
+            "status": self.status,
+            "streamed": self.streamed,
+            "usage": self.usage.manifest(),
+            "error": self.error,
+            "retryable": self.retryable,
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass(frozen=True)
 class _ProviderEntry:
@@ -141,6 +232,7 @@ class LLMProviderCenter(LLMProviderPort):
         self.fallback_enabled = fallback_enabled
         self.usage = UsageInfo()
         self.failures: list[dict[str, Any]] = []
+        self.calls: list[LLMCallRecord] = []
         self._providers: dict[str, _ProviderEntry] = {}
 
     def register(
@@ -199,7 +291,11 @@ class LLMProviderCenter(LLMProviderPort):
             "fallback_enabled": self.fallback_enabled,
             "max_retries": self.max_retries,
             "max_cost_usd": self.max_cost_usd,
-            "usage": self.usage.__dict__,
+            "usage": self.usage.manifest(),
+            "call_count": len(self.calls),
+            "failure_count": len(self.failures),
+            "calls": [call.manifest() for call in self.calls],
+            "failures": [dict(item) for item in self.failures],
             "providers": [spec.manifest() for spec in self.specs()],
         }
 
@@ -222,6 +318,14 @@ class LLMProviderCenter(LLMProviderPort):
                 try:
                     response = await entry.provider.complete(routed)
                     self._record_usage(response.usage, provider=entry.spec.name, request=request)
+                    self._record_call(
+                        provider=entry.spec.name,
+                        model=routed.model,
+                        attempt=attempt + 1,
+                        status="completed",
+                        usage=response.usage,
+                        metadata={"request": request.manifest()},
+                    )
                     return replace(
                         response,
                         metadata={
@@ -235,7 +339,13 @@ class LLMProviderCenter(LLMProviderPort):
                     raise
                 except Exception as exc:
                     last_error = exc
-                    self._record_failure(entry.spec.name, routed.model, attempt + 1, exc)
+                    self._record_failure(
+                        entry.spec.name,
+                        routed.model,
+                        attempt + 1,
+                        exc,
+                        metadata={"request": request.manifest()},
+                    )
                     if not self._is_retryable(exc) or attempt + 1 >= attempts:
                         break
         if last_error is not None:
@@ -268,12 +378,28 @@ class LLMProviderCenter(LLMProviderPort):
                             },
                         )
                     self._record_usage(usage, provider=entry.spec.name, request=request)
+                    self._record_call(
+                        provider=entry.spec.name,
+                        model=routed.model,
+                        attempt=attempt + 1,
+                        status="completed",
+                        streamed=True,
+                        usage=usage,
+                        metadata={"request": request.manifest()},
+                    )
                     return
                 except LLMBudgetExceededError:
                     raise
                 except Exception as exc:
                     last_error = exc
-                    self._record_failure(entry.spec.name, routed.model, attempt + 1, exc)
+                    self._record_failure(
+                        entry.spec.name,
+                        routed.model,
+                        attempt + 1,
+                        exc,
+                        streamed=True,
+                        metadata={"request": request.manifest()},
+                    )
                     if not self._is_retryable(exc) or attempt + 1 >= attempts:
                         break
         if last_error is not None:
@@ -367,15 +493,63 @@ class LLMProviderCenter(LLMProviderPort):
             return float(value)
         return self.max_cost_usd
 
-    def _record_failure(self, provider: str, model: str, attempt: int, exc: Exception) -> None:
+    def _record_call(
+        self,
+        *,
+        provider: str,
+        model: str,
+        attempt: int,
+        status: Literal["completed", "failed"],
+        streamed: bool = False,
+        usage: UsageInfo | None = None,
+        error: str = "",
+        retryable: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.calls.append(
+            LLMCallRecord(
+                provider_name=provider,
+                model=model,
+                attempt=attempt,
+                status=status,
+                streamed=streamed,
+                usage=usage or UsageInfo(),
+                error=error,
+                retryable=retryable,
+                metadata=dict(metadata or {}),
+            )
+        )
+
+    def _record_failure(
+        self,
+        provider: str,
+        model: str,
+        attempt: int,
+        exc: Exception,
+        *,
+        streamed: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        retryable = self._is_retryable(exc)
         self.failures.append(
             {
                 "provider": provider,
                 "model": model,
                 "attempt": attempt,
                 "error": str(exc),
-                "retryable": self._is_retryable(exc),
+                "retryable": retryable,
+                "streamed": streamed,
             }
+        )
+        self._record_call(
+            provider=provider,
+            model=model,
+            attempt=attempt,
+            status="failed",
+            streamed=streamed,
+            error=str(exc),
+            retryable=retryable,
+            metadata=metadata,
         )
 
     @staticmethod

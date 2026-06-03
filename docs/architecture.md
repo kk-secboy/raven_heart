@@ -21,7 +21,7 @@ agent_core
 
 | Core area | Runtime responsibility |
 | --- | --- |
-| LLM provider center | Concrete model clients, credentials, rate limits |
+| LLM provider center and call audit | Concrete model clients, credentials, rate limits |
 | Tool center | Real tools, shell/file/network access, sandboxing |
 | MCP center | MCP server deployment, credentials, process lifecycle |
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
@@ -53,6 +53,11 @@ same ports.
 `AgentJournalReplay` turns a journal snapshot into a replayable event manifest
 and reports consistency issues before a runtime depends on that state for UI,
 debugging, audit, or resume decisions.
+
+`LLMProviderCenter` records provider-neutral call manifests for completed and
+failed attempts. The core records provider name, model, attempt, streamed flag,
+usage, retryability, and request shape. Concrete provider clients, credentials,
+rate limits, and vendor-specific response payloads remain runtime-owned.
 
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; production runtimes should implement

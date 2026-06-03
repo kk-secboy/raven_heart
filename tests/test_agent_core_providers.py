@@ -7,12 +7,15 @@ from agent_core.config import RuntimeBudget
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.prompt import PromptIR
 from agent_core.providers import (
+    LLMCallRecord,
     LLMBudgetExceededError,
+    LLMMessage,
     LLMProviderCenter,
     LLMProviderError,
     LLMProviderNotFoundError,
     LLMRequest,
     LLMResponse,
+    LLMStreamEvent,
     RetryHint,
     UsageInfo,
 )
@@ -31,6 +34,20 @@ class _FailingProvider:
             "provider failed",
             retry_hint=RetryHint(retryable=self.retryable, reason="test"),
         )
+
+
+class _StreamingProvider:
+    def __init__(self) -> None:
+        self.requests: list[LLMRequest] = []
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        raise AssertionError("streaming test should not call complete")
+
+    async def stream(self, request: LLMRequest):
+        self.requests.append(request)
+        yield LLMStreamEvent(type="delta", delta="hello")
+        yield LLMStreamEvent(type="usage", usage=UsageInfo(total_tokens=3))
+        yield LLMStreamEvent(type="message_end")
 
 
 @pytest.mark.asyncio
@@ -90,6 +107,9 @@ def test_provider_center_search_manifest_and_missing_provider() -> None:
     assert [spec.name for spec in center.search(tag="cheap")] == ["fast"]
     assert [spec.name for spec in center.search(model="strong-pro")] == ["strong"]
     assert center.manifest()["providers"][0]["name"] == "strong"
+    assert LLMRequest(messages=[LLMMessage(role="user", content="hello")]).manifest()[
+        "messages"
+    ][0]["content_bytes"] == 5
 
     with pytest.raises(LLMProviderNotFoundError):
         center.select(LLMRequest(messages=[], metadata={"provider": "missing"}))
@@ -108,6 +128,9 @@ async def test_provider_center_retries_retryable_provider_errors() -> None:
     assert response.action == {"action": "finish", "arguments": {"output": "fallback"}}
     assert len(failing.requests) == 2
     assert len(center.failures) == 2
+    assert [call.status for call in center.calls] == ["failed", "failed", "completed"]
+    assert center.manifest()["call_count"] == 3
+    assert center.manifest()["calls"][0]["retryable"] is True
     assert fallback.requests[0].metadata["provider"] == "fallback"
 
 
@@ -161,6 +184,33 @@ async def test_provider_center_enforces_estimated_and_actual_cost_budget() -> No
     response = await center.complete(LLMRequest(messages=[], metadata={"max_cost_usd": 0.02}))
     assert response.content == "ok"
     assert center.usage.cost_usd == 0.01
+
+
+@pytest.mark.asyncio
+async def test_provider_center_records_streaming_call_manifests() -> None:
+    provider = _StreamingProvider()
+    center = LLMProviderCenter(default_provider="local")
+    center.register("local", provider, default_model="local-mini")
+
+    events = [
+        event
+        async for event in center.stream(
+            LLMRequest(messages=[LLMMessage(role="user", content="task")])
+        )
+    ]
+    manifest = center.manifest()
+
+    assert [event.type for event in events] == ["delta", "usage", "message_end"]
+    assert center.calls[0].streamed is True
+    assert center.calls[0].status == "completed"
+    assert manifest["calls"][0]["streamed"] is True
+    assert manifest["calls"][0]["usage"]["total_tokens"] == 3
+    assert LLMCallRecord(
+        provider_name="local",
+        model="local-mini",
+        attempt=1,
+        status="completed",
+    ).manifest()["provider_name"] == "local"
 
 
 @pytest.mark.asyncio
