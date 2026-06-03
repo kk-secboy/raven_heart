@@ -31,6 +31,7 @@ from agent_core.tools import (
     ToolInvocation,
     ToolRegistry,
     ToolResult,
+    ToolRetryPolicy,
     ToolSpec,
 )
 from agent_core.testing import InMemoryHarness, MockLLMProvider, MockMemory, MockToolRuntime
@@ -436,6 +437,54 @@ async def test_react_executor_can_drive_loop_from_stream_events() -> None:
     assert harness.model_events[0]["metadata"]["streamed"] is True
     assert harness.model_events[0]["metadata"]["stream"]["has_action"] is True
     assert [event.type for event in events.events if event.type == "model_stream"]
+
+
+@pytest.mark.asyncio
+async def test_react_executor_retries_retryable_tool_failures() -> None:
+    attempts = 0
+    registry = ToolRegistry()
+
+    async def lookup(invocation: ToolInvocation) -> ToolResult:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return ToolResult(
+                call_id=invocation.call_id,
+                tool_name=invocation.tool_name,
+                status="failed",
+                error="temporary",
+                metadata={"retryable": True},
+            )
+        return ToolResult(call_id=invocation.call_id, tool_name=invocation.tool_name, content="ok")
+
+    registry.register(ToolSpec(name="lookup"), lookup)
+    provider = MockLLMProvider(
+        [
+            {"action": "call_tool", "arguments": {"tool_name": "lookup", "arguments": {}}},
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    events = ListEventSink()
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=registry,
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        event_sink=events,
+        config=ReActConfig(
+            max_iterations=3,
+            tool_retry_policy=ToolRetryPolicy(max_attempts=2),
+        ),
+    )
+
+    result = await executor.run("retry tool", PromptIR.from_parts(dynamic="task"))
+    tool_finished = [event for event in events.events if event.type == "tool_finished"][-1]
+
+    assert result.status == "completed"
+    assert attempts == 2
+    assert provider.requests[1].messages[-1].content == "ok"
+    assert tool_finished.payload["execution"]["attempt_count"] == 2
+    assert tool_finished.payload["execution"]["retried"] is True
 
 
 @pytest.mark.asyncio

@@ -276,6 +276,8 @@ error/retry mapping.
 - `ToolSpec`, `ToolRegistry`, and `ToolCenter`.
 - Runtime mounts.
 - Tool tags, aliases, manifests, inventory, and search.
+- `ToolExecutionCenter`, `ToolRetryPolicy`, and tool execution attempt records
+  for retryable failure recovery and audit.
 - In-memory replay.
 - `ToolReplayRecord` manifests for deterministic replay audit.
 - `ToolReplayStorePort` and `PersistentToolReplay` for pluggable replay storage.

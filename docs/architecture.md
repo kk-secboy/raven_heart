@@ -167,6 +167,14 @@ The SDK ships in-memory, SQLite, and Markdown stores for local or inspectable
 replay. Production PG/object-storage backends should live in the runtime or a
 separate adapter package.
 
+`ToolExecutionCenter` wraps any `ToolRuntimePort` with provider-neutral retry
+and audit semantics. `ToolRetryPolicy` decides whether retryable failed results
+or exceptions may be attempted again, and `ToolExecutionRecord` captures attempt
+status, retryability, final result, and summary metadata. `ReActExecutor`
+records this summary on tool results and `tool_finished` events. Runtime code
+still owns concrete tool implementations, side-effect safety, idempotency rules,
+and distributed retry scheduling.
+
 `MemoryPort` is the execution dependency for long-term recall, while
 `MemoryCenter` carries richer backend contracts through `MemoryStoreSpec`,
 `MemoryQuery`, `MemoryRoute`, and `MemorySearchPlan`. Query modes cover keyword,

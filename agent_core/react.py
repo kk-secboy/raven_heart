@@ -57,10 +57,12 @@ from agent_core.timeline import TimelineStore
 from agent_core.tools import (
     NullToolReplay,
     ToolInvocation,
+    ToolExecutionCenter,
     ToolRegistry,
     ToolReplayPort,
     ToolResult,
     ToolRuntimePort,
+    ToolRetryPolicy,
     tool_manifest_item,
 )
 
@@ -83,6 +85,7 @@ class ReActConfig:
     loop_guard: LoopGuardConfig = field(default_factory=LoopGuardConfig)
     structured_output: StructuredOutputSpec | None = None
     timeout_seconds: float | None = None
+    tool_retry_policy: ToolRetryPolicy = field(default_factory=ToolRetryPolicy)
 
 
 @dataclass(frozen=True)
@@ -907,9 +910,17 @@ class ReActExecutor:
             turn_id=turn_id,
             payload={"call_id": invocation.call_id, "tool_name": invocation.tool_name},
         )
-        result = await self.tool_runtime.invoke(invocation)
+        execution_runtime = self.tool_runtime
+        if not isinstance(execution_runtime, ToolExecutionCenter):
+            execution_runtime = ToolExecutionCenter(
+                execution_runtime,
+                retry_policy=self.config.tool_retry_policy,
+                metadata={"source": "react"},
+            )
+        result = await execution_runtime.invoke(invocation)
         if result.ok:
             await self.tool_replay.put(invocation, result)
+        execution = result.metadata.get("tool_execution")
         await self._emit(
             "tool_finished",
             run,
@@ -918,6 +929,7 @@ class ReActExecutor:
                 "call_id": result.call_id,
                 "tool_name": result.tool_name,
                 "status": result.status,
+                "execution": execution if isinstance(execution, dict) else None,
             },
         )
         return result

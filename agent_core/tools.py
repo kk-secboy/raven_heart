@@ -131,6 +131,207 @@ class ToolResult:
 
 
 @dataclass(frozen=True)
+class ToolRetryPolicy:
+    max_attempts: int = 1
+    retry_failed_statuses: tuple[str, ...] = ("failed",)
+    retry_on_exceptions: bool = True
+    metadata_retryable_key: str = "retryable"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_attempts", max(1, int(self.max_attempts)))
+
+    def allows_result_retry(self, result: ToolResult, *, attempt: int) -> bool:
+        if attempt >= self.max_attempts:
+            return False
+        if result.status not in self.retry_failed_statuses:
+            return False
+        return bool(result.metadata.get(self.metadata_retryable_key, False))
+
+    def allows_exception_retry(self, exc: Exception, *, attempt: int) -> bool:
+        if attempt >= self.max_attempts or not self.retry_on_exceptions:
+            return False
+        return bool(getattr(exc, self.metadata_retryable_key, False))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-retry-policy/v1",
+            "max_attempts": self.max_attempts,
+            "retry_failed_statuses": list(self.retry_failed_statuses),
+            "retry_on_exceptions": self.retry_on_exceptions,
+            "metadata_retryable_key": self.metadata_retryable_key,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ToolExecutionAttempt:
+    attempt: int
+    status: str
+    retryable: bool = False
+    error: str = ""
+    result: ToolResult | None = None
+    exception_type: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-execution-attempt/v1",
+            "attempt": self.attempt,
+            "status": self.status,
+            "retryable": self.retryable,
+            "error": self.error,
+            "exception_type": self.exception_type,
+            "result": self.result.manifest() if self.result is not None else None,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ToolExecutionRecord:
+    invocation: ToolInvocation
+    attempts: tuple[ToolExecutionAttempt, ...]
+    final_result: ToolResult
+    policy: ToolRetryPolicy = field(default_factory=ToolRetryPolicy)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def attempt_count(self) -> int:
+        return len(self.attempts)
+
+    @property
+    def retried(self) -> bool:
+        return self.attempt_count > 1
+
+    def summary_manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-execution-summary/v1",
+            "tool_name": self.invocation.tool_name,
+            "call_id": self.invocation.call_id,
+            "attempt_count": self.attempt_count,
+            "retried": self.retried,
+            "final_status": self.final_result.status,
+            "final_ok": self.final_result.ok,
+            "attempt_statuses": [attempt.status for attempt in self.attempts],
+            "retryable_attempts": [
+                attempt.attempt for attempt in self.attempts if attempt.retryable
+            ],
+        }
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-execution-record/v1",
+            "invocation": self.invocation.manifest(),
+            "attempt_count": self.attempt_count,
+            "retried": self.retried,
+            "attempts": [attempt.manifest() for attempt in self.attempts],
+            "final_result": self.final_result.manifest(),
+            "policy": self.policy.manifest(),
+            "metadata": dict(self.metadata),
+        }
+
+
+class ToolExecutionCenter:
+    """Retry and audit wrapper for any tool runtime."""
+
+    def __init__(
+        self,
+        runtime: ToolRuntimePort,
+        *,
+        retry_policy: ToolRetryPolicy | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.runtime = runtime
+        self.retry_policy = retry_policy or ToolRetryPolicy()
+        self.metadata = dict(metadata or {})
+        self.records: list[ToolExecutionRecord] = []
+
+    def specs(self) -> tuple[ToolSpec, ...]:
+        return self.runtime.specs()
+
+    async def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        attempts: list[ToolExecutionAttempt] = []
+        final_result: ToolResult | None = None
+        for attempt_number in range(1, self.retry_policy.max_attempts + 1):
+            try:
+                result = await self.runtime.invoke(invocation)
+            except Exception as exc:
+                retryable = self.retry_policy.allows_exception_retry(exc, attempt=attempt_number)
+                attempts.append(
+                    ToolExecutionAttempt(
+                        attempt=attempt_number,
+                        status="exception",
+                        retryable=retryable,
+                        error=str(exc),
+                        exception_type=type(exc).__name__,
+                    )
+                )
+                final_result = ToolResult(
+                    call_id=invocation.call_id,
+                    tool_name=invocation.tool_name,
+                    status="failed",
+                    error=str(exc),
+                    metadata={
+                        "exception_type": type(exc).__name__,
+                        "retryable": retryable,
+                    },
+                )
+                if retryable:
+                    continue
+                break
+            retryable = self.retry_policy.allows_result_retry(result, attempt=attempt_number)
+            attempts.append(
+                ToolExecutionAttempt(
+                    attempt=attempt_number,
+                    status=result.status,
+                    retryable=retryable,
+                    error=result.error,
+                    result=result,
+                )
+            )
+            final_result = result
+            if retryable:
+                continue
+            break
+        if final_result is None:
+            final_result = ToolResult(
+                call_id=invocation.call_id,
+                tool_name=invocation.tool_name,
+                status="failed",
+                error="tool execution produced no result",
+            )
+        record = ToolExecutionRecord(
+            invocation=invocation,
+            attempts=tuple(attempts),
+            final_result=final_result,
+            policy=self.retry_policy,
+            metadata=dict(self.metadata),
+        )
+        self.records.append(record)
+        return ToolResult(
+            call_id=final_result.call_id,
+            tool_name=final_result.tool_name,
+            status=final_result.status,
+            content=final_result.content,
+            data=dict(final_result.data),
+            error=final_result.error,
+            metadata={
+                **final_result.metadata,
+                "tool_execution": record.summary_manifest(),
+            },
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-execution-center/v1",
+            "retry_policy": self.retry_policy.manifest(),
+            "record_count": len(self.records),
+            "records": [record.manifest() for record in self.records],
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class ToolInventorySelection:
     visible_tools: tuple[ToolSpec, ...]
     omitted_count: int = 0

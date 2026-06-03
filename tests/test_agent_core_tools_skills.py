@@ -9,7 +9,30 @@ from agent_core.prompt import PromptAssembler, PromptBucketRole
 from agent_core.react import ReActConfig, ReActExecutor
 from agent_core.skills import SkillRegistry, SkillSpec
 from agent_core.testing import InMemoryHarness, MockLLMProvider
-from agent_core.tools import ToolInvocation, ToolRegistry, ToolResult, ToolSpec
+from agent_core.tools import (
+    ToolExecutionCenter,
+    ToolInvocation,
+    ToolRegistry,
+    ToolResult,
+    ToolRetryPolicy,
+    ToolSpec,
+)
+
+
+class _FlakyToolRuntime:
+    def __init__(self, results: tuple[ToolResult | Exception, ...]) -> None:
+        self.results = list(results)
+        self.invocations: list[ToolInvocation] = []
+
+    def specs(self) -> tuple[ToolSpec, ...]:
+        return (ToolSpec(name="flaky", description="Flaky tool"),)
+
+    async def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        self.invocations.append(invocation)
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 @pytest.mark.asyncio
@@ -44,6 +67,46 @@ async def test_tool_registry_registers_validates_and_invokes_tools() -> None:
     assert bad.status == "failed"
     assert "must be string" in bad.error
     assert "hello: Say hello" in registry.render_inventory()
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_center_retries_retryable_results_and_records_attempts() -> None:
+    first = ToolResult(
+        call_id="call-1",
+        tool_name="flaky",
+        status="failed",
+        error="temporary",
+        metadata={"retryable": True},
+    )
+    second = ToolResult(call_id="call-1", tool_name="flaky", content="ok")
+    runtime = _FlakyToolRuntime((first, second))
+    center = ToolExecutionCenter(runtime, retry_policy=ToolRetryPolicy(max_attempts=2))
+
+    result = await center.invoke(ToolInvocation(tool_name="flaky", call_id="call-1"))
+    manifest = center.manifest()
+
+    assert result.ok
+    assert result.content == "ok"
+    assert result.metadata["tool_execution"]["attempt_count"] == 2
+    assert result.metadata["tool_execution"]["retried"] is True
+    assert manifest["schema_version"] == "agent-core-tool-execution-center/v1"
+    assert manifest["records"][0]["attempts"][0]["retryable"] is True
+    assert manifest["records"][0]["attempts"][1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_center_converts_retryable_exceptions_to_final_results() -> None:
+    first = RuntimeError("network hiccup")
+    setattr(first, "retryable", True)
+    runtime = _FlakyToolRuntime((first,))
+    center = ToolExecutionCenter(runtime, retry_policy=ToolRetryPolicy(max_attempts=1))
+
+    result = await center.invoke(ToolInvocation(tool_name="flaky", call_id="call-1"))
+
+    assert result.status == "failed"
+    assert result.error == "network hiccup"
+    assert result.metadata["exception_type"] == "RuntimeError"
+    assert result.metadata["tool_execution"]["attempt_count"] == 1
 
 
 @pytest.mark.asyncio
