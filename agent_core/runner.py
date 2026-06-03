@@ -20,7 +20,15 @@ from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
 from agent_core.events import EventSinkPort
-from agent_core.harness import AgentHarness, CancelToken, InMemoryAgentJournal, ResumeToken
+from agent_core.errors import ResumeError
+from agent_core.harness import (
+    AgentHarness,
+    CancelToken,
+    InMemoryAgentJournal,
+    ResumeCandidate,
+    ResumeIndex,
+    ResumeToken,
+)
 from agent_core.loop_guard import LoopGuard
 from agent_core.memory import MemoryHit, MemoryPort, MemoryQuery, NullMemory
 from agent_core.mcp import MCPCenter
@@ -117,6 +125,31 @@ class AgentRunRequest:
     resume_token: ResumeToken | None = None
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
+
+
+@dataclass(frozen=True)
+class AgentResumeRequest:
+    task: str = ""
+    run_id: str = ""
+    include_terminal: bool = True
+    context: AgentContextPack | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    refresh: bool = False
+    approval_resume: ApprovalResumeContext | None = None
+    structured_output: StructuredOutputSpec | None = None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-resume-request/v1",
+            "task": self.task,
+            "run_id": self.run_id,
+            "include_terminal": self.include_terminal,
+            "metadata": dict(self.metadata),
+            "refresh": self.refresh,
+            "has_context": self.context is not None,
+            "has_approval_resume": self.approval_resume is not None,
+            "has_structured_output": self.structured_output is not None,
+        }
 
 
 @dataclass(frozen=True)
@@ -428,6 +461,18 @@ class AgentRunner:
             trace_manifest=trace_manifest,
         )
 
+    def resume_index(self, *, include_terminal: bool = True) -> ResumeIndex:
+        return _resume_index_for_harness(self.session.harness, include_terminal=include_terminal)
+
+    def resume_candidate(self, request: AgentResumeRequest | str | None = None) -> ResumeCandidate:
+        resume_request = _normalize_resume_request(request)
+        return _resume_candidate_for_request(self.session.harness, resume_request)
+
+    async def resume(self, request: AgentResumeRequest | str | None = None) -> AgentRunOutcome:
+        resume_request = _normalize_resume_request(request)
+        candidate = _resume_candidate_for_request(self.session.harness, resume_request)
+        return await self.run(_run_request_from_resume(candidate, resume_request))
+
     def _prompt_builder(self) -> AgentPromptBuilder:
         return AgentPromptBuilder(
             tools=self.session.tools,
@@ -703,6 +748,18 @@ class AgentSessionManager:
         run_key = self._new_run_key(session_name)
         return await self._run_once(run_key, session_name, self._normalize_request(request))
 
+    def resume_index(self, session_name: str, *, include_terminal: bool = True) -> ResumeIndex:
+        return _resume_index_for_harness(self.session(session_name).harness, include_terminal=include_terminal)
+
+    async def resume(
+        self,
+        session_name: str,
+        request: AgentResumeRequest | str | None = None,
+    ) -> AgentRunOutcome:
+        resume_request = _normalize_resume_request(request)
+        candidate = _resume_candidate_for_request(self.session(session_name).harness, resume_request)
+        return await self.run(session_name, _run_request_from_resume(candidate, resume_request))
+
     def start(self, session_name: str, request: AgentRunRequest | str) -> str:
         run_request = self._normalize_request(request)
         run_key = self._new_run_key(session_name)
@@ -717,6 +774,15 @@ class AgentSessionManager:
         task = asyncio.create_task(self._run_once(run_key, session_name, run_request, preclaimed=True))
         self._tasks[run_key] = task
         return run_key
+
+    def start_resume(
+        self,
+        session_name: str,
+        request: AgentResumeRequest | str | None = None,
+    ) -> str:
+        resume_request = _normalize_resume_request(request)
+        candidate = _resume_candidate_for_request(self.session(session_name).harness, resume_request)
+        return self.start(session_name, _run_request_from_resume(candidate, resume_request))
 
     def cancel(self, run_key: str, reason: str = "cancelled by manager") -> bool:
         run = self._runs.get(run_key)
@@ -891,6 +957,69 @@ def _approval_resume_manifest(resume: ApprovalResumeContext | None) -> dict[str,
     if resume is None or resume.empty:
         return {}
     return resume.manifest()
+
+
+def _normalize_resume_request(request: AgentResumeRequest | str | None) -> AgentResumeRequest:
+    if request is None:
+        return AgentResumeRequest()
+    if isinstance(request, AgentResumeRequest):
+        return request
+    return AgentResumeRequest(task=str(request))
+
+
+def _resume_index_for_harness(harness: AgentHarness, *, include_terminal: bool = True) -> ResumeIndex:
+    resume_index = getattr(harness, "resume_index", None)
+    if callable(resume_index):
+        value = resume_index(include_terminal=include_terminal)
+        if isinstance(value, ResumeIndex):
+            return value
+    snapshot = getattr(harness, "snapshot", None)
+    if callable(snapshot):
+        return ResumeIndex.from_snapshot(snapshot(), include_terminal=include_terminal)
+    raise ResumeError("harness does not expose resumable state")
+
+
+def _resume_candidate_for_request(
+    harness: AgentHarness,
+    request: AgentResumeRequest,
+) -> ResumeCandidate:
+    index = _resume_index_for_harness(harness, include_terminal=request.include_terminal)
+    candidate = index.for_run(request.run_id) if request.run_id else index.latest()
+    if candidate is None:
+        if request.run_id:
+            raise ResumeError(f"no resumable checkpoint for run: {request.run_id}")
+        raise ResumeError("no resumable checkpoint available")
+    if candidate.token is None:
+        raise ResumeError(f"resume candidate has no token: {candidate.run_id}")
+    return candidate
+
+
+def _run_request_from_resume(
+    candidate: ResumeCandidate,
+    request: AgentResumeRequest,
+) -> AgentRunRequest:
+    if candidate.token is None:
+        raise ResumeError(f"resume candidate has no token: {candidate.run_id}")
+    metadata = {
+        **request.metadata,
+        "resume": {
+            "source_run_id": candidate.run_id,
+            "checkpoint_id": candidate.checkpoint_id,
+            "checkpoint_sequence": candidate.checkpoint_sequence,
+            "terminal": candidate.terminal,
+            "auto_selected": not bool(request.run_id),
+        },
+    }
+    task = request.task or candidate.task
+    return AgentRunRequest(
+        task=task,
+        context=request.context,
+        metadata=metadata,
+        refresh=request.refresh,
+        resume_token=candidate.token,
+        approval_resume=request.approval_resume,
+        structured_output=request.structured_output,
+    )
 
 
 async def _component_manifest(component: Any) -> dict[str, Any]:

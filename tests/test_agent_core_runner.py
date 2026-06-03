@@ -16,6 +16,7 @@ from agent_core.reducer import DefaultContextReducer
 from agent_core.runner import (
     AgentManagerCapacityError,
     AgentManagerConcurrencyPolicy,
+    AgentResumeRequest,
     AgentRunner,
     AgentRunRequest,
     AgentSession,
@@ -247,6 +248,60 @@ async def test_agent_runner_injects_resume_checkpoint_context() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_runner_resume_selects_latest_checkpoint_candidate() -> None:
+    journal = InMemoryAgentJournal()
+    first_run = await journal.start_run("first task")
+    first_turn = await journal.start_turn(first_run, 0)
+    await journal.checkpoint(first_turn, {"step": "old"})
+    second_run = await journal.start_run("second task")
+    second_turn = await journal.start_turn(second_run, 0)
+    latest = await journal.checkpoint(second_turn, {"step": "latest"})
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "resumed"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="runner-resume"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        harness=journal,
+    )
+
+    runner = AgentRunner(session)
+    outcome = await runner.resume(AgentResumeRequest(task="continue latest", metadata={"request_id": "r1"}))
+
+    assert outcome.result.status == "completed"
+    assert outcome.resume_manifest["checkpoint_id"] == latest.checkpoint_id
+    assert outcome.resume_manifest["state"]["step"] == "latest"
+    assert outcome.prompt_manifest["metadata"]["request_id"] == "r1"
+    assert outcome.prompt_manifest["metadata"]["resume"]["checkpoint_id"] == latest.checkpoint_id
+    assert provider.requests[0].messages[0].content.count("== Resumed Checkpoint ==") == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_resume_can_target_specific_run() -> None:
+    journal = InMemoryAgentJournal()
+    first_run = await journal.start_run("first task")
+    first_turn = await journal.start_turn(first_run, 0)
+    first_checkpoint = await journal.checkpoint(first_turn, {"step": "first"})
+    second_run = await journal.start_run("second task")
+    second_turn = await journal.start_turn(second_run, 0)
+    await journal.checkpoint(second_turn, {"step": "second"})
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "targeted"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="targeted-resume"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        harness=journal,
+    )
+
+    outcome = await AgentRunner(session).resume(
+        AgentResumeRequest(run_id=first_run.run_id, task="continue first")
+    )
+
+    assert outcome.result.output == "targeted"
+    assert outcome.resume_manifest["checkpoint_id"] == first_checkpoint.checkpoint_id
+    assert outcome.resume_manifest["state"]["step"] == "first"
+
+
+@pytest.mark.asyncio
 async def test_agent_runner_passes_approval_resume_context_to_executor_and_prompt() -> None:
     registry = ToolRegistry()
 
@@ -453,6 +508,64 @@ async def test_agent_session_manager_runs_with_resume_token() -> None:
     assert outcome.resume_manifest["state"]["step"] == "halfway"
     assert run.status == "completed"
     assert run.result_run_id == outcome.result.run_id
+
+
+@pytest.mark.asyncio
+async def test_agent_session_manager_resumes_from_latest_checkpoint() -> None:
+    journal = InMemoryAgentJournal()
+    original_run = await journal.start_run("managed original")
+    original_turn = await journal.start_turn(original_run, 0)
+    checkpoint = await journal.checkpoint(original_turn, {"step": "manager"})
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "resumed"}}])
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="managed-auto-resume"),
+            provider=provider,
+            tools=MockToolRuntime(),
+            harness=journal,
+        )
+    )
+
+    outcome = await manager.resume("managed-auto-resume", "continue managed")
+    run = manager.runs()[0]
+
+    assert outcome.result.status == "completed"
+    assert outcome.resume_manifest["checkpoint_id"] == checkpoint.checkpoint_id
+    assert run.metadata["resume"]["checkpoint_id"] == checkpoint.checkpoint_id
+    assert run.metadata["resume"]["auto_selected"] is True
+
+
+@pytest.mark.asyncio
+async def test_agent_session_manager_start_resume_runs_in_background() -> None:
+    journal = InMemoryAgentJournal()
+    original_run = await journal.start_run("background original")
+    original_turn = await journal.start_turn(original_run, 0)
+    checkpoint = await journal.checkpoint(original_turn, {"step": "background"})
+    provider = _BlockingProvider()
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="background-resume"),
+            provider=provider,
+            tools=MockToolRuntime(),
+            harness=journal,
+        )
+    )
+
+    run_key = manager.start_resume(
+        "background-resume",
+        AgentResumeRequest(run_id=original_run.run_id, task="continue background"),
+    )
+    await asyncio.sleep(0)
+
+    assert manager.run_state(run_key).status == "running"
+    assert manager.run_state(run_key).metadata["resume"]["checkpoint_id"] == checkpoint.checkpoint_id
+    provider.release.set()
+    outcome = await manager.wait(run_key)
+
+    assert outcome.result.status == "completed"
+    assert outcome.resume_manifest["state"]["step"] == "background"
 
 
 @pytest.mark.asyncio

@@ -94,6 +94,8 @@ agent_core never imports runtime
 - Checkpoints and resume tokens.
 - `ResumeCandidate` and `ResumeIndex` for manifest-friendly resumable run discovery.
 - `AgentRunRequest.resume_token` for injecting checkpoint state into the next run.
+- `AgentRunner.resume()`, `AgentSessionManager.resume()`, and
+  `AgentSessionManager.start_resume()` for SDK-level resume entrypoints.
 - Run manifest and error recording.
 - Terminal status checks.
 - Policy terminal statuses: `denied` and `approval_required`.

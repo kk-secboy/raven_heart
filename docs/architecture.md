@@ -73,7 +73,9 @@ debugging, audit, or resume decisions.
 
 `ResumeCandidate` and `ResumeIndex` turn the latest checkpoint per run into a
 standard manifest with a `ResumeToken`, checkpoint state, terminal status, and
-run metadata. The SDK owns discovery and serialization of resumable state;
+run metadata. `AgentRunner.resume()` and `AgentSessionManager.resume()` convert
+those candidates into `AgentRunRequest` objects without runtime-side token
+assembly. The SDK owns discovery, serialization, and local resume entrypoints;
 runtime code owns worker selection, user-facing recovery flows, and distributed
 resume scheduling.
 

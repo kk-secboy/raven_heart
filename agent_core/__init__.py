@@ -181,6 +181,7 @@ from agent_core.reducer import (
 from agent_core.runner import (
     AgentManagerCapacityError,
     AgentManagerConcurrencyPolicy,
+    AgentResumeRequest,
     AgentRunner,
     AgentRunOutcome,
     AgentRunRequest,
@@ -281,6 +282,7 @@ __all__ = [
     "AgentManagerCapacityError",
     "AgentManagerConcurrencyPolicy",
     "AgentPromptBuilder",
+    "AgentResumeRequest",
     "AgentProfile",
     "AgentRunner",
     "AgentRunOutcome",

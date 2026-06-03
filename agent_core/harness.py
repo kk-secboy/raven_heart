@@ -194,9 +194,7 @@ class ResumeIndex:
                 continue
             candidates.append(ResumeCandidate.from_parts(run, checkpoint))
         return cls(
-            candidates=tuple(
-                sorted(candidates, key=lambda item: (item.checkpoint_created_at, item.run_id))
-            ),
+            candidates=tuple(candidates),
             include_terminal=include_terminal,
             metadata=dict(metadata or {}),
         )

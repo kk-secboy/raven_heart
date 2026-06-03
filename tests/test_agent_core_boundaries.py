@@ -51,6 +51,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentManagerCapacityError",
         "AgentManagerConcurrencyPolicy",
         "AgentPromptBuilder",
+        "AgentResumeRequest",
         "ApprovalCenter",
         "ApprovalDecisionRecord",
         "ApprovalGrant",
