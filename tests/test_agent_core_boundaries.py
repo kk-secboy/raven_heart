@@ -59,6 +59,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "ContextInjection",
         "ContextReducerPort",
         "DefaultContextReducer",
+        "DefaultTraceEvaluator",
         "ReActExecutor",
         "InMemoryPlanner",
         "JsonStructuredOutputValidator",
@@ -117,6 +118,14 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "UsageInfo",
         "ToolReplayRecord",
         "ToolReplayStorePort",
+        "TraceEvalHarness",
+        "TraceEvalIssue",
+        "TraceEvalReport",
+        "TraceEvalSpec",
+        "TraceEvaluatorPort",
+        "TraceReplayHarness",
+        "TraceReplayResult",
+        "TraceReplayStep",
         "apply_reduction_to_timeline",
     }
 

@@ -35,6 +35,17 @@ from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
 from agent_core.events import AgentEvent, EventSinkPort, ListEventSink, NullEventSink
+from agent_core.evals import (
+    DefaultTraceEvaluator,
+    TraceEvalHarness,
+    TraceEvalIssue,
+    TraceEvalReport,
+    TraceEvalSpec,
+    TraceEvaluatorPort,
+    TraceReplayHarness,
+    TraceReplayResult,
+    TraceReplayStep,
+)
 from agent_core.harness import (
     AgentHarness,
     AgentJournalSnapshot,
@@ -239,6 +250,7 @@ __all__ = [
     "MarkdownRunTraceStore",
     "NullRunTraceStore",
     "DefaultContextReducer",
+    "DefaultTraceEvaluator",
     "EventSinkPort",
     "ListEventSink",
     "NullEventSink",
@@ -357,6 +369,14 @@ __all__ = [
     "ToolReplayRecord",
     "ToolReplayPort",
     "ToolReplayStorePort",
+    "TraceEvalHarness",
+    "TraceEvalIssue",
+    "TraceEvalReport",
+    "TraceEvalSpec",
+    "TraceEvaluatorPort",
+    "TraceReplayHarness",
+    "TraceReplayResult",
+    "TraceReplayStep",
     "ToolRegistry",
     "ToolResult",
     "ToolRuntimeMount",

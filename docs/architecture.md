@@ -28,6 +28,7 @@ agent_core
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Run trace bundle | Durable trace export, observability pipeline, retention |
+| Trace replay/eval harness | Domain eval suites, dashboards, regression policy |
 | Manager run state and `AgentRunStorePort` | Product workflow DB, scheduling, distributed workers |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
 | Structured output specs and validation lifecycle | Domain schemas, typed business objects, persistence |
@@ -72,6 +73,13 @@ provider audit, tool replay, approvals, event log, resume, and timeline reductio
 manifests. The SDK owns the shape and summary counters. Runtime code owns where
 the bundle is stored, how long it is retained, and how it is queried for product
 observability or incident review.
+
+`TraceReplayHarness` and `TraceEvalHarness` turn run trace manifests into
+deterministic replay steps and provider-neutral evaluation reports. The core
+checks generic contracts such as final status, iteration limits, provider call
+limits, required events, required tools, cost ceilings, and journal integrity.
+Runtime code owns domain-specific eval datasets, scoring policy, dashboards, and
+release gates.
 
 `AgentRunStorePort` persists manager-level run state such as queued, running,
 cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,

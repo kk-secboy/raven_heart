@@ -29,6 +29,7 @@ ops agents, research agents, and future automation systems.
 - Journal replay manifests and snapshot consistency audit.
 - Run trace bundle for provider/tool/approval/journal/event audit aggregation.
 - Run trace store port plus in-memory, SQLite, and Markdown trace stores.
+- Trace replay and evaluation harness for provider-neutral run audits.
 - Manager run state store port plus in-memory, SQLite, and Markdown stores.
 - Sequenced event stream and event log manifests.
 - Planner protocol and lightweight in-memory plan state.
@@ -64,6 +65,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Skill registry | Skill distribution UX |
 | MCP center interfaces | MCP server deployment and secrets |
 | Memory and journal ports | Graphiti, RAG, durable product stores |
+| Trace replay/eval harness | Product-specific eval suites and dashboards |
 | Manager run state store | Product workflow DB, scheduling, cross-process workers |
 | Planner protocol and plan state | Domain-specific planning strategy and product workflow |
 | Context reducer protocol | Domain summarizers, archive storage, and retrieval strategy |
@@ -144,6 +146,20 @@ and downstream persistence.
   automatically after a run completes.
 - Runtime code can persist the bundle in PG, object storage, logs, or a workflow
   database without changing SDK execution semantics.
+
+### Replay And Eval
+
+- `TraceReplayHarness` builds a deterministic replay timeline from journal and
+  event-log trace manifests.
+- `TraceEvalSpec` defines provider-neutral expectations such as status,
+  iteration limits, provider call limits, required events, and required tools.
+- `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
+- `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
+- `TraceEvalReport` exports replay, summary counters, and contract failures.
+
+The SDK owns trace replay shape and generic run-level evaluation mechanics.
+Runtimes own domain-specific eval suites, product dashboards, scoring policy,
+and regression data retention.
 
 ### Human-In-Loop Approvals
 
