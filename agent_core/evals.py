@@ -99,6 +99,13 @@ class TraceEvalSpec:
     expected_resume_checkpoint_id: str = ""
     require_tool_execution: bool = False
     required_event_types: tuple[str, ...] = ()
+    require_event_log: bool = False
+    required_event_log_types: tuple[str, ...] = ()
+    forbidden_event_log_types: tuple[str, ...] = ()
+    require_terminal_event: bool = False
+    terminal_event_types: tuple[str, ...] = ("run_finished", "run_cancelled", "run_timeout")
+    require_event_sequence_monotonic: bool = False
+    max_duplicate_event_sequences: int | None = None
     required_tool_names: tuple[str, ...] = ()
     required_tool_execution_names: tuple[str, ...] = ()
     required_tool_execution_ok_names: tuple[str, ...] = ()
@@ -191,6 +198,13 @@ class TraceEvalSpec:
             "expected_resume_checkpoint_id": self.expected_resume_checkpoint_id,
             "require_tool_execution": self.require_tool_execution,
             "required_event_types": list(self.required_event_types),
+            "require_event_log": self.require_event_log,
+            "required_event_log_types": list(self.required_event_log_types),
+            "forbidden_event_log_types": list(self.forbidden_event_log_types),
+            "require_terminal_event": self.require_terminal_event,
+            "terminal_event_types": list(self.terminal_event_types),
+            "require_event_sequence_monotonic": self.require_event_sequence_monotonic,
+            "max_duplicate_event_sequences": self.max_duplicate_event_sequences,
             "required_tool_names": list(self.required_tool_names),
             "required_tool_execution_names": list(self.required_tool_execution_names),
             "required_tool_execution_ok_names": list(self.required_tool_execution_ok_names),
@@ -555,6 +569,15 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         prompt_trim_roles = _prompt_trim_roles(prompt_trim)
         prompt_trim_final_bytes = _prompt_trim_int(prompt_trim, "final_bytes")
         prompt_trim_original_bytes = _prompt_trim_int(prompt_trim, "original_bytes")
+        event_log_events = _event_log_events(trace)
+        event_log_types = _event_log_types(event_log_events)
+        terminal_event_types = set(spec.terminal_event_types)
+        terminal_events = tuple(
+            event for event in event_log_events if str(event.get("type") or "") in terminal_event_types
+        )
+        event_log_sequences = _event_log_sequences(event_log_events)
+        duplicate_event_sequence_count = _duplicate_event_sequence_count(event_log_sequences)
+        event_sequence_monotonic = _event_sequence_monotonic(event_log_sequences)
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -1230,6 +1253,65 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         f"forbidden event type present: {event_type}",
                     )
                 )
+        if spec.require_event_log and not event_log_events:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "event_log_missing",
+                    "event log trace is required",
+                )
+            )
+        for event_type in spec.required_event_log_types:
+            if event_type not in event_log_types:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_event_log_type",
+                        f"required event log type missing: {event_type}",
+                    )
+                )
+        for event_type in spec.forbidden_event_log_types:
+            if event_type in event_log_types:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_event_log_type",
+                        f"forbidden event log type present: {event_type}",
+                    )
+                )
+        if spec.require_terminal_event and not terminal_events:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "terminal_event_missing",
+                    "terminal event log entry is required",
+                    metadata={"terminal_event_types": list(spec.terminal_event_types)},
+                )
+            )
+        if spec.require_event_sequence_monotonic and not event_sequence_monotonic:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "event_sequence_not_monotonic",
+                    "event log sequence values are not strictly increasing",
+                    metadata={"sequences": list(event_log_sequences)},
+                )
+            )
+        if (
+            spec.max_duplicate_event_sequences is not None
+            and duplicate_event_sequence_count > spec.max_duplicate_event_sequences
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "duplicate_event_sequence_limit_exceeded",
+                    "duplicate event log sequence count exceeded limit",
+                    metadata={
+                        "actual": duplicate_event_sequence_count,
+                        "limit": spec.max_duplicate_event_sequences,
+                    },
+                )
+            )
         tool_names = _tool_names(trace)
         for tool_name in spec.required_tool_names:
             if tool_name not in tool_names:
@@ -1427,6 +1509,12 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "prompt_trim_roles": sorted(prompt_trim_roles),
                 "prompt_trim_original_bytes": prompt_trim_original_bytes,
                 "prompt_trim_final_bytes": prompt_trim_final_bytes,
+                "event_log_types": sorted(event_log_types),
+                "event_log_sequence_monotonic": event_sequence_monotonic,
+                "duplicate_event_sequence_count": duplicate_event_sequence_count,
+                "terminal_event_types": sorted(
+                    {str(event.get("type") or "") for event in terminal_events}
+                ),
             },
             metadata={"spec": spec.manifest()},
         )
@@ -1680,6 +1768,29 @@ def _event_log_events(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     if not isinstance(events, list):
         return ()
     return tuple(dict(item) for item in events if isinstance(item, dict))
+
+
+def _event_log_types(events: tuple[dict[str, Any], ...]) -> set[str]:
+    return {str(event.get("type") or "") for event in events if event.get("type")}
+
+
+def _event_log_sequences(events: tuple[dict[str, Any], ...]) -> tuple[int, ...]:
+    return tuple(
+        _safe_int(event.get("sequence"))
+        for event in events
+        if event.get("sequence") is not None
+    )
+
+
+def _duplicate_event_sequence_count(sequences: tuple[int, ...]) -> int:
+    counts = Counter(sequences)
+    return sum(count - 1 for count in counts.values() if count > 1)
+
+
+def _event_sequence_monotonic(sequences: tuple[int, ...]) -> bool:
+    if not sequences:
+        return True
+    return all(current > previous for previous, current in zip(sequences, sequences[1:]))
 
 
 def _payload(item: dict[str, Any]) -> dict[str, Any]:

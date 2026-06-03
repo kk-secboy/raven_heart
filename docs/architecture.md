@@ -131,12 +131,13 @@ cost ceilings, event ordering, journal integrity,
 resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, tool execution presence,
 tool retry, minimum tool attempt counts, required storage backend roles/kinds,
-forbidden backend kinds, external-backend limits, required context injection
-names/sources/targets/statuses, required included/trimmed/excluded injection
-sources, forbidden injection sources/statuses, trimmed/excluded injection
-limits, memory governance allow/rewrite/deny and risk ceilings, prompt bucket
-budget roles/statuses/over-budget ceilings, and global prompt trim roles/byte
-ceilings. Runtime code owns
+forbidden backend kinds, external-backend limits, event-log presence/types,
+terminal events, sequence monotonicity, duplicate sequence limits, required
+context injection names/sources/targets/statuses, required
+included/trimmed/excluded injection sources, forbidden injection sources/statuses,
+trimmed/excluded injection limits, memory governance allow/rewrite/deny and risk
+ceilings, prompt bucket budget roles/statuses/over-budget ceilings, and global
+prompt trim roles/byte ceilings. Runtime code owns
 domain-specific eval datasets, baseline selection, scoring policy, dashboards,
 and release gates.
 

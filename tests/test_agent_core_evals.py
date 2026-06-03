@@ -61,8 +61,18 @@ def _trace_manifest() -> dict[str, object]:
         "event_log": {
             "event_count": 2,
             "events": [
-                {"type": "tool_started", "run_id": "run-1", "payload": {"tool_name": "lookup"}},
-                {"type": "tool_finished", "run_id": "run-1", "payload": {"tool_name": "lookup"}},
+                {
+                    "sequence": 1,
+                    "type": "tool_started",
+                    "run_id": "run-1",
+                    "payload": {"tool_name": "lookup"},
+                },
+                {
+                    "sequence": 2,
+                    "type": "tool_finished",
+                    "run_id": "run-1",
+                    "payload": {"tool_name": "lookup"},
+                },
             ],
         },
         "provider": {
@@ -323,6 +333,81 @@ def test_default_trace_evaluator_reports_contract_failures() -> None:
         "missing_tool_name",
         "forbidden_event_type",
     } <= codes
+
+
+def test_trace_eval_validates_event_log_stream_contracts() -> None:
+    trace = _trace_manifest()
+    trace["summary"] = {**trace["summary"], "event_log_count": 4}
+    trace["event_log"] = {
+        "event_count": 4,
+        "events": [
+            {"sequence": 1, "type": "run_started", "run_id": "run-1"},
+            {"sequence": 2, "type": "model_stream", "run_id": "run-1"},
+            {"sequence": 3, "type": "tool_finished", "run_id": "run-1"},
+            {"sequence": 4, "type": "run_finished", "run_id": "run-1"},
+        ],
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_event_log=True,
+            required_event_log_types=("run_started", "run_finished"),
+            require_terminal_event=True,
+            require_event_sequence_monotonic=True,
+            max_duplicate_event_sequences=0,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["event_log_types"] == [
+        "model_stream",
+        "run_finished",
+        "run_started",
+        "tool_finished",
+    ]
+    assert report.summary["event_log_sequence_monotonic"] is True
+    assert report.summary["duplicate_event_sequence_count"] == 0
+    assert report.summary["terminal_event_types"] == ["run_finished"]
+    assert report.metadata["spec"]["require_event_log"] is True
+
+
+def test_trace_eval_reports_event_log_stream_contract_failures() -> None:
+    trace = _trace_manifest()
+    trace["event_log"] = {
+        "event_count": 3,
+        "events": [
+            {"sequence": 2, "type": "tool_finished", "run_id": "run-1"},
+            {"sequence": 2, "type": "model_stream", "run_id": "run-1"},
+            {"sequence": 1, "type": "run_started", "run_id": "run-1"},
+        ],
+    }
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_event_log_types=("approval_requested",),
+            forbidden_event_log_types=("tool_finished",),
+            require_terminal_event=True,
+            terminal_event_types=("run_timeout",),
+            require_event_sequence_monotonic=True,
+            max_duplicate_event_sequences=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "event_log"},
+        TraceEvalSpec(require_event_log=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_event_log_type",
+        "forbidden_event_log_type",
+        "terminal_event_missing",
+        "event_sequence_not_monotonic",
+        "duplicate_event_sequence_limit_exceeded",
+    } <= codes
+    assert missing.issues[0].code == "event_log_missing"
 
 
 def test_trace_eval_reports_provider_capability_contract_failures() -> None:
