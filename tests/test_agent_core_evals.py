@@ -575,6 +575,102 @@ def test_trace_eval_validates_provider_native_tool_call_contracts() -> None:
     }
 
 
+def test_trace_eval_validates_provider_route_plan_contracts() -> None:
+    trace = _trace_manifest()
+    trace["provider"]["calls"][0]["metadata"]["route_plan"] = {
+        "schema_version": "agent-core-llm-provider-route-plan/v1",
+        "requested_provider": "",
+        "requested_model": "",
+        "streamed": False,
+        "fallback_enabled": True,
+        "ready": True,
+        "selected_route": {
+            "schema_version": "agent-core-llm-provider-route/v1",
+            "provider_name": "strong",
+            "model": "strong-pro",
+            "metadata": {},
+        },
+        "candidates": [
+            {
+                "schema_version": "agent-core-llm-provider-route-candidate/v1",
+                "provider_name": "small",
+                "model": "small-mini",
+                "priority": 10,
+                "selected": False,
+                "fallback_candidate": False,
+                "supported": False,
+                "reason": "unsupported_capabilities",
+                "metadata": {},
+            },
+            {
+                "schema_version": "agent-core-llm-provider-route-candidate/v1",
+                "provider_name": "strong",
+                "model": "strong-pro",
+                "priority": 1,
+                "selected": True,
+                "fallback_candidate": False,
+                "supported": True,
+                "reason": "selected",
+                "metadata": {},
+            },
+        ],
+        "metadata": {},
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_provider_route_plan=True,
+            required_provider_route_candidate_names=("small", "strong"),
+            required_provider_route_selected_names=("strong",),
+            forbidden_provider_route_reasons=("provider_not_registered",),
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["provider_route_plan_count"] == 1
+    assert report.summary["provider_route_candidate_names"] == ["small", "strong"]
+    assert report.summary["provider_route_selected_names"] == ["strong"]
+    assert report.summary["provider_route_reasons"] == [
+        "selected",
+        "unsupported_capabilities",
+    ]
+
+
+def test_trace_eval_reports_provider_route_plan_contract_failures() -> None:
+    missing = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(require_provider_route_plan=True),
+    )
+    trace = _trace_manifest()
+    trace["provider"]["calls"][0]["metadata"]["route_plan"] = {
+        "schema_version": "agent-core-llm-provider-route-plan/v1",
+        "ready": False,
+        "candidates": [
+            {
+                "provider_name": "small",
+                "selected": False,
+                "reason": "unsupported_capabilities",
+            }
+        ],
+    }
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_provider_route_candidate_names=("strong",),
+            required_provider_route_selected_names=("strong",),
+            forbidden_provider_route_reasons=("unsupported_capabilities",),
+        ),
+    )
+
+    assert missing.issues[0].code == "provider_route_plan_missing"
+    assert {
+        "missing_provider_route_candidate",
+        "missing_provider_route_selected",
+        "forbidden_provider_route_reason",
+    } <= {issue.code for issue in report.issues}
+
+
 def test_trace_replay_harness_includes_provider_stream_steps() -> None:
     trace = {
         **_trace_manifest(),

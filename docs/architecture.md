@@ -205,6 +205,12 @@ estimated token/output size. Routed call manifests retain the selected
 capability profile, and trace evals can require specific provider names, model
 names, or capabilities such as `structured_output`, `json_mode`, `tool_calls`,
 and `streaming`.
+`LLMProviderRoutePlan` is the preflight form of the same decision. It lists each
+candidate provider, selected route, fallback candidates, capability/model
+rejection reasons, requested provider/model, and streamed mode without invoking
+a model. Provider call records attach the route plan manifest so traces can
+explain why a runtime chose or skipped a provider while concrete credentials,
+tenant routing, and vendor clients stay outside the SDK.
 `LLMToolContract`, `LLMToolChoice`, and `LLMResponseFormat` are request-level
 contracts for native model tools and constrained output. They deliberately stop
 at the provider-neutral shape: OpenAI-compatible tools/response formats,

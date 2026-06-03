@@ -835,6 +835,59 @@ class LLMProviderRoute:
 
 
 @dataclass(frozen=True)
+class LLMProviderRouteCandidate:
+    provider_name: str
+    model: str = ""
+    priority: int = 0
+    selected: bool = False
+    fallback_candidate: bool = False
+    supported: bool = False
+    reason: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-provider-route-candidate/v1",
+            "provider_name": self.provider_name,
+            "model": self.model,
+            "priority": self.priority,
+            "selected": self.selected,
+            "fallback_candidate": self.fallback_candidate,
+            "supported": self.supported,
+            "reason": self.reason,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class LLMProviderRoutePlan:
+    requested_provider: str = ""
+    requested_model: str = ""
+    streamed: bool = False
+    fallback_enabled: bool = True
+    selected_route: LLMProviderRoute | None = None
+    candidates: tuple[LLMProviderRouteCandidate, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ready(self) -> bool:
+        return self.selected_route is not None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-provider-route-plan/v1",
+            "requested_provider": self.requested_provider,
+            "requested_model": self.requested_model,
+            "streamed": self.streamed,
+            "fallback_enabled": self.fallback_enabled,
+            "ready": self.ready,
+            "selected_route": self.selected_route.manifest() if self.selected_route else None,
+            "candidates": [candidate.manifest() for candidate in self.candidates],
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class LLMCallRecord:
     provider_name: str
     model: str
@@ -980,23 +1033,103 @@ class LLMProviderCenter(LLMProviderPort):
             "providers": [spec.manifest() for spec in self.specs()],
         }
 
-    def select(self, request: LLMRequest) -> LLMProviderRoute:
-        entry = self._select_entry(request)
-        model = request.model or entry.spec.default_model or self.default_model
-        capabilities = entry.spec.capabilities_for(model)
-        return LLMProviderRoute(
-            provider_name=entry.spec.name,
-            model=model,
+    def route_plan(
+        self,
+        request: LLMRequest,
+        *,
+        streamed: bool = False,
+    ) -> LLMProviderRoutePlan:
+        """Return an auditable provider route decision without calling a model."""
+
+        requested_provider = str(request.metadata.get("provider") or "")
+        requested_model = request.model
+        selected_name = self._selected_provider_name(request, streamed=streamed)
+        selected_route: LLMProviderRoute | None = None
+        candidates: list[LLMProviderRouteCandidate] = []
+
+        if requested_provider and requested_provider not in self._providers:
+            candidates.append(
+                LLMProviderRouteCandidate(
+                    provider_name=requested_provider,
+                    model=requested_model,
+                    supported=False,
+                    reason="provider_not_registered",
+                )
+            )
+
+        for entry in self._ordered_entries():
+            model = self._model_for_entry(request, entry)
+            supports_model = entry.spec.supports(model)
+            capabilities = entry.spec.capabilities_for(model)
+            supports_capabilities = (
+                capabilities.supports_request(request, streamed=streamed)
+                if supports_model and capabilities is not None
+                else supports_model
+            )
+            supported = supports_model and supports_capabilities
+            selected = bool(selected_name and entry.spec.name == selected_name)
+            fallback_candidate = (
+                supported
+                and not selected
+                and not requested_provider
+                and self.fallback_enabled
+            )
+            reason = self._route_candidate_reason(
+                entry,
+                requested_provider=requested_provider,
+                supports_model=supports_model,
+                supports_capabilities=supports_capabilities,
+                selected=selected,
+                fallback_candidate=fallback_candidate,
+            )
+            candidate = LLMProviderRouteCandidate(
+                provider_name=entry.spec.name,
+                model=model,
+                priority=entry.spec.priority,
+                selected=selected,
+                fallback_candidate=fallback_candidate,
+                supported=supported,
+                reason=reason,
+                metadata={
+                    "model_capabilities": capabilities.manifest() if capabilities else None,
+                    **entry.spec.metadata,
+                },
+            )
+            candidates.append(candidate)
+            if selected:
+                selected_route = LLMProviderRoute(
+                    provider_name=entry.spec.name,
+                    model=model,
+                    metadata={
+                        "provider_priority": entry.spec.priority,
+                        "model_capabilities": capabilities.manifest() if capabilities else None,
+                        **entry.spec.metadata,
+                    },
+                )
+
+        return LLMProviderRoutePlan(
+            requested_provider=requested_provider,
+            requested_model=requested_model,
+            streamed=streamed,
+            fallback_enabled=self.fallback_enabled,
+            selected_route=selected_route,
+            candidates=tuple(candidates),
             metadata={
-                "provider_priority": entry.spec.priority,
-                "model_capabilities": capabilities.manifest() if capabilities else None,
-                **entry.spec.metadata,
+                "default_provider": self.default_provider,
+                "default_model": self.default_model,
             },
         )
+
+    def select(self, request: LLMRequest) -> LLMProviderRoute:
+        plan = self.route_plan(request)
+        if plan.selected_route is None:
+            raise LLMProviderNotFoundError(request.model or "<default>")
+        return plan.selected_route
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         self._check_estimated_usage(request)
         last_error: Exception | None = None
+        route_plan = self.route_plan(request)
         for entry in self._candidate_entries(request):
             routed = self._route_request(request, entry)
             attempts = self.max_retries + 1
@@ -1012,6 +1145,7 @@ class LLMProviderCenter(LLMProviderPort):
                         status="completed",
                         usage=response.usage,
                         metadata={
+                            "route_plan": route_plan.manifest(),
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
                             "response": response.manifest(),
@@ -1036,6 +1170,7 @@ class LLMProviderCenter(LLMProviderPort):
                         attempt + 1,
                         exc,
                         metadata={
+                            "route_plan": route_plan.manifest(),
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
                         },
@@ -1049,6 +1184,7 @@ class LLMProviderCenter(LLMProviderPort):
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
         self._check_estimated_usage(request)
         last_error: Exception | None = None
+        route_plan = self.route_plan(request, streamed=True)
         for entry in self._candidate_entries(request, streamed=True):
             routed = self._route_request(request, entry)
             attempts = self.max_retries + 1
@@ -1069,6 +1205,7 @@ class LLMProviderCenter(LLMProviderPort):
                         streamed=True,
                         usage=usage,
                         metadata={
+                            "route_plan": route_plan.manifest(),
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
                             "stream_summary": stream_summary,
@@ -1088,6 +1225,7 @@ class LLMProviderCenter(LLMProviderPort):
                         exc,
                         streamed=True,
                         metadata={
+                            "route_plan": route_plan.manifest(),
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
                         },
@@ -1130,6 +1268,57 @@ class LLMProviderCenter(LLMProviderPort):
             accumulator.add(routed_event)
             events.append(routed_event)
         return tuple(events), accumulator.usage, accumulator.summary_manifest()
+
+    def _selected_provider_name(self, request: LLMRequest, *, streamed: bool = False) -> str:
+        requested_provider = str(request.metadata.get("provider") or "")
+        if requested_provider:
+            entry = self._providers.get(requested_provider)
+            if entry is None:
+                return ""
+            model = self._model_for_entry(request, entry)
+            if entry.spec.supports_route(model, request, streamed=streamed):
+                return entry.spec.name
+            return ""
+
+        if self.default_provider:
+            entry = self._providers.get(self.default_provider)
+            if entry and entry.spec.supports_route(
+                self._model_for_entry(request, entry),
+                request,
+                streamed=streamed,
+            ):
+                return entry.spec.name
+
+        for entry in self._ordered_entries():
+            if entry.spec.supports_route(
+                self._model_for_entry(request, entry),
+                request,
+                streamed=streamed,
+            ):
+                return entry.spec.name
+        return ""
+
+    @staticmethod
+    def _route_candidate_reason(
+        entry: _ProviderEntry,
+        *,
+        requested_provider: str,
+        supports_model: bool,
+        supports_capabilities: bool,
+        selected: bool,
+        fallback_candidate: bool,
+    ) -> str:
+        if requested_provider and entry.spec.name != requested_provider:
+            return "provider_not_requested"
+        if not supports_model:
+            return "unsupported_model"
+        if not supports_capabilities:
+            return "unsupported_capabilities"
+        if selected:
+            return "selected"
+        if fallback_candidate:
+            return "fallback_candidate"
+        return "eligible_not_selected"
 
     def _select_entry(self, request: LLMRequest, *, streamed: bool = False) -> _ProviderEntry:
         requested_provider = str(request.metadata.get("provider") or "")

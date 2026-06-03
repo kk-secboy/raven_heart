@@ -88,6 +88,10 @@ class TraceEvalSpec:
     require_provider_tool_calls: bool = False
     required_provider_tool_call_names: tuple[str, ...] = ()
     max_provider_tool_calls: int | None = None
+    require_provider_route_plan: bool = False
+    required_provider_route_candidate_names: tuple[str, ...] = ()
+    required_provider_route_selected_names: tuple[str, ...] = ()
+    forbidden_provider_route_reasons: tuple[str, ...] = ()
     required_embedding_provider_names: tuple[str, ...] = ()
     required_embedding_models: tuple[str, ...] = ()
     required_embedding_dimensions: tuple[int, ...] = ()
@@ -187,6 +191,14 @@ class TraceEvalSpec:
             "require_provider_tool_calls": self.require_provider_tool_calls,
             "required_provider_tool_call_names": list(self.required_provider_tool_call_names),
             "max_provider_tool_calls": self.max_provider_tool_calls,
+            "require_provider_route_plan": self.require_provider_route_plan,
+            "required_provider_route_candidate_names": list(
+                self.required_provider_route_candidate_names
+            ),
+            "required_provider_route_selected_names": list(
+                self.required_provider_route_selected_names
+            ),
+            "forbidden_provider_route_reasons": list(self.forbidden_provider_route_reasons),
             "required_embedding_provider_names": list(self.required_embedding_provider_names),
             "required_embedding_models": list(self.required_embedding_models),
             "required_embedding_dimensions": list(self.required_embedding_dimensions),
@@ -497,6 +509,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         )
         provider_tool_calls = _provider_tool_calls(provider_call_records, provider_stream_summaries)
         provider_tool_call_names = _provider_tool_call_names(provider_tool_calls)
+        provider_route_plans = _provider_route_plans(provider_call_records)
+        provider_route_candidates = _provider_route_candidates(provider_route_plans)
+        provider_route_candidate_names = _provider_route_candidate_names(provider_route_candidates)
+        provider_route_selected_names = _provider_route_selected_names(provider_route_candidates)
+        provider_route_reasons = _provider_route_reasons(provider_route_candidates)
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
         storage_backends = _storage_backends(trace)
@@ -776,6 +793,41 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_provider_route_plan and not provider_route_plans:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_route_plan_missing",
+                    "provider route plan trace is required",
+                )
+            )
+        for provider_name in spec.required_provider_route_candidate_names:
+            if provider_name not in provider_route_candidate_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_route_candidate",
+                        f"required provider route candidate missing: {provider_name}",
+                    )
+                )
+        for provider_name in spec.required_provider_route_selected_names:
+            if provider_name not in provider_route_selected_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_route_selected",
+                        f"required selected provider route missing: {provider_name}",
+                    )
+                )
+        for reason in spec.forbidden_provider_route_reasons:
+            if reason in provider_route_reasons:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_provider_route_reason",
+                        f"forbidden provider route reason present: {reason}",
+                    )
+                )
         if spec.require_journal_ok and summary.get("journal_ok") is False:
             issues.append(TraceEvalIssue("error", "journal_not_ok", "journal replay reported issues"))
         if spec.require_resume and not resume:
@@ -1453,6 +1505,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "provider_stream_error_count": provider_stream_error_count,
                 "provider_tool_call_count": len(provider_tool_calls),
                 "provider_tool_call_names": sorted(provider_tool_call_names),
+                "provider_route_plan_count": len(provider_route_plans),
+                "provider_route_candidate_names": sorted(provider_route_candidate_names),
+                "provider_route_selected_names": sorted(provider_route_selected_names),
+                "provider_route_reasons": sorted(provider_route_reasons),
                 "cost_usd": cost,
                 "event_types": sorted(event_types),
                 "tool_names": sorted(tool_names),
@@ -2048,6 +2104,43 @@ def _tool_call_manifests(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]
 
 def _provider_tool_call_names(tool_calls: tuple[dict[str, Any], ...]) -> set[str]:
     return {str(item.get("tool_name") or "") for item in tool_calls if item.get("tool_name")}
+
+
+def _provider_route_plans(calls: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    plans: list[dict[str, Any]] = []
+    for call in calls:
+        metadata = call.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        plan = metadata.get("route_plan")
+        if isinstance(plan, dict):
+            plans.append(dict(plan))
+    return tuple(plans)
+
+
+def _provider_route_candidates(plans: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    candidates: list[dict[str, Any]] = []
+    for plan in plans:
+        raw = plan.get("candidates")
+        if isinstance(raw, (list, tuple)):
+            candidates.extend(dict(item) for item in raw if isinstance(item, dict))
+    return tuple(candidates)
+
+
+def _provider_route_candidate_names(candidates: tuple[dict[str, Any], ...]) -> set[str]:
+    return {str(item.get("provider_name") or "") for item in candidates if item.get("provider_name")}
+
+
+def _provider_route_selected_names(candidates: tuple[dict[str, Any], ...]) -> set[str]:
+    return {
+        str(item.get("provider_name") or "")
+        for item in candidates
+        if item.get("selected") is True and item.get("provider_name")
+    }
+
+
+def _provider_route_reasons(candidates: tuple[dict[str, Any], ...]) -> set[str]:
+    return {str(item.get("reason") or "") for item in candidates if item.get("reason")}
 
 
 def _provider_cost(provider: dict[str, Any]) -> float:

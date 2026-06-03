@@ -335,10 +335,13 @@ ranking contract used by lightweight core stores.
 - Usage/failure accounting.
 - Budget checks.
 - Request, response, stream event, route, and call record manifests.
+- `LLMProviderRoutePlan` for preflight route explanations before any provider
+  call, including selected provider, unsupported candidates, and fallback
+  candidates.
 - `LLMStreamAccumulator` for reconstructing a stream into an `LLMResponse`
   plus prompt-safe stream summaries.
 - Provider call audit records for completed and failed attempts, including the
-  routed request manifest and original request manifest.
+  routed request manifest, original request manifest, and route plan manifest.
 - Stream error events are treated as failed attempts for retry/fallback audit.
 - Streaming attempts are budget-checked before events are emitted by the center,
   and completed streamed calls record a standard stream summary.
@@ -366,6 +369,10 @@ The routed request manifest records the selected provider, model priority, and
 model capabilities so trace/eval contracts can later prove which model ability
 was actually used for structured output, JSON mode, tool calls, streaming, or
 modalities.
+The route plan manifest records the full provider preflight decision, so a
+runtime can explain why a cheap/default model was skipped, which provider was
+selected, and which compatible providers remain available for fallback without
+calling any concrete model client.
 
 ### Tools
 
@@ -615,6 +622,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider center | MVP implemented |
 | Provider call audit | MVP implemented |
 | Provider transport contract | MVP implemented |
+| Provider route plan/preflight audit | MVP implemented |
 | Provider model capabilities | MVP implemented |
 | Provider tool/response-format contracts | MVP implemented |
 | Provider-native tool-call loop | opt-in MVP implemented |

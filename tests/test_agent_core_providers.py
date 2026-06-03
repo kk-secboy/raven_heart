@@ -163,6 +163,70 @@ async def test_provider_center_routes_by_default_provider_and_model() -> None:
     assert strong.requests[0].metadata["provider"] == "strong"
 
 
+def test_provider_center_builds_preflight_route_plan_without_calling_provider() -> None:
+    small = MockLLMProvider(["small"])
+    vision = MockLLMProvider(["vision"])
+    center = LLMProviderCenter(default_provider="small", fallback_enabled=True)
+    center.register(
+        "small",
+        small,
+        default_model="small-mini",
+        priority=10,
+        default_capabilities=LLMModelCapabilities(modalities=("text",)),
+    )
+    center.register(
+        "vision",
+        vision,
+        default_model="vision-pro",
+        priority=1,
+        default_capabilities=LLMModelCapabilities(
+            supports_streaming=True,
+            modalities=("text", "image"),
+        ),
+    )
+
+    plan = center.route_plan(
+        LLMRequest(
+            messages=[
+                LLMMessage(
+                    role="user",
+                    content="inspect",
+                    content_parts=(LLMContentPart(kind="image", uri="file://finding.png"),),
+                )
+            ],
+        ),
+        streamed=True,
+    )
+    manifest = plan.manifest()
+
+    assert plan.ready
+    assert plan.selected_route is not None
+    assert plan.selected_route.provider_name == "vision"
+    assert [candidate.provider_name for candidate in plan.candidates] == ["small", "vision"]
+    assert {candidate.provider_name: candidate.reason for candidate in plan.candidates} == {
+        "small": "unsupported_capabilities",
+        "vision": "selected",
+    }
+    assert not small.requests
+    assert not vision.requests
+    assert manifest["schema_version"] == "agent-core-llm-provider-route-plan/v1"
+    assert manifest["candidates"][0]["metadata"]["model_capabilities"]["modalities"] == ["text"]
+
+
+def test_provider_center_route_plan_explains_missing_explicit_provider() -> None:
+    center = LLMProviderCenter(default_provider="mock")
+    center.register("mock", MockLLMProvider([]), default_model="mock-mini")
+
+    plan = center.route_plan(LLMRequest(messages=[], metadata={"provider": "missing"}))
+
+    assert not plan.ready
+    assert plan.selected_route is None
+    assert plan.candidates[0].provider_name == "missing"
+    assert plan.candidates[0].reason == "provider_not_registered"
+    assert plan.candidates[1].provider_name == "mock"
+    assert plan.candidates[1].reason == "provider_not_requested"
+
+
 @pytest.mark.asyncio
 async def test_provider_center_honors_explicit_provider_metadata() -> None:
     fast = MockLLMProvider(["fast"])
@@ -409,6 +473,14 @@ async def test_provider_center_routes_by_declared_model_capabilities() -> None:
     assert center.calls[0].metadata["request"]["metadata"]["model_capabilities"][
         "supports_structured_output"
     ] is True
+    assert center.calls[0].metadata["route_plan"]["selected_route"]["provider_name"] == "strong"
+    assert {
+        candidate["provider_name"]: candidate["reason"]
+        for candidate in center.calls[0].metadata["route_plan"]["candidates"]
+    } == {
+        "small": "unsupported_capabilities",
+        "strong": "selected",
+    }
     assert center.calls[0].metadata["original_request"]["metadata"]["requires_structured_output"] is True
     assert route.provider_name == "strong"
     assert route.metadata["model_capabilities"]["supports_json_mode"] is True
