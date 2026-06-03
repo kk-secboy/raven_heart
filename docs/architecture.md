@@ -30,6 +30,7 @@ agent_core
 | Run trace bundle | Durable trace export, observability pipeline, retention |
 | Trace replay/eval harness | Domain eval suites, dashboards, regression policy |
 | Manager run state and `AgentRunStorePort` | Product workflow DB, scheduling, distributed workers |
+| Multi-agent handoff protocol | Product queues, distributed workers, business orchestration |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
 | Structured output specs and validation lifecycle | Domain schemas, typed business objects, persistence |
 | Context reducer protocol and reduction manifests | Domain summarizers, archive stores, retrieval policy |
@@ -86,6 +87,13 @@ cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,
 and Markdown stores so lightweight managers can restart and inspect state without
 runtime infrastructure. Production schedulers, distributed workers, PG-backed
 workflow state, and tenant isolation remain runtime or adapter responsibilities.
+
+`HandoffSpec`, `HandoffRequest`, `HandoffRouter`, and `MultiAgentCoordinator`
+provide a provider-neutral multi-agent handoff contract. The core can advertise
+session capabilities, select targets by tags/tools/skills/priority, run the
+selected session through `AgentSessionManager`, and record handoff manifests.
+Runtime code owns product queues, cross-process scheduling, retries, UI
+orchestration, and domain delegation strategy.
 
 `RunTraceStorePort` gives the bundle a persistence boundary. The SDK ships
 in-memory, SQLite, and Markdown stores for lightweight use, while production

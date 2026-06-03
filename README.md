@@ -33,6 +33,7 @@ ops agents, research agents, and future automation systems.
 - Manager run state store port plus in-memory, SQLite, and Markdown stores.
 - Sequenced event stream and event log manifests.
 - Planner protocol and lightweight in-memory plan state.
+- Multi-agent handoff specs, routing decisions, and lightweight coordination.
 - Human-in-loop approval request and decision queue primitives.
 - Approval resume context for approved action/tool gate continuation.
 - Policy gates, budget metadata, loop guards, and capability manifests.
@@ -68,6 +69,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Trace replay/eval harness | Product-specific eval suites and dashboards |
 | Manager run state store | Product workflow DB, scheduling, cross-process workers |
 | Planner protocol and plan state | Domain-specific planning strategy and product workflow |
+| Multi-agent handoff protocol | Product queues, distributed workers, business orchestration |
 | Context reducer protocol | Domain summarizers, archive storage, and retrieval strategy |
 | Structured output contracts | Domain schemas and downstream business handling |
 | Approval request and decision queue | Approval UI, identity, permissions, and workflow routing |
@@ -112,6 +114,20 @@ agent_core never imports runtime
 - Prompt timeline.
 - Memory injection.
 - Artifact compaction.
+
+### Multi-Agent Handoff
+
+- `HandoffSpec` advertises a session's handoff capabilities.
+- `HandoffRequest` captures task, source, target, and required capabilities.
+- `HandoffRouter` selects a target session deterministically by tags, tools,
+  skills, priority, and explicit target.
+- `MultiAgentCoordinator` runs the selected `AgentSessionManager` session and
+  records a `HandoffRecord`.
+- `handoff_spec_from_session()` builds a handoff spec from an `AgentSession`.
+
+The SDK owns handoff contracts, routing decisions, and manifests. Runtimes own
+workflow queues, distributed workers, UI orchestration, retry policy, and
+domain-specific delegation strategy.
 
 ### Structured Output
 

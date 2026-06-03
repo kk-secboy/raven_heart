@@ -60,6 +60,12 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "ContextReducerPort",
         "DefaultContextReducer",
         "DefaultTraceEvaluator",
+        "HandoffDecision",
+        "HandoffRecord",
+        "HandoffRequest",
+        "HandoffRouter",
+        "HandoffRouterPort",
+        "HandoffSpec",
         "ReActExecutor",
         "InMemoryPlanner",
         "JsonStructuredOutputValidator",
@@ -86,6 +92,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "MCPCenter",
         "MCPStdioJSONRPCConnector",
         "MemoryCenter",
+        "MultiAgentCoordinator",
         "AgentJournalStorePort",
         "InMemoryJournalStore",
         "MarkdownJournalStore",
@@ -127,6 +134,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "TraceReplayResult",
         "TraceReplayStep",
         "apply_reduction_to_timeline",
+        "handoff_spec_from_session",
     }
 
     assert expected <= set(agent_core.__all__)
