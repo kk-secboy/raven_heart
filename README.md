@@ -29,6 +29,7 @@ ops agents, research agents, and future automation systems.
 - Journal replay manifests and snapshot consistency audit.
 - Run trace bundle for provider/tool/approval/journal/event audit aggregation.
 - Run trace store port plus in-memory, SQLite, and Markdown trace stores.
+- Manager run state store port plus in-memory, SQLite, and Markdown stores.
 - Sequenced event stream and event log manifests.
 - Planner protocol and lightweight in-memory plan state.
 - Human-in-loop approval request and decision queue primitives.
@@ -63,6 +64,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Skill registry | Skill distribution UX |
 | MCP center interfaces | MCP server deployment and secrets |
 | Memory and journal ports | Graphiti, RAG, durable product stores |
+| Manager run state store | Product workflow DB, scheduling, cross-process workers |
 | Planner protocol and plan state | Domain-specific planning strategy and product workflow |
 | Context reducer protocol | Domain summarizers, archive storage, and retrieval strategy |
 | Structured output contracts | Domain schemas and downstream business handling |
@@ -93,6 +95,9 @@ agent_core never imports runtime
 - `AgentJournalReplay` for replayable event timelines and journal consistency audit.
 - `AgentRunTraceBundle` for per-run prompt, provider, approval, replay,
   journal, and event manifests.
+- `AgentRunStorePort` for manager-level queued/running/completed state.
+- `InMemoryAgentRunStore`, `SQLiteAgentRunStore`, and `MarkdownAgentRunStore`
+  for lightweight run state persistence.
 
 ### ReAct
 
@@ -239,6 +244,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, workflow replay DB |
 | Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, observability pipeline |
+| Manager runs | `AgentRunStorePort` | In-memory, SQLite, Markdown | Postgres, workflow DB, scheduler state |
 | Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |

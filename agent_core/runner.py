@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
+import json
+import re
+import sqlite3
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 from uuid import uuid4
 
 from agent_core.actions import ActionRegistry, ActionVerifierPort
@@ -133,6 +138,7 @@ class ManagedAgentRun:
 
     def manifest(self) -> dict[str, Any]:
         return {
+            "schema_version": "agent-core-managed-run/v1",
             "run_key": self.run_key,
             "session_name": self.session_name,
             "task": self.task,
@@ -141,6 +147,192 @@ class ManagedAgentRun:
             "error": self.error,
             "metadata": dict(self.metadata),
         }
+
+
+class AgentRunStorePort(Protocol):
+    """Persistence boundary for manager-level run state."""
+
+    def save(self, run: ManagedAgentRun) -> None:
+        """Persist or replace one managed run."""
+
+    def get(self, run_key: str) -> ManagedAgentRun | None:
+        """Return one run by key if present."""
+
+    def list(self) -> tuple[ManagedAgentRun, ...]:
+        """Return all known runs."""
+
+    def delete(self, run_key: str) -> bool:
+        """Delete one run state record."""
+
+    def manifest(self) -> dict[str, Any]:
+        """Return prompt-safe store metadata."""
+
+
+class InMemoryAgentRunStore:
+    def __init__(self, runs: tuple[ManagedAgentRun, ...] = ()) -> None:
+        self._runs = {run.run_key: run for run in runs}
+
+    def save(self, run: ManagedAgentRun) -> None:
+        self._runs[run.run_key] = run
+
+    def get(self, run_key: str) -> ManagedAgentRun | None:
+        return self._runs.get(run_key)
+
+    def list(self) -> tuple[ManagedAgentRun, ...]:
+        return tuple(sorted(self._runs.values(), key=lambda item: item.run_key))
+
+    def delete(self, run_key: str) -> bool:
+        return self._runs.pop(run_key, None) is not None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-in-memory-run-store/v1",
+            "run_count": len(self._runs),
+        }
+
+
+class SQLiteAgentRunStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init()
+
+    def _init(self) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS managed_runs (
+                    run_key TEXT PRIMARY KEY,
+                    session_name TEXT NOT NULL,
+                    task TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_run_id TEXT NOT NULL,
+                    error TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL
+                )
+                """
+            )
+
+    def save(self, run: ManagedAgentRun) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                INSERT INTO managed_runs(
+                    run_key, session_name, task, status, result_run_id, error, metadata_json
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_key) DO UPDATE SET
+                    session_name=excluded.session_name,
+                    task=excluded.task,
+                    status=excluded.status,
+                    result_run_id=excluded.result_run_id,
+                    error=excluded.error,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    run.run_key,
+                    run.session_name,
+                    run.task,
+                    run.status,
+                    run.result_run_id,
+                    run.error,
+                    json.dumps(run.metadata, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
+    def get(self, run_key: str) -> ManagedAgentRun | None:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                """
+                SELECT run_key, session_name, task, status, result_run_id, error, metadata_json
+                FROM managed_runs
+                WHERE run_key = ?
+                """,
+                (run_key,),
+            ).fetchone()
+        return _managed_run_from_row(row) if row else None
+
+    def list(self) -> tuple[ManagedAgentRun, ...]:
+        with sqlite3.connect(self.path) as conn:
+            rows = conn.execute(
+                """
+                SELECT run_key, session_name, task, status, result_run_id, error, metadata_json
+                FROM managed_runs
+                ORDER BY run_key
+                """
+            ).fetchall()
+        return tuple(_managed_run_from_row(row) for row in rows)
+
+    def delete(self, run_key: str) -> bool:
+        with sqlite3.connect(self.path) as conn:
+            cursor = conn.execute("DELETE FROM managed_runs WHERE run_key = ?", (run_key,))
+            return cursor.rowcount > 0
+
+    def manifest(self) -> dict[str, Any]:
+        with sqlite3.connect(self.path) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM managed_runs").fetchone()[0]
+        return {
+            "schema_version": "agent-core-sqlite-run-store/v1",
+            "path": str(self.path),
+            "run_count": int(count),
+        }
+
+
+class MarkdownAgentRunStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.write_text("# Agent Run Store\n\n", encoding="utf-8")
+
+    def save(self, run: ManagedAgentRun) -> None:
+        runs = {item.run_key: item for item in self.list()}
+        runs[run.run_key] = run
+        self._write(tuple(sorted(runs.values(), key=lambda item: item.run_key)))
+
+    def get(self, run_key: str) -> ManagedAgentRun | None:
+        for run in self.list():
+            if run.run_key == run_key:
+                return run
+        return None
+
+    def list(self) -> tuple[ManagedAgentRun, ...]:
+        text = self.path.read_text(encoding="utf-8")
+        runs = []
+        for match in _RUN_MARKDOWN_RE.finditer(text):
+            runs.append(_managed_run_from_payload(_decode_run_payload(match.group("payload"))))
+        return tuple(sorted(runs, key=lambda item: item.run_key))
+
+    def delete(self, run_key: str) -> bool:
+        current = self.list()
+        runs = tuple(run for run in current if run.run_key != run_key)
+        existed = len(runs) != len(current)
+        if existed:
+            self._write(runs)
+        return existed
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-markdown-run-store/v1",
+            "path": str(self.path),
+            "run_count": len(self.list()),
+        }
+
+    def _write(self, runs: tuple[ManagedAgentRun, ...]) -> None:
+        lines = ["# Agent Run Store", ""]
+        for run in runs:
+            lines.extend(
+                [
+                    f"## Run {run.run_key}",
+                    "",
+                    f"- session: {run.session_name}",
+                    f"- status: {run.status}",
+                    f"- result_run_id: {run.result_run_id or '-'}",
+                    f"<!-- agent-core-run {_encode_run_payload(run.manifest())} -->",
+                    "",
+                ]
+            )
+        self.path.write_text("\n".join(lines), encoding="utf-8")
 
 
 class AgentRunner:
@@ -427,12 +619,23 @@ class AgentRunner:
 class AgentSessionManager:
     """Manage multiple agent sessions and background runs."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        run_store: AgentRunStorePort | None = None,
+        mark_restored_active_interrupted: bool = True,
+    ) -> None:
+        self.run_store = run_store or InMemoryAgentRunStore()
         self._sessions: dict[str, AgentSession] = {}
-        self._runs: dict[str, ManagedAgentRun] = {}
+        self._runs: dict[str, ManagedAgentRun] = {
+            run.run_key: _restored_run(run, mark_interrupted=mark_restored_active_interrupted)
+            for run in self.run_store.list()
+        }
         self._outcomes: dict[str, AgentRunOutcome] = {}
         self._tasks: dict[str, asyncio.Task[AgentRunOutcome]] = {}
         self._active_by_session: dict[str, str] = {}
+        for run in self._runs.values():
+            self.run_store.save(run)
 
     def register(self, session: AgentSession, *, name: str | None = None, replace: bool = False) -> str:
         session_name = (name or session.profile.name).strip()
@@ -465,12 +668,12 @@ class AgentSessionManager:
         run_request = self._normalize_request(request)
         run_key = self._new_run_key(session_name)
         self._ensure_session_available(session_name)
-        self._runs[run_key] = ManagedAgentRun(
+        self._save_run(ManagedAgentRun(
             run_key=run_key,
             session_name=session_name,
             task=run_request.task,
             metadata=dict(run_request.metadata),
-        )
+        ))
         self._active_by_session[session_name] = run_key
         task = asyncio.create_task(self._run_once(run_key, session_name, run_request, preclaimed=True))
         self._tasks[run_key] = task
@@ -483,7 +686,7 @@ class AgentSessionManager:
         session = self._sessions.get(run.session_name)
         if session is not None:
             session.cancel_token.cancel(reason)
-        self._runs[run_key] = _replace_run(run, status="cancelling", error=reason)
+        self._save_run(_replace_run(run, status="cancelling", error=reason))
         return True
 
     async def wait(self, run_key: str) -> AgentRunOutcome:
@@ -519,6 +722,7 @@ class AgentSessionManager:
             },
             "runs": [run.manifest() for run in self.runs()],
             "active_by_session": dict(self._active_by_session),
+            "run_store": self.run_store.manifest(),
         }
 
     def _new_run_key(self, session_name: str) -> str:
@@ -537,23 +741,23 @@ class AgentSessionManager:
         if not preclaimed:
             self._ensure_session_available(session_name)
             self._active_by_session[session_name] = run_key
-            self._runs[run_key] = ManagedAgentRun(
+            self._save_run(ManagedAgentRun(
                 run_key=run_key,
                 session_name=session_name,
                 task=request.task,
                 status="queued",
                 metadata=dict(request.metadata),
-            )
+            ))
         session = self.session(session_name)
         current_run = self._runs[run_key]
         if session.cancel_token.cancelled and current_run.status != "cancelling":
             session.reset_cancel_token()
-        self._runs[run_key] = _replace_run(self._runs[run_key], status="running")
+        self._save_run(_replace_run(self._runs[run_key], status="running"))
         try:
             outcome = await AgentRunner(session).run(request)
         except Exception as exc:
             run = self._runs[run_key]
-            self._runs[run_key] = _replace_run(run, status="failed", error=str(exc))
+            self._save_run(_replace_run(run, status="failed", error=str(exc)))
             record_error = getattr(session.harness, "record_error", None)
             if callable(record_error):
                 await record_error(error=exc, metadata={"run_key": run_key, "session_name": session_name})
@@ -570,11 +774,11 @@ class AgentSessionManager:
             managed_status = "completed"
         else:
             managed_status = status
-        self._runs[run_key] = _replace_run(
+        self._save_run(_replace_run(
             self._runs[run_key],
             status=managed_status,
             result_run_id=outcome.result.run_id,
-        )
+        ))
         self._outcomes[run_key] = outcome
         return outcome
 
@@ -586,6 +790,10 @@ class AgentSessionManager:
     @staticmethod
     def _normalize_request(request: AgentRunRequest | str) -> AgentRunRequest:
         return request if isinstance(request, AgentRunRequest) else AgentRunRequest(task=str(request))
+
+    def _save_run(self, run: ManagedAgentRun) -> None:
+        self._runs[run.run_key] = run
+        self.run_store.save(run)
 
 
 def _budget_manifest(budget: RuntimeBudget) -> dict[str, Any]:
@@ -677,6 +885,57 @@ def _append_context_block(existing: str, block: str) -> str:
     if not existing:
         return block
     return existing.rstrip() + "\n\n" + block
+
+
+_ACTIVE_MANAGED_RUN_STATUSES = {"queued", "running", "cancelling"}
+_RUN_MARKDOWN_RE = re.compile(r"<!-- agent-core-run (?P<payload>[A-Za-z0-9+/=]+) -->")
+
+
+def _restored_run(run: ManagedAgentRun, *, mark_interrupted: bool) -> ManagedAgentRun:
+    if not mark_interrupted or run.status not in _ACTIVE_MANAGED_RUN_STATUSES:
+        return run
+    return _replace_run(
+        run,
+        status="interrupted",
+        error=run.error or "run was active when manager state was restored",
+    )
+
+
+def _managed_run_from_row(row: tuple[Any, ...]) -> ManagedAgentRun:
+    metadata = json.loads(str(row[6] or "{}"))
+    return ManagedAgentRun(
+        run_key=str(row[0] or ""),
+        session_name=str(row[1] or ""),
+        task=str(row[2] or ""),
+        status=str(row[3] or "queued"),
+        result_run_id=str(row[4] or ""),
+        error=str(row[5] or ""),
+        metadata=metadata if isinstance(metadata, dict) else {},
+    )
+
+
+def _managed_run_from_payload(payload: dict[str, Any]) -> ManagedAgentRun:
+    metadata = payload.get("metadata")
+    return ManagedAgentRun(
+        run_key=str(payload.get("run_key") or ""),
+        session_name=str(payload.get("session_name") or ""),
+        task=str(payload.get("task") or ""),
+        status=str(payload.get("status") or "queued"),
+        result_run_id=str(payload.get("result_run_id") or ""),
+        error=str(payload.get("error") or ""),
+        metadata=dict(metadata) if isinstance(metadata, dict) else {},
+    )
+
+
+def _encode_run_payload(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _decode_run_payload(payload: str) -> dict[str, Any]:
+    raw = base64.b64decode(payload.encode("ascii")).decode("utf-8")
+    data = json.loads(raw)
+    return dict(data) if isinstance(data, dict) else {}
 
 
 def _replace_run(

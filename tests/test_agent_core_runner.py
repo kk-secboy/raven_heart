@@ -13,7 +13,16 @@ from agent_core.mcp import MCPCenter, MCPServerSpec
 from agent_core.providers import LLMProviderCenter
 from agent_core.providers import LLMRequest, LLMResponse
 from agent_core.reducer import DefaultContextReducer
-from agent_core.runner import AgentRunner, AgentRunRequest, AgentSession, AgentSessionManager
+from agent_core.runner import (
+    AgentRunner,
+    AgentRunRequest,
+    AgentSession,
+    AgentSessionManager,
+    InMemoryAgentRunStore,
+    ManagedAgentRun,
+    MarkdownAgentRunStore,
+    SQLiteAgentRunStore,
+)
 from agent_core.skills import SkillRegistry, SkillsContext, SkillSpec
 from agent_core.testing import MockLLMProvider, MockToolRuntime
 from agent_core.timeline import TimelineStore
@@ -343,6 +352,77 @@ async def test_agent_session_manager_runs_and_indexes_sessions() -> None:
     assert manager.outcome(run.run_key) == outcome
     assert manager.manifest()["sessions"]["managed"]["profile"]["name"] == "managed"
     assert manager.manifest()["runs"][0]["metadata"]["request_id"] == "r1"
+
+
+@pytest.mark.asyncio
+async def test_agent_session_manager_persists_run_state_to_store() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    store = InMemoryAgentRunStore()
+    manager = AgentSessionManager(run_store=store)
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="stored"),
+            provider=provider,
+            tools=MockToolRuntime(),
+        )
+    )
+
+    outcome = await manager.run("stored", AgentRunRequest(task="task", metadata={"request_id": "r1"}))
+    run = manager.runs()[0]
+    stored = store.get(run.run_key)
+    restored = AgentSessionManager(run_store=store)
+
+    assert outcome.result.status == "completed"
+    assert stored is not None
+    assert stored.status == "completed"
+    assert stored.result_run_id == outcome.result.run_id
+    assert restored.run_state(run.run_key).status == "completed"
+    assert manager.manifest()["run_store"]["schema_version"] == "agent-core-in-memory-run-store/v1"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_agent_run_store_persists_manager_runs_across_instances(tmp_path) -> None:
+    path = tmp_path / "runs.sqlite"
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    manager = AgentSessionManager(run_store=SQLiteAgentRunStore(path))
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="sqlite-runs"),
+            provider=provider,
+            tools=MockToolRuntime(),
+        )
+    )
+
+    outcome = await manager.run("sqlite-runs", "task")
+    restored = AgentSessionManager(run_store=SQLiteAgentRunStore(path))
+    run = restored.runs()[0]
+
+    assert restored.manifest()["run_store"]["schema_version"] == "agent-core-sqlite-run-store/v1"
+    assert run.status == "completed"
+    assert run.result_run_id == outcome.result.run_id
+
+
+def test_markdown_agent_run_store_marks_restored_active_runs_interrupted(tmp_path) -> None:
+    path = tmp_path / "runs.md"
+    store = MarkdownAgentRunStore(path)
+    store.save(
+        ManagedAgentRun(
+            run_key="run-1",
+            session_name="session",
+            task="long task",
+            status="running",
+            metadata={"request_id": "r1"},
+        )
+    )
+
+    restored = AgentSessionManager(run_store=MarkdownAgentRunStore(path))
+    run = restored.run_state("run-1")
+    text = path.read_text(encoding="utf-8")
+
+    assert run.status == "interrupted"
+    assert "active when manager state was restored" in run.error
+    assert "long task" not in text
+    assert "<!-- agent-core-run " in text
 
 
 @pytest.mark.asyncio

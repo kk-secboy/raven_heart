@@ -28,6 +28,7 @@ agent_core
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Run trace bundle | Durable trace export, observability pipeline, retention |
+| Manager run state and `AgentRunStorePort` | Product workflow DB, scheduling, distributed workers |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
 | Structured output specs and validation lifecycle | Domain schemas, typed business objects, persistence |
 | Context reducer protocol and reduction manifests | Domain summarizers, archive stores, retrieval policy |
@@ -47,6 +48,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | PG, object storage, workflow replay DB |
 | Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | PG, object storage, observability pipeline |
+| Manager runs | `AgentRunStorePort` | In-memory, SQLite, Markdown | PG, workflow DB, scheduler state |
 | Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, CI/build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
@@ -70,6 +72,13 @@ provider audit, tool replay, approvals, event log, resume, and timeline reductio
 manifests. The SDK owns the shape and summary counters. Runtime code owns where
 the bundle is stored, how long it is retained, and how it is queried for product
 observability or incident review.
+
+`AgentRunStorePort` persists manager-level run state such as queued, running,
+cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,
+and Markdown stores so lightweight managers can restart and inspect state without
+runtime infrastructure. Production schedulers, distributed workers, PG-backed
+workflow state, and tenant isolation remain runtime or adapter responsibilities.
+
 `RunTraceStorePort` gives the bundle a persistence boundary. The SDK ships
 in-memory, SQLite, and Markdown stores for lightweight use, while production
 PG/object-storage/observability integrations should live in runtime or adapter
