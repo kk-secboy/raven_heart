@@ -177,6 +177,14 @@ reducer while keeping the same core contract.
 - In-memory, SQLite, and Markdown replay stores for lightweight SDK use.
 - Invocation manifests hash arguments instead of exposing full argument values.
 
+### Artifacts
+
+- `ArtifactStorePort` for large prompt-unsafe observations.
+- `InMemoryArtifactStore`, `SQLiteArtifactStore`, and `MarkdownArtifactStore`
+  for lightweight SDK use.
+- `ReActExecutor` can store oversized tool results as artifacts and place only a
+  prompt-safe artifact reference in the next model message.
+
 ### Skills
 
 - `SkillRegistry` and `SkillsContext`.
@@ -213,7 +221,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, workflow replay DB |
 | Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, observability pipeline |
-| Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, build artifacts |
+| Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
 

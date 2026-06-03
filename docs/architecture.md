@@ -46,7 +46,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | PG, object storage, workflow replay DB |
 | Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | PG, object storage, observability pipeline |
-| Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, CI/build artifacts |
+| Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, CI/build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
 
@@ -67,6 +67,11 @@ observability or incident review.
 in-memory, SQLite, and Markdown stores for lightweight use, while production
 PG/object-storage/observability integrations should live in runtime or adapter
 packages.
+
+`ArtifactStorePort` keeps oversized observations out of prompt text while
+preserving retrievable content. The SDK ships in-memory, SQLite, and Markdown
+stores for local runs. Production filesystem/object-storage integrations remain
+runtime responsibilities.
 
 `LLMProviderCenter` records provider-neutral call manifests for completed and
 failed attempts. The core records provider name, model, attempt, streamed flag,

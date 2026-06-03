@@ -24,7 +24,13 @@ from agent_core.approvals import (
     NullApprovalStore,
     SQLiteApprovalStore,
 )
-from agent_core.artifacts import ArtifactRecord, ArtifactStorePort, InMemoryArtifactStore
+from agent_core.artifacts import (
+    ArtifactRecord,
+    ArtifactStorePort,
+    InMemoryArtifactStore,
+    MarkdownArtifactStore,
+    SQLiteArtifactStore,
+)
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
@@ -293,6 +299,7 @@ __all__ = [
     "MarkdownToolReplayStore",
     "InMemoryAgentJournal",
     "InMemoryArtifactStore",
+    "MarkdownArtifactStore",
     "InMemoryApprovalStore",
     "InMemoryJournalStore",
     "InMemoryMemoryStore",
@@ -318,6 +325,7 @@ __all__ = [
     "PersistentToolReplay",
     "RuleBasedMemoryGovernance",
     "SQLiteApprovalStore",
+    "SQLiteArtifactStore",
     "SQLiteToolReplayStore",
     "SQLiteRunTraceStore",
     "SQLiteMemoryStore",
