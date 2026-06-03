@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Literal, Protocol
+from uuid import uuid4
 
 
 MessageRole = Literal["system", "user", "assistant", "tool"]
@@ -299,6 +302,44 @@ class LLMResponseFormat:
 
 
 @dataclass(frozen=True)
+class LLMToolCall:
+    """Provider-neutral tool call requested by a model response."""
+
+    tool_name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+    call_id: str = field(default_factory=lambda: uuid4().hex)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.tool_name:
+            raise ValueError("tool call name is required")
+        object.__setattr__(self, "arguments", dict(self.arguments))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def manifest(self) -> dict[str, Any]:
+        raw_arguments = json.dumps(self.arguments, sort_keys=True, default=str)
+        return {
+            "schema_version": "agent-core-llm-tool-call/v1",
+            "tool_name": self.tool_name,
+            "call_id": self.call_id,
+            "argument_keys": sorted(str(key) for key in self.arguments),
+            "arguments_sha256": hashlib.sha256(raw_arguments.encode("utf-8")).hexdigest()
+            if self.arguments
+            else "",
+            "metadata": dict(self.metadata),
+        }
+
+    def transport_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-tool-call/v1",
+            "tool_name": self.tool_name,
+            "call_id": self.call_id,
+            "arguments": dict(self.arguments),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class LLMRequest:
     messages: list[LLMMessage]
     model: str = ""
@@ -335,15 +376,22 @@ class LLMRequest:
 class LLMResponse:
     content: str = ""
     action: dict[str, Any] | None = None
+    tool_calls: tuple[LLMToolCall, ...] = ()
     usage: UsageInfo = field(default_factory=UsageInfo)
     finish_reason: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
+        object.__setattr__(self, "metadata", dict(self.metadata))
 
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-llm-response/v1",
             "content_bytes": len(self.content.encode("utf-8")),
             "has_action": self.action is not None,
+            "tool_call_count": len(self.tool_calls),
+            "tool_calls": [tool_call.manifest() for tool_call in self.tool_calls],
             "usage": self.usage.manifest(),
             "finish_reason": self.finish_reason,
             "metadata": dict(self.metadata),
@@ -352,9 +400,18 @@ class LLMResponse:
 
 @dataclass(frozen=True)
 class LLMStreamEvent:
-    type: Literal["message_start", "delta", "action", "usage", "error", "message_end"]
+    type: Literal[
+        "message_start",
+        "delta",
+        "action",
+        "tool_call",
+        "usage",
+        "error",
+        "message_end",
+    ]
     delta: str = ""
     action: dict[str, Any] | None = None
+    tool_call: LLMToolCall | None = None
     usage: UsageInfo | None = None
     error: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -365,6 +422,8 @@ class LLMStreamEvent:
             "type": self.type,
             "delta_bytes": len(self.delta.encode("utf-8")),
             "has_action": self.action is not None,
+            "has_tool_call": self.tool_call is not None,
+            "tool_call": self.tool_call.manifest() if self.tool_call else None,
             "usage": self.usage.manifest() if self.usage else None,
             "error": self.error,
             "metadata": dict(self.metadata),
@@ -378,6 +437,7 @@ class LLMStreamAccumulator:
     events: list[LLMStreamEvent] = field(default_factory=list)
     content_parts: list[str] = field(default_factory=list)
     action: dict[str, Any] | None = None
+    tool_calls: list[LLMToolCall] = field(default_factory=list)
     usage: UsageInfo = field(default_factory=UsageInfo)
     finish_reason: str = ""
     error: str = ""
@@ -388,6 +448,8 @@ class LLMStreamAccumulator:
             self.content_parts.append(event.delta)
         if event.action is not None:
             self.action = dict(event.action)
+        if event.tool_call is not None:
+            self.tool_calls.append(event.tool_call)
         if event.usage is not None:
             self.usage = event.usage
         if event.type == "error":
@@ -404,6 +466,7 @@ class LLMStreamAccumulator:
         return LLMResponse(
             content=self.content,
             action=dict(self.action) if self.action is not None else None,
+            tool_calls=tuple(self.tool_calls),
             usage=self.usage,
             finish_reason=self.finish_reason,
             metadata={
@@ -422,6 +485,8 @@ class LLMStreamAccumulator:
             "delta_bytes": sum(len(event.delta.encode("utf-8")) for event in self.events),
             "content_bytes": len(self.content.encode("utf-8")),
             "has_action": self.action is not None,
+            "tool_call_count": len(self.tool_calls),
+            "tool_calls": [tool_call.manifest() for tool_call in self.tool_calls],
             "has_usage": any(event.usage is not None for event in self.events),
             "finish_reason": self.finish_reason,
             "error": self.error,
@@ -506,9 +571,11 @@ class DefaultLLMProviderCodec:
             raise error
         usage = _usage_from_payload(payload.get("usage"))
         action = payload.get("action")
+        tool_calls = _tool_calls_from_payload(payload.get("tool_calls"))
         return LLMResponse(
             content=str(payload.get("content") or ""),
             action=dict(action) if isinstance(action, dict) else None,
+            tool_calls=tool_calls,
             usage=usage,
             finish_reason=str(payload.get("finish_reason") or ""),
             metadata=dict(payload.get("metadata") or {}),
@@ -517,10 +584,12 @@ class DefaultLLMProviderCodec:
     def decode_stream_event(self, payload: dict[str, Any]) -> LLMStreamEvent:
         usage_payload = payload.get("usage")
         action = payload.get("action")
+        tool_call = _tool_call_from_payload(payload.get("tool_call"))
         return LLMStreamEvent(
             type=_stream_event_type(str(payload.get("type") or "delta")),
             delta=str(payload.get("delta") or ""),
             action=dict(action) if isinstance(action, dict) else None,
+            tool_call=tool_call,
             usage=_usage_from_payload(usage_payload) if usage_payload is not None else None,
             error=str(payload.get("error") or ""),
             metadata=dict(payload.get("metadata") or {}),
@@ -1047,6 +1116,7 @@ class LLMProviderCenter(LLMProviderPort):
                 type=event.type,
                 delta=event.delta,
                 action=event.action,
+                tool_call=event.tool_call,
                 usage=event.usage,
                 error=event.error,
                 metadata={
@@ -1351,6 +1421,42 @@ def _usage_from_payload(payload: Any) -> UsageInfo:
     )
 
 
+def _tool_calls_from_payload(payload: Any) -> tuple[LLMToolCall, ...]:
+    if payload is None:
+        return ()
+    if isinstance(payload, dict):
+        call = _tool_call_from_payload(payload)
+        return (call,) if call is not None else ()
+    if isinstance(payload, (list, tuple)):
+        calls = []
+        for item in payload:
+            call = _tool_call_from_payload(item)
+            if call is not None:
+                calls.append(call)
+        return tuple(calls)
+    return ()
+
+
+def _tool_call_from_payload(payload: Any) -> LLMToolCall | None:
+    if not isinstance(payload, dict):
+        return None
+    name = str(payload.get("tool_name") or payload.get("name") or "").strip()
+    if not name:
+        return None
+    arguments = payload.get("arguments")
+    if arguments is None:
+        arguments = payload.get("args")
+    if not isinstance(arguments, dict):
+        arguments = {}
+    call_id = str(payload.get("call_id") or payload.get("id") or "").strip() or uuid4().hex
+    return LLMToolCall(
+        tool_name=name,
+        arguments=dict(arguments),
+        call_id=call_id,
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
 def _request_modalities(request: LLMRequest) -> set[str]:
     modalities = set(_metadata_strings(request.metadata, "required_modalities"))
     for message in request.messages:
@@ -1367,8 +1473,18 @@ def _content_part_modality(kind: str) -> str:
     return kind
 
 
-def _stream_event_type(value: str) -> Literal["message_start", "delta", "action", "usage", "error", "message_end"]:
-    if value not in {"message_start", "delta", "action", "usage", "error", "message_end"}:
+def _stream_event_type(
+    value: str,
+) -> Literal["message_start", "delta", "action", "tool_call", "usage", "error", "message_end"]:
+    if value not in {
+        "message_start",
+        "delta",
+        "action",
+        "tool_call",
+        "usage",
+        "error",
+        "message_end",
+    }:
         raise LLMProviderError(f"invalid stream event type: {value}")
     return value  # type: ignore[return-value]
 

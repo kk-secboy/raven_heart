@@ -22,6 +22,7 @@ from agent_core.providers import (
     LLMRetryPolicy,
     LLMStreamAccumulator,
     LLMStreamEvent,
+    LLMToolCall,
     LLMToolChoice,
     LLMToolContract,
     LLMUsageLimits,
@@ -268,6 +269,38 @@ def test_llm_request_supports_provider_neutral_tool_and_response_contracts() -> 
         LLMToolChoice(mode="tool")
     with pytest.raises(ValueError):
         LLMRequest(messages=[], tool_choice=LLMToolChoice(mode="required"))
+
+
+def test_llm_response_supports_provider_native_tool_calls() -> None:
+    tool_call = LLMToolCall(
+        tool_name="lookup",
+        arguments={"target": "demo"},
+        call_id="call-1",
+        metadata={"provider": "mock"},
+    )
+    response = LLMResponse(content="need lookup", tool_calls=(tool_call,))
+    manifest = response.manifest()
+    decoded = DefaultLLMProviderCodec().decode_response(
+        {
+            "content": "need lookup",
+            "tool_calls": [
+                {
+                    "tool_name": "lookup",
+                    "arguments": {"target": "demo"},
+                    "call_id": "call-1",
+                    "metadata": {"provider": "mock"},
+                }
+            ],
+        }
+    )
+
+    assert manifest["tool_call_count"] == 1
+    assert manifest["tool_calls"][0]["tool_name"] == "lookup"
+    assert manifest["tool_calls"][0]["argument_keys"] == ["target"]
+    assert "demo" not in str(manifest)
+    assert decoded.tool_calls[0].tool_name == "lookup"
+    assert decoded.tool_calls[0].arguments == {"target": "demo"}
+    assert decoded.tool_calls[0].call_id == "call-1"
 
 
 def test_llm_tool_contract_can_be_derived_from_tool_spec_like_objects() -> None:
@@ -520,6 +553,16 @@ def test_llm_stream_accumulator_builds_response_and_prompt_safe_manifest() -> No
             action={"action": "finish", "arguments": {"output": "hello"}},
         )
     )
+    accumulator.add(
+        LLMStreamEvent(
+            type="tool_call",
+            tool_call=LLMToolCall(
+                tool_name="lookup",
+                arguments={"target": "demo"},
+                call_id="call-1",
+            ),
+        )
+    )
     accumulator.add(LLMStreamEvent(type="delta", delta="lo"))
     accumulator.add(LLMStreamEvent(type="usage", usage=UsageInfo(total_tokens=5, cost_usd=0.01)))
     accumulator.add(LLMStreamEvent(type="message_end"))
@@ -529,14 +572,17 @@ def test_llm_stream_accumulator_builds_response_and_prompt_safe_manifest() -> No
 
     assert response.content == "hello"
     assert response.action == {"action": "finish", "arguments": {"output": "hello"}}
+    assert response.tool_calls[0].tool_name == "lookup"
     assert response.usage.total_tokens == 5
     assert response.finish_reason == "stop"
     assert response.metadata["streamed"] is True
     assert response.metadata["provider"] == "mock"
-    assert response.metadata["stream"]["event_count"] == 6
+    assert response.metadata["stream"]["event_count"] == 7
+    assert response.metadata["stream"]["tool_call_count"] == 1
     assert manifest["schema_version"] == "agent-core-llm-stream-accumulator/v1"
     assert manifest["summary"]["content_bytes"] == 5
     assert "hello" not in str(manifest)
+    assert "demo" not in str(manifest)
 
 
 @pytest.mark.asyncio
@@ -866,4 +912,45 @@ async def test_react_executor_can_use_provider_center_as_llm_port() -> None:
     assert provider.requests[0].model == "local-mini"
     assert provider.requests[0].metadata["provider"] == "local"
     assert provider.requests[0].metadata["max_cost_usd"] == 0.25
+
+
+@pytest.mark.asyncio
+async def test_react_executor_can_execute_provider_native_tool_calls() -> None:
+    provider = MockLLMProvider(
+        [
+            LLMResponse(
+                content="checking",
+                tool_calls=(
+                    LLMToolCall(
+                        tool_name="lookup",
+                        arguments={"target": "demo"},
+                        call_id="call-1",
+                    ),
+                ),
+            ),
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    tools = MockToolRuntime({"lookup": "lookup result"})
+    harness = InMemoryAgentJournal()
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=tools,
+        action_registry=ActionRegistry(),
+        harness=harness,
+        config=ReActConfig(max_iterations=3, native_tool_calls=True),
+    )
+
+    result = await executor.run("task", PromptIR.from_parts(high_static="rules"))
+
+    assert result.status == "completed"
+    assert result.output == "done"
+    assert provider.requests[0].tools[0].name == "lookup"
+    assert provider.requests[0].tool_choice is not None
+    assert provider.requests[0].tool_choice.mode == "auto"
+    assert provider.requests[1].messages[-1].role == "tool"
+    assert provider.requests[1].messages[-1].content == "lookup result"
+    assert provider.requests[1].messages[-1].metadata["provider_tool_call_id"] == "call-1"
+    assert tools.invocations[0].call_id == "call-1"
+    assert tools.invocations[0].arguments == {"target": "demo"}
 

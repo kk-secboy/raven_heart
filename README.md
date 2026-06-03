@@ -313,6 +313,8 @@ ranking contract used by lightweight core stores.
   contracts.
 - `LLMToolContract.from_tool_spec()` for deriving native model tool contracts
   from the same `ToolSpec` schema used by the SDK tool center.
+- `LLMToolCall` for provider-neutral model-requested tool calls, including
+  prompt-safe manifests and transport payloads.
 - `LLMModelCapabilities` for provider-neutral model context windows, output
   limits, streaming support, tool-call support, JSON mode, structured output,
   and modality declarations.
@@ -341,6 +343,10 @@ Native tool calling and response-format contracts are represented as SDK
 request fields, not vendor payloads. Adapter packages translate them to
 OpenAI-compatible `tools`/`response_format`, Anthropic tool use, Gemini function
 calling, local model schemas, or gateway-specific payloads.
+`ReActConfig.native_tool_calls` lets a runtime opt into the provider-native
+loop: the executor sends `ToolSpec`-derived contracts, executes returned
+`LLMToolCall` items through the same policy/replay/tool boundary, and appends
+provider-neutral tool result messages for the next model turn.
 Content parts follow the same rule: the SDK can describe text, image, audio,
 file, binary, and JSON parts, while runtimes own file access, uploads, URL
 signing, object storage, and vendor-specific multipart payloads.
@@ -597,6 +603,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider transport contract | MVP implemented |
 | Provider model capabilities | MVP implemented |
 | Provider tool/response-format contracts | MVP implemented |
+| Provider-native tool-call loop | opt-in MVP implemented |
 | Provider multimodal content contracts | MVP implemented |
 | Embedding provider center | MVP implemented |
 | Semantic ranking contract | MVP implemented |

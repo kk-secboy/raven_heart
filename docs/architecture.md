@@ -200,6 +200,13 @@ Anthropic tool use, Gemini function declarations, local-model JSON schemas, and
 gateway payload details remain adapter responsibilities. `LLMModelCapabilities`
 can reject routes that cannot satisfy these contracts before a provider call is
 attempted.
+`LLMToolCall` is the matching response-level contract. A provider adapter can
+decode native tool calls into `LLMResponse.tool_calls` or stream `tool_call`
+events. When `ReActConfig.native_tool_calls` is enabled, the executor runs those
+calls through the same policy, approval, replay, retry, and tool-result
+compaction boundaries used by JSON ReAct actions, then appends provider-neutral
+`role=tool` messages for the next turn. This keeps OpenAI-compatible tool calls,
+Anthropic tool use, and local model function calling behind the same core loop.
 `LLMContentPart` extends `LLMMessage` beyond a single text field while keeping
 the same boundary. The core can represent text, JSON, image, audio, file, and
 binary parts and route them through declared `modalities`; runtimes still own

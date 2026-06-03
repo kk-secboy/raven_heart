@@ -46,6 +46,9 @@ from agent_core.providers import (
     LLMResponse,
     LLMResponseFormat,
     LLMStreamAccumulator,
+    LLMToolCall,
+    LLMToolChoice,
+    LLMToolContract,
 )
 from agent_core.skills import SkillsContext
 from agent_core.structured import (
@@ -87,6 +90,7 @@ class ReActConfig:
     structured_output: StructuredOutputSpec | None = None
     timeout_seconds: float | None = None
     tool_retry_policy: ToolRetryPolicy = field(default_factory=ToolRetryPolicy)
+    native_tool_calls: bool = False
 
 
 @dataclass(frozen=True)
@@ -197,6 +201,8 @@ class ReActExecutor:
                         LLMRequest(
                             messages=list(messages),
                             model=self.config.model,
+                            tools=self._native_tool_contracts(),
+                            tool_choice=self._native_tool_choice(),
                             response_format=_structured_response_format(
                                 self.config.structured_output
                             ),
@@ -236,6 +242,7 @@ class ReActExecutor:
                 {
                     "content": response.content,
                     "action": response.action,
+                    "tool_calls": [tool_call.manifest() for tool_call in response.tool_calls],
                     "finish_reason": response.finish_reason,
                     "usage": response.usage.__dict__,
                     "metadata": dict(response.metadata),
@@ -251,6 +258,35 @@ class ReActExecutor:
                 turn_id=turn.turn_id,
                 payload={"finish_reason": response.finish_reason},
             )
+
+            if response.tool_calls:
+                try:
+                    provider_tool_messages = await self._await_with_deadline(
+                        self._execute_provider_tool_calls(
+                            run,
+                            turn,
+                            response=response,
+                            iteration=index,
+                        ),
+                        deadline,
+                    )
+                except asyncio.TimeoutError:
+                    self.cancel_token.timeout(
+                        "provider tool call timed out",
+                        timeout_seconds=self.config.timeout_seconds,
+                        metadata={"iteration": index, "phase": "provider_tool_call"},
+                    )
+                    return await self._finish_interrupted(
+                        run,
+                        status="timeout",
+                        event_type="run_timeout",
+                        output=self.cancel_token.reason or "provider tool call timed out",
+                        iterations=index + 1,
+                        turn=turn,
+                        checkpoint_state={"phase": "provider_tool_call"},
+                    )
+                messages.extend(provider_tool_messages)
+                continue
 
             try:
                 action = self._parse_response_action(response.action, response.content)
@@ -800,6 +836,96 @@ class ReActExecutor:
         if not text:
             raise ProviderError("provider returned empty content and no action")
         return self.action_registry.parse(text)
+
+    def _native_tool_contracts(self) -> tuple[LLMToolContract, ...]:
+        if not self.config.native_tool_calls:
+            return ()
+        return tuple(
+            LLMToolContract.from_tool_spec(spec)
+            for spec in self.tool_runtime.specs()
+            if spec.enabled
+        )
+
+    def _native_tool_choice(self) -> LLMToolChoice | None:
+        if not self.config.native_tool_calls:
+            return None
+        contracts = self._native_tool_contracts()
+        if not contracts:
+            return None
+        return LLMToolChoice(mode="auto")
+
+    async def _execute_provider_tool_calls(
+        self,
+        run: RunState,
+        turn: TurnState,
+        *,
+        response: LLMResponse,
+        iteration: int,
+    ) -> list[LLMMessage]:
+        messages = [
+            LLMMessage(
+                role="assistant",
+                content=response.content,
+                metadata={
+                    "provider_tool_calls": [
+                        tool_call.manifest() for tool_call in response.tool_calls
+                    ],
+                },
+            )
+        ]
+        for tool_call in response.tool_calls:
+            invocation = ToolInvocation(
+                tool_name=tool_call.tool_name,
+                arguments=dict(tool_call.arguments),
+                call_id=tool_call.call_id,
+                metadata={"provider_tool_call": tool_call.manifest()},
+            )
+            tool_result = await self._execute_tool_invocation(run, turn.turn_id, invocation)
+            prompt_tool_result = await self._prompt_safe_tool_result(tool_result)
+            await self.harness.record_tool_call(
+                turn,
+                {
+                    "call_id": prompt_tool_result.call_id,
+                    "tool_name": prompt_tool_result.tool_name,
+                    "status": prompt_tool_result.status,
+                    "error": prompt_tool_result.error,
+                    "metadata": {
+                        **prompt_tool_result.metadata,
+                        "provider_tool_call": tool_call.manifest(),
+                    },
+                },
+            )
+            await self._record_timeline(
+                prompt_tool_result.content if prompt_tool_result.ok else prompt_tool_result.error,
+                kind="tool",
+                tool_name=prompt_tool_result.tool_name,
+                status=prompt_tool_result.status,
+            )
+            await self.harness.checkpoint(
+                turn,
+                {
+                    "status": "provider_tool_finished",
+                    "tool_name": prompt_tool_result.tool_name,
+                    "tool_status": prompt_tool_result.status,
+                    "provider_tool_call": tool_call.manifest(),
+                    "iteration": iteration,
+                },
+            )
+            messages.append(
+                LLMMessage(
+                    role="tool",
+                    name=prompt_tool_result.tool_name,
+                    content=prompt_tool_result.content
+                    if prompt_tool_result.ok
+                    else prompt_tool_result.error,
+                    metadata={
+                        "provider_tool_call_id": tool_call.call_id,
+                        "provider_tool_name": tool_call.tool_name,
+                        "tool_status": prompt_tool_result.status,
+                    },
+                )
+            )
+        return messages
 
     async def _execute_action(
         self,
