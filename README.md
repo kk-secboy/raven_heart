@@ -219,9 +219,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   iteration limits, provider call limits, required provider names/models,
   required provider model capabilities, required events, required tools,
   resume-plan presence, resume-plan readiness, expected checkpoint id, tool
-  execution presence, tool retry, minimum tool attempt counts, and storage
-  backend, context injection, memory governance, and prompt bucket budget
-  constraints.
+  execution presence, tool retry, tool schema validation, minimum tool attempt
+  counts, and storage backend, context injection, memory governance, and prompt
+  bucket budget constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
@@ -313,6 +313,10 @@ modalities.
 - Tool tags, aliases, manifests, inventory, and search.
 - `ToolExecutionCenter`, `ToolRetryPolicy`, and tool execution attempt records
   for retryable failure recovery and audit.
+- `validate_tool_arguments()` and pre-execution schema validation for
+  `ToolSpec.parameters_schema`.
+- Tool schema failures produce prompt-safe `SchemaValidationResult` manifests
+  and do not call the underlying runtime.
 - In-memory replay.
 - `ToolReplayRecord` manifests for deterministic replay audit.
 - `ToolReplayStorePort` and `PersistentToolReplay` for pluggable replay storage.

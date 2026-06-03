@@ -315,6 +315,7 @@ from agent_core.tools import (
     ToolRuntimePort,
     ToolRetryPolicy,
     ToolSpec,
+    validate_tool_arguments,
 )
 
 __all__ = [
@@ -591,5 +592,6 @@ __all__ = [
     "TurnState",
     "TurnStatus",
     "UsageInfo",
+    "validate_tool_arguments",
 ]
 

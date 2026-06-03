@@ -66,6 +66,8 @@ async def test_tool_registry_registers_validates_and_invokes_tools() -> None:
     assert result.content == "hello yak"
     assert bad.status == "failed"
     assert "must be string" in bad.error
+    assert bad.metadata["schema_validation"]["schema_name"] == "tool:hello"
+    assert bad.metadata["schema_validation"]["issues"][0]["code"] == "type_mismatch"
     assert "hello: Say hello" in registry.render_inventory()
 
 
@@ -107,6 +109,41 @@ async def test_tool_execution_center_converts_retryable_exceptions_to_final_resu
     assert result.error == "network hiccup"
     assert result.metadata["exception_type"] == "RuntimeError"
     assert result.metadata["tool_execution"]["attempt_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_center_rejects_invalid_schema_before_runtime_call() -> None:
+    registry = ToolRegistry()
+    invocations = []
+
+    async def handler(invocation: ToolInvocation) -> ToolResult:
+        invocations.append(invocation)
+        return ToolResult(call_id=invocation.call_id, tool_name=invocation.tool_name, content="nope")
+
+    registry.register(
+        ToolSpec(
+            name="lookup",
+            parameters_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {"query": {"type": "string", "minLength": 1}},
+            },
+        ),
+        handler,
+    )
+    center = ToolExecutionCenter(registry)
+
+    result = await center.invoke(ToolInvocation(tool_name="lookup", arguments={"query": ""}))
+    manifest = center.manifest()
+
+    assert result.status == "failed"
+    assert result.error == "$.query must contain at least 1 characters"
+    assert result.metadata["tool_execution"]["final_status"] == "failed"
+    assert result.metadata["tool_execution"]["attempt_statuses"] == ["schema_invalid"]
+    assert result.metadata["tool_execution"]["schema_validation"]["ok"] is False
+    assert manifest["records"][0]["attempts"][0]["status"] == "schema_invalid"
+    assert manifest["records"][0]["metadata"]["schema_validation"]["schema_name"] == "tool:lookup"
+    assert invocations == []
 
 
 @pytest.mark.asyncio

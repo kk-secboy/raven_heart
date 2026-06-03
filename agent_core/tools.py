@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from agent_core.backends import storage_backend_manifest
 from agent_core.prompt import estimate_tokens
+from agent_core.schema import SchemaValidationResult, validate_json_schema_subset
 from agent_core.search import SearchDocument, rank_documents
 
 
@@ -205,7 +206,7 @@ class ToolExecutionRecord:
         return self.attempt_count > 1
 
     def summary_manifest(self) -> dict[str, Any]:
-        return {
+        summary = {
             "schema_version": "agent-core-tool-execution-summary/v1",
             "tool_name": self.invocation.tool_name,
             "call_id": self.invocation.call_id,
@@ -218,6 +219,10 @@ class ToolExecutionRecord:
                 attempt.attempt for attempt in self.attempts if attempt.retryable
             ],
         }
+        schema_validation = self.metadata.get("schema_validation")
+        if isinstance(schema_validation, dict):
+            summary["schema_validation"] = dict(schema_validation)
+        return summary
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -251,6 +256,44 @@ class ToolExecutionCenter:
         return self.runtime.specs()
 
     async def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        schema_validation = _tool_schema_validation_for_runtime(self.runtime, invocation)
+        if schema_validation is not None and not schema_validation.ok:
+            validation_manifest = schema_validation.manifest()
+            final_result = ToolResult(
+                call_id=invocation.call_id,
+                tool_name=invocation.tool_name,
+                status="failed",
+                error=schema_validation.error,
+                metadata={"schema_validation": validation_manifest},
+            )
+            record = ToolExecutionRecord(
+                invocation=invocation,
+                attempts=(
+                    ToolExecutionAttempt(
+                        attempt=1,
+                        status="schema_invalid",
+                        error=schema_validation.error,
+                        result=final_result,
+                        metadata={"schema_validation": validation_manifest},
+                    ),
+                ),
+                final_result=final_result,
+                policy=self.retry_policy,
+                metadata={**self.metadata, "schema_validation": validation_manifest},
+            )
+            self.records.append(record)
+            return ToolResult(
+                call_id=final_result.call_id,
+                tool_name=final_result.tool_name,
+                status=final_result.status,
+                content=final_result.content,
+                data=dict(final_result.data),
+                error=final_result.error,
+                metadata={
+                    **final_result.metadata,
+                    "tool_execution": record.summary_manifest(),
+                },
+            )
         attempts: list[ToolExecutionAttempt] = []
         final_result: ToolResult | None = None
         for attempt_number in range(1, self.retry_policy.max_attempts + 1):
@@ -306,7 +349,14 @@ class ToolExecutionCenter:
             attempts=tuple(attempts),
             final_result=final_result,
             policy=self.retry_policy,
-            metadata=dict(self.metadata),
+            metadata={
+                **self.metadata,
+                **(
+                    {"schema_validation": schema_validation.manifest()}
+                    if schema_validation is not None
+                    else {}
+                ),
+            },
         )
         self.records.append(record)
         return ToolResult(
@@ -552,13 +602,14 @@ class ToolRegistry(ToolRuntimePort):
                 status="failed",
                 error=f"tool disabled: {resolved_name}",
             )
-        error = _validate_arguments(spec, invocation.arguments)
-        if error:
+        validation = validate_tool_arguments(spec, invocation.arguments)
+        if not validation.ok:
             return ToolResult(
                 call_id=invocation.call_id,
                 tool_name=resolved_name,
                 status="failed",
-                error=error,
+                error=validation.error,
+                metadata={"schema_validation": validation.manifest()},
             )
         normalized = ToolInvocation(
             tool_name=resolved_name,
@@ -783,32 +834,30 @@ class ToolCenter(ToolRuntimePort):
         )
 
 
-def _validate_arguments(spec: ToolSpec, arguments: dict[str, Any]) -> str:
-    schema = spec.parameters_schema or {}
-    required = schema.get("required") or []
-    for key in required:
-        if key not in arguments:
-            return f"tool {spec.name} missing required argument: {key}"
-    properties = schema.get("properties") or {}
-    type_map = {
-        "string": str,
-        "integer": int,
-        "number": (int, float),
-        "boolean": bool,
-        "object": dict,
-        "array": list,
-    }
-    for key, prop_schema in properties.items():
-        if key not in arguments:
-            continue
-        expected = prop_schema.get("type")
-        py_type = type_map.get(str(expected))
-        if py_type and not isinstance(arguments[key], py_type):
-            return (
-                f"tool {spec.name} argument {key} must be {expected}, "
-                f"got {type(arguments[key]).__name__}"
-            )
-    return ""
+def validate_tool_arguments(spec: ToolSpec, arguments: dict[str, Any]) -> SchemaValidationResult:
+    return validate_json_schema_subset(
+        arguments,
+        spec.parameters_schema or {},
+        schema_name=f"tool:{spec.name}",
+        metadata={"tool": tool_manifest_item(spec)},
+    )
+
+
+def _tool_schema_validation_for_runtime(
+    runtime: ToolRuntimePort,
+    invocation: ToolInvocation,
+) -> SchemaValidationResult | None:
+    spec = _tool_spec_for_invocation(runtime, invocation.tool_name)
+    if spec is None:
+        return None
+    return validate_tool_arguments(spec, invocation.arguments)
+
+
+def _tool_spec_for_invocation(runtime: ToolRuntimePort, tool_name: str) -> ToolSpec | None:
+    for spec in runtime.specs():
+        if tool_name == spec.name or tool_name in spec.aliases:
+            return spec
+    return None
 
 
 def schema_from_callable(func: ToolFunction) -> dict[str, Any]:

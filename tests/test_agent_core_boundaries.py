@@ -201,6 +201,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "handoff_spec_from_session",
         "storage_backend_manifest",
         "validate_json_schema_subset",
+        "validate_tool_arguments",
     }
 
     assert expected <= set(agent_core.__all__)

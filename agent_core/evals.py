@@ -92,6 +92,11 @@ class TraceEvalSpec:
     required_tool_execution_ok_names: tuple[str, ...] = ()
     required_tool_retry_names: tuple[str, ...] = ()
     forbidden_tool_retry_names: tuple[str, ...] = ()
+    require_tool_schema_validation: bool = False
+    required_tool_schema_validation_names: tuple[str, ...] = ()
+    required_tool_schema_valid_names: tuple[str, ...] = ()
+    forbidden_tool_schema_invalid_names: tuple[str, ...] = ()
+    max_tool_schema_invalid: int | None = None
     min_tool_attempts: dict[str, int] = field(default_factory=dict)
     require_storage_backends: bool = False
     required_storage_backend_roles: tuple[str, ...] = ()
@@ -150,6 +155,15 @@ class TraceEvalSpec:
             "required_tool_execution_ok_names": list(self.required_tool_execution_ok_names),
             "required_tool_retry_names": list(self.required_tool_retry_names),
             "forbidden_tool_retry_names": list(self.forbidden_tool_retry_names),
+            "require_tool_schema_validation": self.require_tool_schema_validation,
+            "required_tool_schema_validation_names": list(
+                self.required_tool_schema_validation_names
+            ),
+            "required_tool_schema_valid_names": list(self.required_tool_schema_valid_names),
+            "forbidden_tool_schema_invalid_names": list(
+                self.forbidden_tool_schema_invalid_names
+            ),
+            "max_tool_schema_invalid": self.max_tool_schema_invalid,
             "min_tool_attempts": dict(self.min_tool_attempts),
             "require_storage_backends": self.require_storage_backends,
             "required_storage_backend_roles": list(self.required_storage_backend_roles),
@@ -805,6 +819,22 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             )
 
         tool_executions = _tool_execution_summaries(trace)
+        tool_schema_validations = _tool_schema_validations(tool_executions)
+        invalid_tool_schema_validations = tuple(
+            validation for validation in tool_schema_validations if validation.get("ok") is False
+        )
+        tool_schema_validated_names = _tool_schema_validation_values(
+            tool_schema_validations,
+            "tool_name",
+        )
+        tool_schema_valid_names = _tool_schema_validation_values(
+            tuple(validation for validation in tool_schema_validations if validation.get("ok") is True),
+            "tool_name",
+        )
+        tool_schema_invalid_names = _tool_schema_validation_values(
+            invalid_tool_schema_validations,
+            "tool_name",
+        )
         if spec.require_tool_execution and not tool_executions:
             issues.append(
                 TraceEvalIssue(
@@ -883,6 +913,56 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         f"forbidden tool retry present: {tool_name}",
                     )
                 )
+        if spec.require_tool_schema_validation and not tool_schema_validations:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "tool_schema_validation_missing",
+                    "tool schema validation trace is required",
+                )
+            )
+        for tool_name in spec.required_tool_schema_validation_names:
+            if tool_name not in tool_schema_validated_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_tool_schema_validation",
+                        f"required tool schema validation missing: {tool_name}",
+                    )
+                )
+        for tool_name in spec.required_tool_schema_valid_names:
+            if tool_name not in tool_schema_valid_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "tool_schema_not_valid",
+                        f"required tool schema validation did not pass: {tool_name}",
+                    )
+                )
+        for tool_name in spec.forbidden_tool_schema_invalid_names:
+            if tool_name in tool_schema_invalid_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_tool_schema_invalid",
+                        f"forbidden tool schema invalid result present: {tool_name}",
+                    )
+                )
+        if (
+            spec.max_tool_schema_invalid is not None
+            and len(invalid_tool_schema_validations) > spec.max_tool_schema_invalid
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "tool_schema_invalid_limit_exceeded",
+                    "tool schema invalid count exceeded limit",
+                    metadata={
+                        "actual": len(invalid_tool_schema_validations),
+                        "limit": spec.max_tool_schema_invalid,
+                    },
+                )
+            )
         for tool_name, min_attempts in spec.min_tool_attempts.items():
             executions = tool_execution_by_name.get(str(tool_name), ())
             actual = max((int(execution.get("attempt_count") or 0) for execution in executions), default=0)
@@ -929,6 +1009,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     (int(execution.get("attempt_count") or 0) for execution in tool_executions),
                     default=0,
                 ),
+                "tool_schema_validation_count": len(tool_schema_validations),
+                "tool_schema_invalid_count": len(invalid_tool_schema_validations),
+                "tool_schema_validated_names": sorted(tool_schema_validated_names),
+                "tool_schema_valid_names": sorted(tool_schema_valid_names),
+                "tool_schema_invalid_names": sorted(tool_schema_invalid_names),
                 "has_resume": bool(resume),
                 "has_resume_plan": bool(resume_plan),
                 "resume_plan_ready": bool(resume_plan.get("ready")) if resume_plan else False,
@@ -1520,7 +1605,7 @@ def _normalize_tool_execution_summary(
     fallback_tool_name: str = "",
     fallback_call_id: str = "",
 ) -> dict[str, Any]:
-    return {
+    normalized = {
         "schema_version": str(summary.get("schema_version") or "agent-core-tool-execution-summary/v1"),
         "tool_name": str(summary.get("tool_name") or fallback_tool_name),
         "call_id": str(summary.get("call_id") or fallback_call_id),
@@ -1535,6 +1620,10 @@ def _normalize_tool_execution_summary(
             _safe_int(item) for item in summary.get("retryable_attempts") or ()
         ],
     }
+    schema_validation = summary.get("schema_validation")
+    if isinstance(schema_validation, dict):
+        normalized["schema_validation"] = dict(schema_validation)
+    return normalized
 
 
 def _tool_execution_key(summary: dict[str, Any]) -> str:
@@ -1558,6 +1647,31 @@ def _tool_execution_by_name(
             continue
         grouped.setdefault(name, []).append(summary)
     return {key: tuple(value) for key, value in grouped.items()}
+
+
+def _tool_schema_validations(
+    summaries: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    validations = []
+    for summary in summaries:
+        validation = summary.get("schema_validation")
+        if not isinstance(validation, dict):
+            continue
+        validations.append(
+            {
+                **dict(validation),
+                "tool_name": str(summary.get("tool_name") or ""),
+                "call_id": str(summary.get("call_id") or ""),
+            }
+        )
+    return tuple(validations)
+
+
+def _tool_schema_validation_values(
+    validations: tuple[dict[str, Any], ...],
+    key: str,
+) -> set[str]:
+    return {str(item.get(key) or "") for item in validations if item.get(key)}
 
 
 def _safe_int(value: Any) -> int:

@@ -430,6 +430,13 @@ def test_trace_eval_validates_tool_execution_retry_contracts() -> None:
                             "final_ok": True,
                             "attempt_statuses": ["failed", "completed"],
                             "retryable_attempts": [1],
+                            "schema_validation": {
+                                "schema_version": "agent-core-schema-validation-result/v1",
+                                "ok": True,
+                                "schema_name": "tool:lookup",
+                                "issue_count": 0,
+                                "issues": [],
+                            },
                         },
                     },
                 },
@@ -444,6 +451,9 @@ def test_trace_eval_validates_tool_execution_retry_contracts() -> None:
             required_tool_execution_names=("lookup",),
             required_tool_execution_ok_names=("lookup",),
             required_tool_retry_names=("lookup",),
+            require_tool_schema_validation=True,
+            required_tool_schema_validation_names=("lookup",),
+            required_tool_schema_valid_names=("lookup",),
             min_tool_attempts={"lookup": 2},
         ),
     )
@@ -456,6 +466,8 @@ def test_trace_eval_validates_tool_execution_retry_contracts() -> None:
     assert report.summary["tool_execution_count"] == 1
     assert report.summary["retried_tool_names"] == ["lookup"]
     assert report.summary["max_tool_attempt_count"] == 2
+    assert report.summary["tool_schema_validation_count"] == 1
+    assert report.summary["tool_schema_valid_names"] == ["lookup"]
     assert not forbidden.ok
     assert {issue.code for issue in forbidden.issues} == {"forbidden_tool_retry"}
 
@@ -481,6 +493,69 @@ def test_trace_eval_reports_tool_execution_contract_failures() -> None:
         "missing_tool_retry",
         "tool_attempts_below_minimum",
     } <= codes
+
+
+def test_trace_eval_reports_tool_schema_validation_contract_failures() -> None:
+    trace = {
+        **_trace_manifest(),
+        "event_log": {
+            "event_count": 1,
+            "events": [
+                {
+                    "type": "tool_finished",
+                    "run_id": "run-1",
+                    "payload": {
+                        "tool_name": "lookup",
+                        "call_id": "call-1",
+                        "execution": {
+                            "schema_version": "agent-core-tool-execution-summary/v1",
+                            "tool_name": "lookup",
+                            "call_id": "call-1",
+                            "attempt_count": 1,
+                            "retried": False,
+                            "final_status": "failed",
+                            "final_ok": False,
+                            "attempt_statuses": ["schema_invalid"],
+                            "retryable_attempts": [],
+                            "schema_validation": {
+                                "schema_version": "agent-core-schema-validation-result/v1",
+                                "ok": False,
+                                "schema_name": "tool:lookup",
+                                "issue_count": 1,
+                                "issues": [{"code": "required_missing", "path": "$.query"}],
+                            },
+                        },
+                    },
+                }
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_tool_schema_validation_names=("scan",),
+            required_tool_schema_valid_names=("lookup",),
+            forbidden_tool_schema_invalid_names=("lookup",),
+            max_tool_schema_invalid=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(require_tool_schema_validation=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_tool_schema_validation",
+        "tool_schema_not_valid",
+        "forbidden_tool_schema_invalid",
+        "tool_schema_invalid_limit_exceeded",
+    } <= codes
+    assert report.summary["tool_schema_invalid_names"] == ["lookup"]
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"tool_schema_validation_missing"}
 
 
 def test_trace_eval_validates_storage_backend_contracts() -> None:
