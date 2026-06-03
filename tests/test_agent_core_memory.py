@@ -7,8 +7,10 @@ from agent_core.memory import (
     InMemoryMemoryStore,
     MarkdownMemoryStore,
     MemoryCenter,
+    MemoryHit,
     MemoryGovernanceDeniedError,
     MemoryQuery,
+    MemoryRoute,
     MemoryStoreNotFoundError,
     MemoryWrite,
     RuleBasedMemoryGovernance,
@@ -17,6 +19,20 @@ from agent_core.memory import (
 from agent_core.prompt import PromptIR
 from agent_core.react import ReActExecutor
 from agent_core.testing import InMemoryHarness, MockLLMProvider, MockToolRuntime
+
+
+class _RecordingMemoryStore:
+    def __init__(self, hits: tuple[MemoryHit, ...] = ()) -> None:
+        self.hits = hits
+        self.queries: list[MemoryQuery] = []
+        self.writes: list[MemoryWrite] = []
+
+    async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
+        self.queries.append(query)
+        return self.hits
+
+    async def write(self, item: MemoryWrite) -> None:
+        self.writes.append(item)
 
 
 @pytest.mark.asyncio
@@ -123,6 +139,8 @@ async def test_memory_center_routes_writes_and_aggregates_search(tmp_path) -> No
     assert markdown_hits[0].source == "note"
     assert markdown_hits[0].metadata["store"] == "markdown"
     assert center.manifest()["stores"][0]["name"] == "sqlite"
+    assert center.manifest()["stores"][0]["backend_kind"] == "sqlite"
+    assert center.manifest()["stores"][1]["backend_kind"] == "markdown"
     assert center.search_stores(tag="notes")[0].name == "markdown"
 
 
@@ -249,4 +267,113 @@ async def test_memory_governance_truncates_large_writes() -> None:
 
     assert store.records[0].content == "x" * 12
     assert store.records[0].metadata["memory_truncated"] is True
+
+
+def test_memory_query_route_and_plan_manifest_for_external_backends() -> None:
+    center = MemoryCenter(default_store="pg")
+    center.register(
+        "pg",
+        _RecordingMemoryStore(),
+        priority=10,
+        backend_kind="postgres",
+        namespaces=("project-a",),
+        tags=("durable", "tenant"),
+        metadata={"dsn_ref": "env:MEMORY_DSN"},
+    )
+    center.register(
+        "vector",
+        _RecordingMemoryStore(),
+        priority=20,
+        backend_kind="vector",
+        supports_vector=True,
+        namespaces=("project-a",),
+        tags=("semantic",),
+    )
+
+    query = MemoryQuery(
+        query="admin panel",
+        limit=3,
+        mode="vector",
+        namespace="project-a",
+        vector=(0.1, 0.2, 0.3),
+        entities=("service:admin",),
+        filters={"tags": ("semantic",), "target": "web"},
+        min_score=0.4,
+    )
+    route = MemoryRoute.from_query(query)
+    plan = center.plan_search(query)
+    manifest = plan.manifest()
+
+    assert route.namespace == "project-a"
+    assert route.tags == ("semantic",)
+    assert query.manifest()["vector_dimensions"] == 3
+    assert [store.name for store in plan.selected_stores] == ["vector"]
+    assert plan.backend_filters == {"target": "web"}
+    assert manifest["selected_stores"][0]["backend_kind"] == "vector"
+    assert manifest["query"]["has_vector"] is True
+    assert manifest["route"]["mode"] == "vector"
+
+
+@pytest.mark.asyncio
+async def test_memory_center_routes_by_mode_namespace_and_filters_min_score() -> None:
+    vector = _RecordingMemoryStore(
+        (
+            MemoryHit(content="close hit", score=0.91, source="vector"),
+            MemoryHit(content="weak hit", score=0.2, source="vector"),
+        )
+    )
+    graph = _RecordingMemoryStore((MemoryHit(content="service node", score=0.8, source="graph"),))
+    center = MemoryCenter()
+    center.register(
+        "vector",
+        vector,
+        backend_kind="vector",
+        supports_vector=True,
+        namespaces=("project-a",),
+    )
+    center.register(
+        "graph",
+        graph,
+        backend_kind="graph",
+        supports_graph=True,
+        namespaces=("project-a",),
+    )
+
+    vector_hits = await center.search(
+        MemoryQuery(
+            query="admin",
+            mode="vector",
+            namespace="project-a",
+            vector=(0.5, 0.1),
+            filters={"kind": "finding"},
+            min_score=0.5,
+        )
+    )
+    graph_hits = await center.search(
+        MemoryQuery(
+            query="admin",
+            mode="graph",
+            namespace="project-a",
+            entities=("service:admin",),
+        )
+    )
+
+    assert [hit.content for hit in vector_hits] == ["close hit"]
+    assert vector.queries[0].mode == "vector"
+    assert vector.queries[0].namespace == "project-a"
+    assert vector.queries[0].filters == {"kind": "finding"}
+    assert vector.queries[0].vector == (0.5, 0.1)
+    assert [hit.content for hit in graph_hits] == ["service node"]
+    assert graph.queries[0].entities == ("service:admin",)
+
+
+def test_builtin_memory_store_manifests_describe_backend_shape(tmp_path) -> None:
+    in_memory = InMemoryMemoryStore()
+    sqlite = SQLiteMemoryStore(tmp_path / "memory.sqlite")
+    markdown = MarkdownMemoryStore(tmp_path / "notes")
+
+    assert in_memory.manifest()["backend_kind"] == "in_memory"
+    assert sqlite.manifest()["schema_version"] == "agent-core-sqlite-memory-store/v1"
+    assert sqlite.manifest()["backend_kind"] == "sqlite"
+    assert markdown.manifest()["backend_kind"] == "markdown"
 

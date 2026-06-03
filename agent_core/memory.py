@@ -14,11 +14,109 @@ from typing import Any, Literal, Protocol
 from agent_core.search import SearchDocument, rank_documents
 
 
+MemoryBackendKind = Literal[
+    "in_memory",
+    "sqlite",
+    "markdown",
+    "postgres",
+    "vector",
+    "graph",
+    "product",
+    "custom",
+]
+MemoryQueryMode = Literal["keyword", "semantic", "vector", "graph", "hybrid"]
+
+
 @dataclass(frozen=True)
 class MemoryQuery:
     query: str
     limit: int = 5
     filters: dict[str, Any] = field(default_factory=dict)
+    mode: MemoryQueryMode = "hybrid"
+    namespace: str = ""
+    vector: tuple[float, ...] = ()
+    entities: tuple[str, ...] = ()
+    min_score: float | None = None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-query/v1",
+            "query": self.query,
+            "limit": self.limit,
+            "filters": dict(self.filters),
+            "mode": self.mode,
+            "namespace": self.namespace,
+            "has_vector": bool(self.vector),
+            "vector_dimensions": len(self.vector),
+            "entities": list(self.entities),
+            "min_score": self.min_score,
+        }
+
+
+@dataclass(frozen=True)
+class MemoryRoute:
+    store: str = ""
+    stores: tuple[str, ...] = ()
+    namespace: str = ""
+    tags: tuple[str, ...] = ()
+    mode: MemoryQueryMode | None = None
+
+    @classmethod
+    def from_query(cls, query: MemoryQuery) -> "MemoryRoute":
+        store = str(query.filters.get("store") or "")
+        stores_filter = query.filters.get("stores") or ()
+        if isinstance(stores_filter, str):
+            stores = (stores_filter,)
+        else:
+            stores = tuple(str(item) for item in stores_filter)
+        tags_filter = query.filters.get("tags") or query.filters.get("tag") or ()
+        if isinstance(tags_filter, str):
+            tags = (tags_filter,)
+        else:
+            tags = tuple(str(item) for item in tags_filter)
+        return cls(
+            store=store,
+            stores=stores,
+            namespace=str(query.namespace or query.filters.get("namespace") or ""),
+            tags=tags,
+            mode=query.mode,
+        )
+
+    def requested_store_names(self) -> tuple[str, ...]:
+        names = []
+        if self.store:
+            names.append(self.store)
+        names.extend(self.stores)
+        return tuple(dict.fromkeys(names))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-route/v1",
+            "store": self.store,
+            "stores": list(self.stores),
+            "namespace": self.namespace,
+            "tags": list(self.tags),
+            "mode": self.mode,
+        }
+
+
+@dataclass(frozen=True)
+class MemorySearchPlan:
+    query: MemoryQuery
+    route: MemoryRoute
+    selected_stores: tuple["MemoryStoreSpec", ...] = ()
+    backend_filters: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-search-plan/v1",
+            "query": self.query.manifest(),
+            "route": self.route.manifest(),
+            "selected_store_count": len(self.selected_stores),
+            "selected_stores": [store.manifest() for store in self.selected_stores],
+            "backend_filters": dict(self.backend_filters),
+        }
+
 
 
 @dataclass(frozen=True)
@@ -58,6 +156,12 @@ class MemoryStoreSpec:
     priority: int = 0
     readable: bool = True
     writable: bool = True
+    backend_kind: MemoryBackendKind = "custom"
+    namespaces: tuple[str, ...] = ()
+    supports_keyword: bool = True
+    supports_semantic: bool = True
+    supports_vector: bool = False
+    supports_graph: bool = False
     tags: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -67,6 +171,14 @@ class MemoryStoreSpec:
             "priority": self.priority,
             "readable": self.readable,
             "writable": self.writable,
+            "backend_kind": self.backend_kind,
+            "namespaces": list(self.namespaces),
+            "capabilities": {
+                "keyword": self.supports_keyword,
+                "semantic": self.supports_semantic,
+                "vector": self.supports_vector,
+                "graph": self.supports_graph,
+            },
             "tags": list(self.tags),
             "metadata": dict(self.metadata),
         }
@@ -275,17 +387,32 @@ class MemoryCenter(MemoryPort):
         priority: int = 0,
         readable: bool = True,
         writable: bool = True,
+        backend_kind: MemoryBackendKind = "custom",
+        namespaces: tuple[str, ...] = (),
+        supports_keyword: bool = True,
+        supports_semantic: bool = True,
+        supports_vector: bool = False,
+        supports_graph: bool = False,
         tags: tuple[str, ...] = (),
         metadata: dict[str, Any] | None = None,
     ) -> None:
         if not name:
             raise ValueError("memory store name is required")
+        resolved_backend_kind = (
+            _infer_memory_backend_kind(store) if backend_kind == "custom" else backend_kind
+        )
         self._stores[name] = _MemoryStoreMount(
             spec=MemoryStoreSpec(
                 name=name,
                 priority=priority,
                 readable=readable,
                 writable=writable,
+                backend_kind=resolved_backend_kind,
+                namespaces=tuple(namespaces),
+                supports_keyword=supports_keyword,
+                supports_semantic=supports_semantic,
+                supports_vector=supports_vector,
+                supports_graph=supports_graph,
                 tags=tuple(tags),
                 metadata=dict(metadata or {}),
             ),
@@ -316,25 +443,44 @@ class MemoryCenter(MemoryPort):
 
     def manifest(self) -> dict[str, Any]:
         return {
+            "schema_version": "agent-core-memory-center/v1",
             "default_store": self.default_store,
             "stores": [spec.manifest() for spec in self.specs()],
         }
 
-    async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
-        store_filter = query.filters.get("store")
-        stores_filter = query.filters.get("stores")
+    def plan_search(self, query: MemoryQuery) -> MemorySearchPlan:
+        route = MemoryRoute.from_query(query)
         backend_filters = {
-            key: value for key, value in query.filters.items() if key not in {"store", "stores"}
+            key: value
+            for key, value in query.filters.items()
+            if key not in {"store", "stores", "tag", "tags"}
         }
-        mounts = self._select_read_mounts(store_filter=store_filter, stores_filter=stores_filter)
+        mounts = self._select_read_mounts(route=route)
+        return MemorySearchPlan(
+            query=query,
+            route=route,
+            selected_stores=tuple(mount.spec for mount in mounts),
+            backend_filters=backend_filters,
+        )
+
+    async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
+        plan = self.plan_search(query)
+        mounts = tuple(self._stores[spec.name] for spec in plan.selected_stores)
         hits: list[tuple[int, int, MemoryHit]] = []
         for mount in mounts:
             store_query = MemoryQuery(
                 query=query.query,
                 limit=query.limit,
-                filters=dict(backend_filters),
+                filters=dict(plan.backend_filters),
+                mode=query.mode,
+                namespace=query.namespace,
+                vector=tuple(query.vector),
+                entities=tuple(query.entities),
+                min_score=query.min_score,
             )
             for index, hit in enumerate(await mount.store.search(store_query)):
+                if query.min_score is not None and hit.score < query.min_score:
+                    continue
                 hits.append(
                     (
                         mount.spec.priority,
@@ -377,23 +523,16 @@ class MemoryCenter(MemoryPort):
     def _select_read_mounts(
         self,
         *,
-        store_filter: Any,
-        stores_filter: Any,
+        route: MemoryRoute,
     ) -> tuple[_MemoryStoreMount, ...]:
-        if store_filter:
-            names = {str(store_filter)}
-        elif stores_filter:
-            if isinstance(stores_filter, str):
-                names = {stores_filter}
-            else:
-                names = {str(name) for name in stores_filter}
-        else:
-            names = set()
+        names = set(route.requested_store_names())
 
         mounts = tuple(
             mount
             for mount in self._ordered_mounts()
-            if mount.spec.readable and (not names or mount.spec.name in names)
+            if mount.spec.readable
+            and (not names or mount.spec.name in names)
+            and _store_supports_route(mount.spec, route)
         )
         if names and len(mounts) != len(names):
             missing = sorted(names - {mount.spec.name for mount in mounts})
@@ -446,6 +585,13 @@ class InMemoryMemoryStore(MemoryPort):
             )
         )
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-in-memory-memory-store/v1",
+            "backend_kind": "in_memory",
+            "record_count": len(self.records),
+        }
+
 
 class SQLiteMemoryStore(MemoryPort):
     """Small SQLite-backed memory store for core and lightweight runtimes."""
@@ -474,6 +620,14 @@ class SQLiteMemoryStore(MemoryPort):
                 ),
             )
             conn.commit()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-sqlite-memory-store/v1",
+            "backend_kind": "sqlite",
+            "path": str(self.path),
+            "record_count": len(self._records()),
+        }
 
     def _init(self) -> None:
         with sqlite3.connect(self.path) as conn:
@@ -546,6 +700,15 @@ class MarkdownMemoryStore(MemoryPort):
             )
             handle.write(item.content.strip() + "\n")
             handle.write("<!-- /memory-entry -->\n")
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-markdown-memory-store/v1",
+            "backend_kind": "markdown",
+            "root": str(self.root),
+            "path": str(self.path),
+            "record_count": len(self._records()),
+        }
 
     def _records(self) -> tuple[MemoryRecord, ...]:
         records: list[MemoryRecord] = []
@@ -654,6 +817,54 @@ def _matches_filters(record: MemoryRecord, filters: dict[str, Any]) -> bool:
         if actual != expected:
             return False
     return True
+
+
+def _store_supports_route(spec: MemoryStoreSpec, route: MemoryRoute) -> bool:
+    if route.tags and not all(tag in spec.tags for tag in route.tags):
+        return False
+    if route.namespace and spec.namespaces and route.namespace not in spec.namespaces:
+        return False
+    mode = route.mode or "hybrid"
+    if mode == "keyword":
+        return spec.supports_keyword
+    if mode == "semantic":
+        return spec.supports_semantic
+    if mode == "vector":
+        return spec.supports_vector or spec.backend_kind in {"vector", "product"}
+    if mode == "graph":
+        return spec.supports_graph or spec.backend_kind in {"graph", "product"}
+    if mode == "hybrid":
+        return spec.supports_keyword or spec.supports_semantic or spec.supports_vector or spec.supports_graph
+    return True
+
+
+def _infer_memory_backend_kind(store: MemoryPort) -> MemoryBackendKind:
+    if isinstance(store, InMemoryMemoryStore):
+        return "in_memory"
+    if isinstance(store, SQLiteMemoryStore):
+        return "sqlite"
+    if isinstance(store, MarkdownMemoryStore):
+        return "markdown"
+    manifest = getattr(store, "manifest", None)
+    if callable(manifest):
+        try:
+            value = manifest()
+        except Exception:
+            value = {}
+        if isinstance(value, dict):
+            backend_kind = str(value.get("backend_kind") or "")
+            if backend_kind in {
+                "in_memory",
+                "sqlite",
+                "markdown",
+                "postgres",
+                "vector",
+                "graph",
+                "product",
+                "custom",
+            }:
+                return backend_kind  # type: ignore[return-value]
+    return "custom"
 
 
 def _risk_level_for_scope(scope: Any) -> Literal["low", "medium", "high"]:

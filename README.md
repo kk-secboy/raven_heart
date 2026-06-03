@@ -297,6 +297,10 @@ provider-neutral request/response/stream shapes and error/retry mapping.
 ### Memory
 
 - `MemoryCenter` and `MemoryPort`.
+- `MemoryQuery.mode` for keyword, semantic, vector, graph, and hybrid recall.
+- `MemoryStoreSpec.backend_kind`, namespace, and capability flags for
+  Postgres/vector/graph/product stores implemented outside core.
+- `MemorySearchPlan` and `MemoryRoute` for prompt-safe, traceable store routing.
 - In-memory memory store.
 - SQLite memory store.
 - Markdown memory store.
@@ -323,7 +327,9 @@ The SDK core treats data backends as ports, not as product commitments:
 
 This keeps `agent_core` small and importable while still leaving a clean path to
 production storage. A runtime should bring its own durable backends when it needs
-PG, graph memory, multi-tenant isolation, retention policy, or product audit.
+PG, graph memory, vector indexing, multi-tenant isolation, retention policy, or
+product audit. The SDK still owns the portable route/query manifest so these
+backends can be swapped without changing ReAct or harness semantics.
 
 ### Planner
 
@@ -466,6 +472,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Skill center | MVP implemented |
 | MCP center | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
+| Memory backend routing/specs | MVP implemented |
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |
 | Prompt buckets/trimming | MVP implemented |

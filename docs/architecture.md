@@ -148,6 +148,15 @@ The SDK ships in-memory, SQLite, and Markdown stores for local or inspectable
 replay. Production PG/object-storage backends should live in the runtime or a
 separate adapter package.
 
+`MemoryPort` is the execution dependency for long-term recall, while
+`MemoryCenter` carries richer backend contracts through `MemoryStoreSpec`,
+`MemoryQuery`, `MemoryRoute`, and `MemorySearchPlan`. Query modes cover keyword,
+semantic, vector, graph, and hybrid retrieval; store specs advertise backend
+kind, namespace coverage, tags, and vector/graph capability flags. This lets a
+runtime mount PG, vector DB, graph/RAG, or product-memory adapters without
+changing runner/ReAct code, while the SDK still records a prompt-safe route and
+query plan for trace/replay.
+
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; inspectable or local durable runs can use
 `SQLiteEventSink` or `MarkdownEventSink`. Production runtimes should implement
@@ -249,3 +258,9 @@ When memory is enabled on an `AgentSession`, `AgentRunner` recalls memory throug
 `MemoryPort` and injects the rendered hits as `ContextInjection(source="memory")`.
 Standalone `ReActExecutor` still supports direct memory messages for tests and
 small embeddings that do not use the full runner.
+
+`MemorySearchPlan` is intentionally separate from the storage implementation.
+It proves which stores were selected, which route filters were consumed by the
+center, and which backend filters were passed through. Concrete PG/vector/graph
+stores can translate the same `MemoryQuery` fields into SQL, vector search,
+graph traversal, or product APIs outside this repository.
