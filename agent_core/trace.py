@@ -172,6 +172,35 @@ class MemoryGovernanceTrace:
         }
 
 
+class ToolCenterTrace:
+    """Run-level summary of ToolCenter route and call audit records."""
+
+    @staticmethod
+    def from_session(session: dict[str, Any]) -> dict[str, Any]:
+        tools = session.get("tools") if isinstance(session.get("tools"), dict) else {}
+        if tools.get("schema_version") != "agent-core-tool-center/v1":
+            return {}
+        calls = tuple(dict(item) for item in _dict_items(tools.get("calls")))
+        route_plans = tuple(
+            dict(call.get("route_plan"))
+            for call in calls
+            if isinstance(call.get("route_plan"), dict)
+        )
+        failed = tuple(call for call in calls if str(call.get("status") or "") != "completed")
+        ready_plans = tuple(plan for plan in route_plans if plan.get("ready") is True)
+        return {
+            "schema_version": "agent-core-tool-center-trace/v1",
+            "call_count": len(calls),
+            "failed_count": len(failed),
+            "route_plan_count": len(route_plans),
+            "ready_route_plan_count": len(ready_plans),
+            "selected_mounts": _count_route_field(route_plans, "selected_mount"),
+            "selected_tools": _count_route_field(route_plans, "selected_tool_name"),
+            "requested_tools": _count_call_field(calls, "requested_tool_name"),
+            "calls": [dict(call) for call in calls],
+        }
+
+
 @dataclass(frozen=True)
 class TraceCorrelationEntry:
     """One normalized pointer into trace materials."""
@@ -316,6 +345,7 @@ class AgentRunTraceBundle:
         context_injections = self.context_injections or ContextInjectionTrace.from_prompt(
             self.prompt
         ).manifest()
+        tool_center = ToolCenterTrace.from_session(self.session)
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
@@ -346,6 +376,9 @@ class AgentRunTraceBundle:
                 "provider_call_count": int(self.provider.get("call_count") or 0),
                 "embedding_call_count": int(self.embedding.get("call_count") or 0),
                 "tool_replay_record_count": int(self.tool_replay.get("record_count") or 0),
+                "tool_center_call_count": int(tool_center.get("call_count") or 0),
+                "tool_center_failed_count": int(tool_center.get("failed_count") or 0),
+                "tool_center_route_plan_count": int(tool_center.get("route_plan_count") or 0),
                 "policy_decision_record_count": int(self.policy_decisions.get("record_count") or 0),
                 "approval_record_count": int(self.approvals.get("record_count") or 0),
                 "event_log_count": int(self.event_log.get("event_count") or 0),
@@ -399,6 +432,7 @@ class AgentRunTraceBundle:
             "provider": dict(self.provider),
             "embedding": dict(self.embedding),
             "tool_replay": dict(self.tool_replay),
+            "tool_center": dict(tool_center),
             "policy_decisions": dict(self.policy_decisions),
             "approvals": dict(self.approvals),
             "event_log": dict(self.event_log),
@@ -466,6 +500,26 @@ def _count_injection_field(injections: tuple[dict[str, Any], ...], field_name: s
     counts: dict[str, int] = {}
     for injection in injections:
         value = str(injection.get(field_name) or "")
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _count_call_field(calls: tuple[dict[str, Any], ...], field_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for call in calls:
+        value = str(call.get(field_name) or "")
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _count_route_field(route_plans: tuple[dict[str, Any], ...], field_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for plan in route_plans:
+        value = str(plan.get(field_name) or "")
         if not value:
             continue
         counts[value] = counts.get(value, 0) + 1

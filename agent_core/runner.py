@@ -121,6 +121,7 @@ class AgentSession:
                 },
             },
             "provider": _component_manifest_sync(self.provider),
+            "tools": _component_manifest_sync(self.tools),
             "harness": _component_manifest_sync(self.harness),
             "capabilities": self.capability_catalog().manifest(),
             "memory": _component_manifest_sync(self.memory),

@@ -210,6 +210,39 @@ def _trace_manifest() -> dict[str, object]:
                 }
             ],
         },
+        "tool_center": {
+            "schema_version": "agent-core-tool-center-trace/v1",
+            "call_count": 2,
+            "failed_count": 1,
+            "route_plan_count": 2,
+            "ready_route_plan_count": 1,
+            "selected_mounts": {"local": 1},
+            "selected_tools": {"lookup": 1},
+            "requested_tools": {"lookup": 1, "missing": 1},
+            "calls": [
+                {
+                    "requested_tool_name": "lookup",
+                    "status": "completed",
+                    "route_plan": {
+                        "schema_version": "agent-core-tool-route-plan/v1",
+                        "ready": True,
+                        "selected_mount": "local",
+                        "selected_tool_name": "lookup",
+                    },
+                },
+                {
+                    "requested_tool_name": "missing",
+                    "status": "failed",
+                    "error": "unknown tool: missing",
+                    "route_plan": {
+                        "schema_version": "agent-core-tool-route-plan/v1",
+                        "ready": False,
+                        "selected_mount": "",
+                        "selected_tool_name": "",
+                    },
+                },
+            ],
+        },
         "storage_backends": {
             "schema_version": "agent-core-storage-backend-trace/v1",
             "backend_count": 3,
@@ -1273,6 +1306,58 @@ def test_trace_eval_reports_tool_schema_validation_contract_failures() -> None:
     assert report.summary["tool_schema_invalid_names"] == ["lookup"]
     assert not missing.ok
     assert {issue.code for issue in missing.issues} == {"tool_schema_validation_missing"}
+
+
+def test_trace_eval_validates_tool_center_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_tool_center=True,
+            required_tool_center_selected_mounts=("local",),
+            required_tool_center_selected_tools=("lookup",),
+            required_tool_center_requested_tools=("lookup", "missing"),
+            max_tool_center_failed_calls=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_tool_center"] is True
+    assert report.summary["tool_center_call_count"] == 2
+    assert report.summary["tool_center_failed_count"] == 1
+    assert report.summary["tool_center_route_plan_count"] == 2
+    assert report.summary["tool_center_not_ready_route_count"] == 1
+    assert report.summary["tool_center_selected_mounts"] == ["local"]
+    assert report.summary["tool_center_selected_tools"] == ["lookup"]
+    assert report.summary["tool_center_requested_tools"] == ["lookup", "missing"]
+
+
+def test_trace_eval_reports_tool_center_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_tool_center_selected_mounts=("mcp",),
+            required_tool_center_selected_tools=("scan",),
+            required_tool_center_requested_tools=("scan",),
+            require_tool_center_ready_routes=True,
+            max_tool_center_failed_calls=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "tool_center"},
+        TraceEvalSpec(require_tool_center=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_tool_center_selected_mount",
+        "missing_tool_center_selected_tool",
+        "missing_tool_center_requested_tool",
+        "tool_center_route_not_ready",
+        "tool_center_failed_call_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"tool_center_missing"}
 
 
 def test_trace_eval_validates_storage_backend_contracts() -> None:

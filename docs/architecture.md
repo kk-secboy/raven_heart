@@ -139,7 +139,8 @@ provider-native tool-call presence/names, required events, required tools,
 cost ceilings, event ordering, journal integrity,
 resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, tool execution presence,
-tool retry, minimum tool attempt counts, required storage backend roles/kinds,
+tool retry, minimum tool attempt counts, ToolCenter selected mount/tool and
+failed-call constraints, required storage backend roles/kinds,
 forbidden backend kinds, external-backend limits, event-log presence/types,
 terminal events, sequence monotonicity, duplicate sequence limits, lifecycle
 hook event/status/failure constraints, required context injection
@@ -294,6 +295,9 @@ will handle a requested name or alias, including disabled/unknown candidates
 when the mounted runtime exposes them. `ToolCenterCallRecord` records the
 selected route and prompt-safe result manifest after invocation, while concrete
 tool side effects and runtime process/network isolation remain outside the SDK.
+`ToolCenterTrace` lifts those route/call records into run traces so eval suites
+can require selected mounts, selected concrete tools, requested names, ready
+route plans, and failed-call ceilings without understanding the runtime.
 
 `ToolExecutionCenter` wraps any `ToolRuntimePort` with provider-neutral retry
 and audit semantics. `ToolRetryPolicy` decides whether retryable failed results

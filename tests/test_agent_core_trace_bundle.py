@@ -13,6 +13,7 @@ from agent_core.testing import MockLLMProvider
 from agent_core.tools import (
     InMemoryToolReplayStore,
     PersistentToolReplay,
+    ToolCenter,
     ToolInvocation,
     ToolRegistry,
     ToolResult,
@@ -388,11 +389,13 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     center.register("mock", provider, default_model="mock-mini")
     tools = ToolRegistry()
     tools.register(ToolSpec(name="lookup"), _lookup)
+    tool_center = ToolCenter()
+    tool_center.mount("local", tools)
     event_sink = ListEventSink()
     session = AgentSession(
         profile=AgentProfile(name="traceable", model="mock-mini"),
         provider=center,
-        tools=tools,
+        tools=tool_center,
         harness=PersistentAgentJournal(InMemoryJournalStore()),
         memory=InMemoryMemoryStore(),
         event_sink=event_sink,
@@ -413,6 +416,9 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     assert trace["summary"]["journal_event_count"] > 0
     assert trace["summary"]["provider_call_count"] == 2
     assert trace["summary"]["tool_replay_record_count"] == 1
+    assert trace["summary"]["tool_center_call_count"] == 1
+    assert trace["summary"]["tool_center_failed_count"] == 0
+    assert trace["summary"]["tool_center_route_plan_count"] == 1
     assert trace["summary"]["policy_decision_record_count"] == 3
     assert trace["summary"]["event_log_count"] == event_sink.manifest()["event_count"]
     assert trace["summary"]["correlation_entry_count"] > 0
@@ -422,6 +428,9 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     assert trace["provider"]["calls"][0]["provider_name"] == "mock"
     assert trace["provider"]["calls"][0]["metadata"]["request"]["metadata"]["run_id"] == outcome.result.run_id
     assert trace["tool_replay"]["records"][0]["result"]["tool_name"] == "lookup"
+    assert trace["tool_center"]["calls"][0]["route_plan"]["selected_mount"] == "local"
+    assert trace["tool_center"]["calls"][0]["route_plan"]["selected_tool_name"] == "lookup"
+    assert trace["tool_center"]["selected_mounts"] == {"local": 1}
     assert trace["policy_decisions"]["records"][1]["subject"] == "tool:lookup"
     call_id = trace["tool_replay"]["records"][0]["result"]["call_id"]
     assert trace["correlation"]["groups"]["calls"][call_id]

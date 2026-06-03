@@ -242,7 +242,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   embedding call limits, required embedding providers/models/dimensions,
   required events, required tools, resume-plan presence, resume-plan readiness,
   expected checkpoint id, tool execution presence, tool retry, tool schema
-  validation, minimum tool attempt counts, storage backend constraints,
+  validation, minimum tool attempt counts, ToolCenter route/call audit
+  constraints, storage backend constraints,
   lifecycle hook constraints, event-log presence, event-log types, terminal
   events, event sequence monotonicity, duplicate sequence limits,
   context injection name/source/target/status constraints, included/trimmed/
@@ -388,6 +389,7 @@ calling any concrete model client.
 - Tool tags, aliases, manifests, inventory, and search.
 - `ToolRoutePlan`, `ToolRouteCandidate`, and `ToolCenterCallRecord` for
   prompt-safe preflight routing and call audit across mounted tool runtimes.
+- `ToolCenterTrace` for run-level route/call summaries and eval contracts.
 - `ToolExecutionCenter`, `ToolRetryPolicy`, and tool execution attempt records
   for retryable failure recovery and audit.
 - `validate_tool_arguments()` and pre-execution schema validation for
@@ -668,6 +670,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Interrupt/cancel/timeout semantics | MVP implemented |
 | Tool center | MVP implemented |
 | Tool center route/call audit | MVP implemented |
+| Tool center trace/eval contracts | MVP implemented |
 | Tool replay store | MVP implemented |
 | Skill center | MVP implemented |
 | MCP center | MVP implemented |

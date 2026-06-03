@@ -126,6 +126,12 @@ class TraceEvalSpec:
     forbidden_tool_schema_invalid_names: tuple[str, ...] = ()
     max_tool_schema_invalid: int | None = None
     min_tool_attempts: dict[str, int] = field(default_factory=dict)
+    require_tool_center: bool = False
+    required_tool_center_selected_mounts: tuple[str, ...] = ()
+    required_tool_center_selected_tools: tuple[str, ...] = ()
+    required_tool_center_requested_tools: tuple[str, ...] = ()
+    require_tool_center_ready_routes: bool = False
+    max_tool_center_failed_calls: int | None = None
     require_storage_backends: bool = False
     required_storage_backend_roles: tuple[str, ...] = ()
     required_storage_backend_kinds: tuple[str, ...] = ()
@@ -251,6 +257,18 @@ class TraceEvalSpec:
             ),
             "max_tool_schema_invalid": self.max_tool_schema_invalid,
             "min_tool_attempts": dict(self.min_tool_attempts),
+            "require_tool_center": self.require_tool_center,
+            "required_tool_center_selected_mounts": list(
+                self.required_tool_center_selected_mounts
+            ),
+            "required_tool_center_selected_tools": list(
+                self.required_tool_center_selected_tools
+            ),
+            "required_tool_center_requested_tools": list(
+                self.required_tool_center_requested_tools
+            ),
+            "require_tool_center_ready_routes": self.require_tool_center_ready_routes,
+            "max_tool_center_failed_calls": self.max_tool_center_failed_calls,
             "require_storage_backends": self.require_storage_backends,
             "required_storage_backend_roles": list(self.required_storage_backend_roles),
             "required_storage_backend_kinds": list(self.required_storage_backend_kinds),
@@ -575,6 +593,27 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         lifecycle_hook_failure_count = _lifecycle_hook_failure_count(lifecycle_hook_records)
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
+        tool_center = _tool_center_trace(trace)
+        tool_center_calls = _tool_center_calls(tool_center)
+        tool_center_route_plans = _tool_center_route_plans(tool_center_calls)
+        tool_center_selected_mounts = _tool_center_route_values(
+            tool_center_route_plans,
+            "selected_mount",
+        )
+        tool_center_selected_tools = _tool_center_route_values(
+            tool_center_route_plans,
+            "selected_tool_name",
+        )
+        tool_center_requested_tools = _tool_center_call_values(
+            tool_center_calls,
+            "requested_tool_name",
+        )
+        failed_tool_center_calls = tuple(
+            call for call in tool_center_calls if str(call.get("status") or "") != "completed"
+        )
+        not_ready_tool_center_routes = tuple(
+            plan for plan in tool_center_route_plans if plan.get("ready") is not True
+        )
         storage_backends = _storage_backends(trace)
         storage_backend_roles = _storage_backend_values(storage_backends, "role")
         storage_backend_kinds = _storage_backend_values(storage_backends, "kind")
@@ -1714,6 +1753,66 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     )
                 )
 
+        if spec.require_tool_center and not tool_center:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "tool_center_missing",
+                    "tool center trace is required",
+                )
+            )
+        for mount in spec.required_tool_center_selected_mounts:
+            if mount not in tool_center_selected_mounts:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_tool_center_selected_mount",
+                        f"required tool center selected mount missing: {mount}",
+                    )
+                )
+        for tool_name in spec.required_tool_center_selected_tools:
+            if tool_name not in tool_center_selected_tools:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_tool_center_selected_tool",
+                        f"required tool center selected tool missing: {tool_name}",
+                    )
+                )
+        for tool_name in spec.required_tool_center_requested_tools:
+            if tool_name not in tool_center_requested_tools:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_tool_center_requested_tool",
+                        f"required tool center requested tool missing: {tool_name}",
+                    )
+                )
+        if spec.require_tool_center_ready_routes and not_ready_tool_center_routes:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "tool_center_route_not_ready",
+                    "tool center route plan must be ready for every recorded call",
+                    metadata={"not_ready_count": len(not_ready_tool_center_routes)},
+                )
+            )
+        if (
+            spec.max_tool_center_failed_calls is not None
+            and len(failed_tool_center_calls) > spec.max_tool_center_failed_calls
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "tool_center_failed_call_limit_exceeded",
+                    "tool center failed call count exceeded limit",
+                    metadata={
+                        "actual": len(failed_tool_center_calls),
+                        "limit": spec.max_tool_center_failed_calls,
+                    },
+                )
+            )
+
         return TraceEvalReport(
             run_id=replay.run_id,
             spec_name=spec.name,
@@ -1766,6 +1865,14 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "tool_schema_validated_names": sorted(tool_schema_validated_names),
                 "tool_schema_valid_names": sorted(tool_schema_valid_names),
                 "tool_schema_invalid_names": sorted(tool_schema_invalid_names),
+                "has_tool_center": bool(tool_center),
+                "tool_center_call_count": len(tool_center_calls),
+                "tool_center_failed_count": len(failed_tool_center_calls),
+                "tool_center_route_plan_count": len(tool_center_route_plans),
+                "tool_center_not_ready_route_count": len(not_ready_tool_center_routes),
+                "tool_center_selected_mounts": sorted(tool_center_selected_mounts),
+                "tool_center_selected_tools": sorted(tool_center_selected_tools),
+                "tool_center_requested_tools": sorted(tool_center_requested_tools),
                 "has_resume": bool(resume),
                 "has_resume_plan": bool(resume_plan),
                 "resume_plan_ready": bool(resume_plan.get("ready")) if resume_plan else False,
@@ -2683,6 +2790,44 @@ def _tool_names(trace: dict[str, Any]) -> set[str]:
         if isinstance(payload, dict) and payload.get("tool_name"):
             names.add(str(payload.get("tool_name")))
     return names
+
+
+def _tool_center_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("tool_center")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    session = trace.get("session")
+    tools = session.get("tools") if isinstance(session, dict) else {}
+    if isinstance(tools, dict) and tools.get("schema_version") == "agent-core-tool-center/v1":
+        return {
+            "schema_version": "agent-core-tool-center-trace/v1",
+            "call_count": int(tools.get("call_count") or 0),
+            "calls": list(tools.get("calls") or ()),
+        }
+    return {}
+
+
+def _tool_center_calls(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    raw = manifest.get("calls") if isinstance(manifest, dict) else ()
+    if isinstance(raw, (list, tuple)):
+        return tuple(dict(item) for item in raw if isinstance(item, dict))
+    return ()
+
+
+def _tool_center_route_plans(calls: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        dict(call.get("route_plan"))
+        for call in calls
+        if isinstance(call.get("route_plan"), dict)
+    )
+
+
+def _tool_center_call_values(calls: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in calls if item.get(key)}
+
+
+def _tool_center_route_values(route_plans: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in route_plans if item.get(key)}
 
 
 def _tool_execution_summaries(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:

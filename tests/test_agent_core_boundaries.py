@@ -133,6 +133,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "NullLifecycleHooks",
         "ToolCenter",
         "ToolCenterCallRecord",
+        "ToolCenterTrace",
         "ToolRegistry",
         "ToolRouteCandidate",
         "ToolRoutePlan",
