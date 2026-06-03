@@ -132,6 +132,17 @@ class TraceEvalSpec:
     required_tool_center_requested_tools: tuple[str, ...] = ()
     require_tool_center_ready_routes: bool = False
     max_tool_center_failed_calls: int | None = None
+    require_mcp_center: bool = False
+    required_mcp_server_names: tuple[str, ...] = ()
+    required_mcp_refreshed_servers: tuple[str, ...] = ()
+    forbidden_mcp_server_statuses: tuple[str, ...] = ()
+    max_mcp_failed_servers: int | None = None
+    max_mcp_partial_inventory_refreshes: int | None = None
+    require_skill_center: bool = False
+    required_loaded_skills: tuple[str, ...] = ()
+    required_skill_resource_view_ids: tuple[str, ...] = ()
+    required_skill_resource_view_skills: tuple[str, ...] = ()
+    max_skill_resource_views: int | None = None
     require_storage_backends: bool = False
     required_storage_backend_roles: tuple[str, ...] = ()
     required_storage_backend_kinds: tuple[str, ...] = ()
@@ -269,6 +280,19 @@ class TraceEvalSpec:
             ),
             "require_tool_center_ready_routes": self.require_tool_center_ready_routes,
             "max_tool_center_failed_calls": self.max_tool_center_failed_calls,
+            "require_mcp_center": self.require_mcp_center,
+            "required_mcp_server_names": list(self.required_mcp_server_names),
+            "required_mcp_refreshed_servers": list(self.required_mcp_refreshed_servers),
+            "forbidden_mcp_server_statuses": list(self.forbidden_mcp_server_statuses),
+            "max_mcp_failed_servers": self.max_mcp_failed_servers,
+            "max_mcp_partial_inventory_refreshes": self.max_mcp_partial_inventory_refreshes,
+            "require_skill_center": self.require_skill_center,
+            "required_loaded_skills": list(self.required_loaded_skills),
+            "required_skill_resource_view_ids": list(self.required_skill_resource_view_ids),
+            "required_skill_resource_view_skills": list(
+                self.required_skill_resource_view_skills
+            ),
+            "max_skill_resource_views": self.max_skill_resource_views,
             "require_storage_backends": self.require_storage_backends,
             "required_storage_backend_roles": list(self.required_storage_backend_roles),
             "required_storage_backend_kinds": list(self.required_storage_backend_kinds),
@@ -509,6 +533,16 @@ class TraceReplayHarness:
                     payload=dict(item.get("payload") or {}),
                 )
             )
+        for item in _capability_center_replay_steps(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source=str(item.get("source") or "capability_center"),
+                    event_type=str(item.get("event_type") or ""),
+                    run_id=run_id,
+                    payload=dict(item.get("payload") or {}),
+                )
+            )
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
         for item in _provider_call_records(provider):
             steps.append(
@@ -614,6 +648,20 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         not_ready_tool_center_routes = tuple(
             plan for plan in tool_center_route_plans if plan.get("ready") is not True
         )
+        mcp_center = _mcp_center_trace(trace)
+        mcp_servers = _mcp_server_records(mcp_center)
+        mcp_server_names = _mcp_server_values(mcp_servers, "name")
+        mcp_server_statuses = _mcp_server_statuses(mcp_servers, mcp_center)
+        mcp_refreshed_servers = set(_manifest_values(mcp_center, "refreshed_servers"))
+        failed_mcp_servers = set(_manifest_values(mcp_center, "failed_servers"))
+        partial_mcp_servers = set(_manifest_values(mcp_center, "partial_servers"))
+        skill_center = _skill_center_trace(trace)
+        loaded_skill_names = set(_manifest_values(skill_center, "loaded_skill_names"))
+        skill_resource_view_ids = set(_manifest_values(skill_center, "resource_view_ids"))
+        skill_resource_view_skills = set(
+            _manifest_values(skill_center, "resource_view_skill_names")
+        )
+        skill_resource_views = _skill_resource_views(skill_center)
         storage_backends = _storage_backends(trace)
         storage_backend_roles = _storage_backend_values(storage_backends, "role")
         storage_backend_kinds = _storage_backend_values(storage_backends, "kind")
@@ -1812,6 +1860,125 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_mcp_center and not mcp_center:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "mcp_center_missing",
+                    "MCP center trace is required",
+                )
+            )
+        for server_name in spec.required_mcp_server_names:
+            if server_name not in mcp_server_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_mcp_server",
+                        f"required MCP server missing: {server_name}",
+                    )
+                )
+        for server_name in spec.required_mcp_refreshed_servers:
+            if server_name not in mcp_refreshed_servers:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "mcp_server_not_refreshed",
+                        f"required MCP server was not refreshed: {server_name}",
+                    )
+                )
+        for status in spec.forbidden_mcp_server_statuses:
+            matching = sorted(
+                name for name, item_status in mcp_server_statuses.items() if item_status == status
+            )
+            if matching:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_mcp_server_status",
+                        f"forbidden MCP server status present: {status}",
+                        metadata={"status": status, "servers": matching},
+                    )
+                )
+        if (
+            spec.max_mcp_failed_servers is not None
+            and len(failed_mcp_servers) > spec.max_mcp_failed_servers
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "mcp_failed_server_limit_exceeded",
+                    "MCP failed server count exceeded limit",
+                    metadata={
+                        "actual": len(failed_mcp_servers),
+                        "limit": spec.max_mcp_failed_servers,
+                    },
+                )
+            )
+        if (
+            spec.max_mcp_partial_inventory_refreshes is not None
+            and len(partial_mcp_servers) > spec.max_mcp_partial_inventory_refreshes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "mcp_partial_inventory_refresh_limit_exceeded",
+                    "MCP partial inventory refresh count exceeded limit",
+                    metadata={
+                        "actual": len(partial_mcp_servers),
+                        "limit": spec.max_mcp_partial_inventory_refreshes,
+                    },
+                )
+            )
+        if spec.require_skill_center and not skill_center:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "skill_center_missing",
+                    "skill center trace is required",
+                )
+            )
+        for skill_name in spec.required_loaded_skills:
+            if skill_name not in loaded_skill_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_loaded_skill",
+                        f"required loaded skill missing: {skill_name}",
+                    )
+                )
+        for view_id in spec.required_skill_resource_view_ids:
+            if view_id not in skill_resource_view_ids:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_skill_resource_view",
+                        f"required skill resource view missing: {view_id}",
+                    )
+                )
+        for skill_name in spec.required_skill_resource_view_skills:
+            if skill_name not in skill_resource_view_skills:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_skill_resource_view_skill",
+                        f"required skill resource view skill missing: {skill_name}",
+                    )
+                )
+        if (
+            spec.max_skill_resource_views is not None
+            and len(skill_resource_views) > spec.max_skill_resource_views
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "skill_resource_view_limit_exceeded",
+                    "skill resource view count exceeded limit",
+                    metadata={
+                        "actual": len(skill_resource_views),
+                        "limit": spec.max_skill_resource_views,
+                    },
+                )
+            )
 
         return TraceEvalReport(
             run_id=replay.run_id,
@@ -1873,6 +2040,19 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "tool_center_selected_mounts": sorted(tool_center_selected_mounts),
                 "tool_center_selected_tools": sorted(tool_center_selected_tools),
                 "tool_center_requested_tools": sorted(tool_center_requested_tools),
+                "has_mcp_center": bool(mcp_center),
+                "mcp_server_count": len(mcp_servers),
+                "mcp_server_names": sorted(mcp_server_names),
+                "mcp_server_statuses": dict(sorted(mcp_server_statuses.items())),
+                "mcp_refreshed_servers": sorted(mcp_refreshed_servers),
+                "mcp_failed_servers": sorted(failed_mcp_servers),
+                "mcp_partial_servers": sorted(partial_mcp_servers),
+                "has_skill_center": bool(skill_center),
+                "loaded_skill_count": len(loaded_skill_names),
+                "loaded_skill_names": sorted(loaded_skill_names),
+                "skill_resource_view_count": len(skill_resource_views),
+                "skill_resource_view_ids": sorted(skill_resource_view_ids),
+                "skill_resource_view_skills": sorted(skill_resource_view_skills),
                 "has_resume": bool(resume),
                 "has_resume_plan": bool(resume_plan),
                 "resume_plan_ready": bool(resume_plan.get("ready")) if resume_plan else False,
@@ -2235,6 +2415,86 @@ def _prompt_shaping_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any],
             }
         )
     return tuple(steps)
+
+
+def _capability_center_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    steps: list[dict[str, Any]] = []
+    mcp_center = _mcp_center_trace(trace)
+    for refresh in _dict_items(mcp_center.get("last_inventory_refresh")):
+        status = str(refresh.get("status") or "unknown")
+        steps.append(
+            {
+                "source": "mcp_center",
+                "event_type": f"mcp_inventory_{status}",
+                "payload": _mcp_inventory_replay_payload(refresh),
+            }
+        )
+    if mcp_center and not steps:
+        for server in _mcp_server_records(mcp_center):
+            state = server.get("state") if isinstance(server.get("state"), dict) else {}
+            status = str(state.get("status") or server.get("status") or "registered")
+            steps.append(
+                {
+                    "source": "mcp_center",
+                    "event_type": f"mcp_server_{status}",
+                    "payload": _mcp_server_replay_payload(server),
+                }
+            )
+    skill_center = _skill_center_trace(trace)
+    for skill_name in _manifest_values(skill_center, "loaded_skill_names"):
+        steps.append(
+            {
+                "source": "skill_center",
+                "event_type": "skill_loaded",
+                "payload": {"skill_name": skill_name},
+            }
+        )
+    for view in _skill_resource_views(skill_center):
+        steps.append(
+            {
+                "source": "skill_center",
+                "event_type": "skill_resource_view_loaded",
+                "payload": _skill_resource_view_replay_payload(view),
+            }
+        )
+    return tuple(steps)
+
+
+def _mcp_inventory_replay_payload(refresh: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "server_name": str(refresh.get("server_name") or ""),
+        "status": str(refresh.get("status") or ""),
+        "ok": bool(refresh.get("ok")),
+        "tool_count": _safe_int(refresh.get("tool_count")),
+        "resource_count": _safe_int(refresh.get("resource_count")),
+        "prompt_count": _safe_int(refresh.get("prompt_count")),
+        "has_resource_error": bool(refresh.get("resource_error")),
+        "has_prompt_error": bool(refresh.get("prompt_error")),
+    }
+
+
+def _mcp_server_replay_payload(server: dict[str, Any]) -> dict[str, Any]:
+    state = server.get("state") if isinstance(server.get("state"), dict) else {}
+    return {
+        "server_name": str(server.get("name") or server.get("server_name") or ""),
+        "transport": str(server.get("transport") or ""),
+        "enabled": bool(server.get("enabled", True)),
+        "status": str(state.get("status") or server.get("status") or ""),
+        "tool_count": _safe_int(state.get("tool_count")),
+        "resource_count": _safe_int(state.get("resource_count")),
+        "prompt_count": _safe_int(state.get("prompt_count")),
+    }
+
+
+def _skill_resource_view_replay_payload(view: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "view_id": str(view.get("view_id") or ""),
+        "skill_name": str(view.get("skill_name") or ""),
+        "file_path": str(view.get("file_path") or ""),
+        "offset": _safe_int(view.get("offset")),
+        "total_lines": _safe_int(view.get("total_lines")),
+        "max_bytes": _safe_int(view.get("max_bytes")),
+    }
 
 
 def _prompt_bucket_budget_replay_payload(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -2828,6 +3088,154 @@ def _tool_center_call_values(calls: tuple[dict[str, Any], ...], key: str) -> set
 
 def _tool_center_route_values(route_plans: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in route_plans if item.get(key)}
+
+
+def _mcp_center_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("mcp_center")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    session = trace.get("session")
+    if not isinstance(session, dict):
+        return {}
+    mcp = session.get("mcp") if isinstance(session.get("mcp"), dict) else {}
+    if mcp.get("schema_version") == "agent-core-mcp-center/v1":
+        return _mcp_center_trace_from_manifest(mcp)
+    capabilities = session.get("capabilities") if isinstance(session.get("capabilities"), dict) else {}
+    mcp = capabilities.get("mcp") if isinstance(capabilities.get("mcp"), dict) else {}
+    if mcp.get("schema_version") == "agent-core-mcp-center/v1":
+        return _mcp_center_trace_from_manifest(mcp)
+    return {}
+
+
+def _mcp_center_trace_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    servers = tuple(dict(item) for item in _dict_items(manifest.get("servers")))
+    refreshes = tuple(dict(item) for item in _dict_items(manifest.get("last_inventory_refresh")))
+    statuses: dict[str, str] = {}
+    refreshed: list[str] = []
+    failed: list[str] = []
+    partial: list[str] = []
+    for server in servers:
+        name = str(server.get("name") or server.get("server_name") or "")
+        if not name:
+            continue
+        state = server.get("state") if isinstance(server.get("state"), dict) else {}
+        status = str(state.get("status") or server.get("status") or "")
+        statuses[name] = status
+        if status == "refreshed":
+            refreshed.append(name)
+        elif status == "failed":
+            failed.append(name)
+        elif status == "partial":
+            partial.append(name)
+    for refresh in refreshes:
+        name = str(refresh.get("server_name") or "")
+        status = str(refresh.get("status") or "")
+        if name and status == "failed" and name not in failed:
+            failed.append(name)
+        if name and status == "partial" and name not in partial:
+            partial.append(name)
+    return {
+        "schema_version": "agent-core-mcp-center-trace/v1",
+        "server_count": len(servers),
+        "server_names": sorted(statuses),
+        "server_statuses": dict(sorted(statuses.items())),
+        "refreshed_servers": sorted(refreshed),
+        "failed_servers": sorted(failed),
+        "partial_servers": sorted(partial),
+        "servers": [dict(item) for item in servers],
+        "last_inventory_refresh": [dict(item) for item in refreshes],
+    }
+
+
+def _mcp_server_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("servers")))
+
+
+def _mcp_server_values(servers: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    values: set[str] = set()
+    for server in servers:
+        value = str(server.get(key) or "")
+        if value:
+            values.add(value)
+    return values
+
+
+def _mcp_server_statuses(
+    servers: tuple[dict[str, Any], ...],
+    manifest: dict[str, Any],
+) -> dict[str, str]:
+    statuses = manifest.get("server_statuses")
+    if isinstance(statuses, dict):
+        return {
+            str(name): str(status)
+            for name, status in statuses.items()
+            if str(name) and str(status)
+        }
+    result: dict[str, str] = {}
+    for server in servers:
+        name = str(server.get("name") or server.get("server_name") or "")
+        state = server.get("state") if isinstance(server.get("state"), dict) else {}
+        status = str(state.get("status") or server.get("status") or "")
+        if name and status:
+            result[name] = status
+    return result
+
+
+def _skill_center_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("skill_center")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    session = trace.get("session")
+    if not isinstance(session, dict):
+        return {}
+    skills = session.get("skills") if isinstance(session.get("skills"), dict) else {}
+    if skills.get("schema_version") == "agent-core-skills-context/v1":
+        return _skill_center_trace_from_manifest(skills)
+    capabilities = session.get("capabilities") if isinstance(session.get("capabilities"), dict) else {}
+    skills = capabilities.get("skills") if isinstance(capabilities.get("skills"), dict) else {}
+    if skills.get("schema_version") == "agent-core-skills-context/v1":
+        return _skill_center_trace_from_manifest(skills)
+    return {}
+
+
+def _skill_center_trace_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    loaded = tuple(dict(item) for item in _dict_items(manifest.get("loaded_skills")))
+    views = tuple(dict(item) for item in _dict_items(manifest.get("views")))
+    loaded_names = tuple(str(item.get("name") or "") for item in loaded if item.get("name"))
+    view_ids = tuple(str(item.get("view_id") or "") for item in views if item.get("view_id"))
+    view_skills = tuple(str(item.get("skill_name") or "") for item in views if item.get("skill_name"))
+    return {
+        "schema_version": "agent-core-skill-center-trace/v1",
+        "available_skill_count": int(manifest.get("available_skills_count") or 0),
+        "loaded_skill_count": len(loaded),
+        "resource_view_count": len(views),
+        "loaded_skill_names": sorted(loaded_names),
+        "resource_view_ids": sorted(view_ids),
+        "resource_view_skill_names": sorted(set(view_skills)),
+        "loaded_skills": [dict(item) for item in loaded],
+        "views": [dict(item) for item in views],
+    }
+
+
+def _skill_resource_views(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("views")))
+
+
+def _manifest_values(manifest: dict[str, Any], key: str) -> tuple[str, ...]:
+    raw = manifest.get(key) if isinstance(manifest, dict) else ()
+    if isinstance(raw, dict):
+        return tuple(str(item) for item in raw if str(item))
+    if isinstance(raw, (list, tuple, set)):
+        return tuple(str(item) for item in raw if str(item))
+    return ()
+
+
+def _dict_items(value: Any) -> tuple[dict[str, Any], ...]:
+    if isinstance(value, dict):
+        return (dict(value),)
+    if isinstance(value, (list, tuple)):
+        return tuple(dict(item) for item in value if isinstance(item, dict))
+    return ()
 
 
 def _tool_execution_summaries(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:

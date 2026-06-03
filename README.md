@@ -206,8 +206,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   resume, timeline reduction, capability discovery, memory recall/search, and
   prompt trim manifests when available.
 - Summary counters include capability discovery matches, memory hits, and
-  storage backend, context injection, and memory governance counts, plus whether
-  the prompt was semantically trimmed or bucket-budgeted.
+  storage backend, context injection, memory governance, ToolCenter, MCP center,
+  and skill center counts, plus whether the prompt was semantically trimmed or
+  bucket-budgeted.
 - `StorageBackendTrace` collects backend manifests from session, memory,
   replay, approval, policy, event, artifact, and trace components into one
   run-level backend inventory.
@@ -216,6 +217,11 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   count.
 - `MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny decisions,
   risk levels, stores, and prompt-safe leak hashes.
+- `MCPCenterTrace` summarizes prompt-safe MCP server inventory, refreshed/
+  failed/partial servers, transports, tool/resource/prompt counts, and the last
+  inventory refresh records.
+- `SkillCenterTrace` summarizes loaded skills and windowed skill resource views
+  without embedding skill bodies into the trace summary.
 - `TraceCorrelationIndex` cross-references provider calls, tool replay records,
   policy decisions, approvals, event log entries, and journal replay events by
   run, turn, call id, approval id, decision id, and subject.
@@ -231,8 +237,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `TraceReplayHarness` builds a deterministic replay timeline from journal,
   event-log, and provider call manifests, including resume-plan,
   checkpoint-loaded, prompt-bucket-budget, prompt-semantic-trim,
-  prompt-trim, provider-call, provider-stream, embedding-call, and
-  lifecycle-hook steps.
+  prompt-trim, MCP inventory/server, skill-load/resource-view, provider-call,
+  provider-stream, embedding-call, and lifecycle-hook steps.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
@@ -243,7 +249,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   required events, required tools, resume-plan presence, resume-plan readiness,
   expected checkpoint id, tool execution presence, tool retry, tool schema
   validation, minimum tool attempt counts, ToolCenter route/call audit
-  constraints, storage backend constraints,
+  constraints, MCP center inventory constraints, skill center constraints,
+  storage backend constraints,
   lifecycle hook constraints, event-log presence, event-log types, terminal
   events, event sequence monotonicity, duplicate sequence limits,
   context injection name/source/target/status constraints, included/trimmed/
@@ -417,6 +424,8 @@ calling any concrete model client.
 - `SKILL.md` discovery.
 - Zip skill archive loading with path-safety checks.
 - Resource loading and windowed context views.
+- `SkillCenterTrace` and trace eval contracts for loaded skills and resource
+  view windows.
 
 ### MCP
 
@@ -425,6 +434,8 @@ calling any concrete model client.
 - Server state refresh.
 - `refresh_inventory()` refreshes MCP tools, resources, and prompts in one
   auditable pass and returns per-server prompt-safe inventory manifests.
+- `MCPCenterTrace` and trace eval contracts for required servers, refreshed
+  servers, forbidden statuses, failed-server limits, and partial-refresh limits.
 - SDK-free stdio JSON-RPC connector.
 - `CapabilityQuery`, `CapabilityMatch`, and `CapabilityDiscoveryResult` for
   unified discovery across actions, local tools, skills, MCP tools, MCP

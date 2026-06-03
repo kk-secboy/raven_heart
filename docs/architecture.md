@@ -108,10 +108,12 @@ distributed resume scheduling.
 
 `AgentRunTraceBundle` aggregates per-run session, prompt, journal replay,
 provider audit, tool replay, approvals, event log, resume, timeline reduction,
-capability discovery, memory recall/search, memory governance, and prompt trim manifests. The SDK
+capability discovery, memory recall/search, ToolCenter, MCP center, skill
+center, memory governance, and prompt trim manifests. The SDK
 owns the shape and summary counters, including discovery match counts, memory
-hit counts, storage backend counts, context injection counts, memory governance
-counts, and prompt-trim presence. `StorageBackendTrace` deduplicates the backend manifests visible
+hit counts, storage backend counts, context injection counts, ToolCenter counts,
+MCP/skill center counts, memory governance counts, and prompt-trim presence.
+`StorageBackendTrace` deduplicates the backend manifests visible
 across those components so a runtime can audit which state lived in core
 builtins and which state lived in external PG/vector/graph/object-store
 adapters. `ContextInjectionTrace` summarizes prompt injection decisions by
@@ -199,6 +201,12 @@ tools, resources, and prompts. It returns per-server
 partial-failure errors, while `MCPServerState` keeps prompt-safe inventory
 counts. Runtime code still decides how MCP servers are launched, authenticated,
 isolated, and retried.
+
+`MCPCenterTrace` and `SkillCenterTrace` are run-level summaries derived from
+session/capability manifests. They let replay and eval require MCP server
+presence, refresh status, partial-failure limits, loaded skills, and skill
+resource view windows without moving MCP process management or skill
+distribution into the SDK.
 
 `RunTraceStorePort` gives the bundle a persistence boundary. The SDK ships
 in-memory, SQLite, and Markdown stores for lightweight use, while production

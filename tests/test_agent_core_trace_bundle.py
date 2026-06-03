@@ -24,8 +24,10 @@ from agent_core.trace import (
     ContextInjectionTrace,
     InMemoryRunTraceStore,
     MarkdownRunTraceStore,
+    MCPCenterTrace,
     MemoryGovernanceTrace,
     SQLiteRunTraceStore,
+    SkillCenterTrace,
     StorageBackendTrace,
     TraceCorrelationIndex,
 )
@@ -55,6 +57,52 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         capability_discovery={"match_count": 4},
         memory_search={"hit_count": 2},
         session={
+            "capabilities": {
+                "mcp": {
+                    "schema_version": "agent-core-mcp-center/v1",
+                    "servers": [
+                        {
+                            "name": "fs",
+                            "transport": "stdio",
+                            "enabled": True,
+                            "state": {
+                                "status": "refreshed",
+                                "tool_count": 1,
+                                "resource_count": 1,
+                                "prompt_count": 1,
+                            },
+                        }
+                    ],
+                    "tools": [{"name": "mcp__fs__read_file"}],
+                    "resources": [{"server_name": "fs", "uri": "file://README.md"}],
+                    "prompts": [{"server_name": "fs", "name": "summarize"}],
+                    "last_inventory_refresh": [
+                        {
+                            "server_name": "fs",
+                            "status": "refreshed",
+                            "ok": True,
+                            "tool_count": 1,
+                            "resource_count": 1,
+                            "prompt_count": 1,
+                        }
+                    ],
+                },
+                "skills": {
+                    "schema_version": "agent-core-skills-context/v1",
+                    "available_skills_count": 2,
+                    "loaded_skills": [{"name": "review", "description": "Review code"}],
+                    "views": [
+                        {
+                            "view_id": "review:rules.md:abcd",
+                            "skill_name": "review",
+                            "file_path": "rules.md",
+                            "offset": 1,
+                            "total_lines": 4,
+                            "max_bytes": 1024,
+                        }
+                    ],
+                },
+            },
             "memory": {
                 "governance": {
                     "decisions": [
@@ -120,6 +168,13 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["journal_event_count"] == 7
     assert manifest["summary"]["provider_call_count"] == 2
     assert manifest["summary"]["tool_replay_record_count"] == 1
+    assert manifest["summary"]["mcp_server_count"] == 1
+    assert manifest["summary"]["mcp_failed_server_count"] == 0
+    assert manifest["summary"]["mcp_partial_inventory_refresh_count"] == 0
+    assert manifest["summary"]["skill_loaded_count"] == 1
+    assert manifest["summary"]["skill_resource_view_count"] == 1
+    assert manifest["mcp_center"]["refreshed_servers"] == ["fs"]
+    assert manifest["skill_center"]["loaded_skill_names"] == ["review"]
     assert manifest["summary"]["policy_decision_record_count"] == 2
     assert manifest["summary"]["approval_record_count"] == 3
     assert manifest["summary"]["event_log_count"] == 9

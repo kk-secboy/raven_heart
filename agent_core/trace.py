@@ -201,6 +201,100 @@ class ToolCenterTrace:
         }
 
 
+class MCPCenterTrace:
+    """Run-level summary of MCP server inventory visible to the SDK core."""
+
+    @staticmethod
+    def from_session(session: dict[str, Any]) -> dict[str, Any]:
+        mcp = _mcp_manifest_from_session(session)
+        if not mcp:
+            return {}
+        servers = tuple(dict(item) for item in _dict_items(mcp.get("servers")))
+        tools = tuple(dict(item) for item in _dict_items(mcp.get("tools")))
+        resources = tuple(dict(item) for item in _dict_items(mcp.get("resources")))
+        prompts = tuple(dict(item) for item in _dict_items(mcp.get("prompts")))
+        refreshes = tuple(dict(item) for item in _dict_items(mcp.get("last_inventory_refresh")))
+        server_statuses: dict[str, str] = {}
+        transports: dict[str, int] = {}
+        refreshed_servers: list[str] = []
+        failed_servers: list[str] = []
+        disabled_servers: list[str] = []
+        partial_servers: list[str] = []
+        for server in servers:
+            name = str(server.get("name") or server.get("server_name") or "")
+            if not name:
+                continue
+            state = server.get("state") if isinstance(server.get("state"), dict) else {}
+            status = str(state.get("status") or server.get("status") or "")
+            server_statuses[name] = status
+            transport = str(server.get("transport") or "")
+            if transport:
+                transports[transport] = transports.get(transport, 0) + 1
+            if status == "refreshed":
+                refreshed_servers.append(name)
+            elif status == "failed":
+                failed_servers.append(name)
+            elif status == "disabled":
+                disabled_servers.append(name)
+            elif status == "partial":
+                partial_servers.append(name)
+        for refresh in refreshes:
+            name = str(refresh.get("server_name") or "")
+            status = str(refresh.get("status") or "")
+            if name and status == "partial" and name not in partial_servers:
+                partial_servers.append(name)
+            if name and status == "failed" and name not in failed_servers:
+                failed_servers.append(name)
+        return {
+            "schema_version": "agent-core-mcp-center-trace/v1",
+            "server_count": len(servers),
+            "tool_count": len(tools),
+            "resource_count": len(resources),
+            "prompt_count": len(prompts),
+            "inventory_refresh_count": len(refreshes),
+            "failed_server_count": len(failed_servers),
+            "disabled_server_count": len(disabled_servers),
+            "partial_inventory_refresh_count": len(partial_servers),
+            "server_names": sorted(server_statuses),
+            "server_statuses": dict(sorted(server_statuses.items())),
+            "refreshed_servers": sorted(refreshed_servers),
+            "failed_servers": sorted(failed_servers),
+            "disabled_servers": sorted(disabled_servers),
+            "partial_servers": sorted(partial_servers),
+            "transports": dict(sorted(transports.items())),
+            "servers": [dict(item) for item in servers],
+            "last_inventory_refresh": [dict(item) for item in refreshes],
+        }
+
+
+class SkillCenterTrace:
+    """Run-level summary of loaded skills and skill resource views."""
+
+    @staticmethod
+    def from_session(session: dict[str, Any]) -> dict[str, Any]:
+        skills = _skills_manifest_from_session(session)
+        if not skills:
+            return {}
+        loaded = tuple(dict(item) for item in _dict_items(skills.get("loaded_skills")))
+        views = tuple(dict(item) for item in _dict_items(skills.get("views")))
+        loaded_names = tuple(str(item.get("name") or "") for item in loaded if item.get("name"))
+        view_ids = tuple(str(item.get("view_id") or "") for item in views if item.get("view_id"))
+        view_skill_names = tuple(
+            str(item.get("skill_name") or "") for item in views if item.get("skill_name")
+        )
+        return {
+            "schema_version": "agent-core-skill-center-trace/v1",
+            "available_skill_count": int(skills.get("available_skills_count") or 0),
+            "loaded_skill_count": len(loaded),
+            "resource_view_count": len(views),
+            "loaded_skill_names": sorted(loaded_names),
+            "resource_view_ids": sorted(view_ids),
+            "resource_view_skill_names": sorted(set(view_skill_names)),
+            "loaded_skills": [dict(item) for item in loaded],
+            "views": [dict(item) for item in views],
+        }
+
+
 @dataclass(frozen=True)
 class TraceCorrelationEntry:
     """One normalized pointer into trace materials."""
@@ -324,6 +418,8 @@ class AgentRunTraceBundle:
     timeline_reduction: dict[str, Any] = field(default_factory=dict)
     capability_discovery: dict[str, Any] = field(default_factory=dict)
     memory_search: dict[str, Any] = field(default_factory=dict)
+    mcp_center: dict[str, Any] = field(default_factory=dict)
+    skill_center: dict[str, Any] = field(default_factory=dict)
     storage_backends: dict[str, Any] = field(default_factory=dict)
     context_injections: dict[str, Any] = field(default_factory=dict)
     memory_governance: dict[str, Any] = field(default_factory=dict)
@@ -346,6 +442,8 @@ class AgentRunTraceBundle:
             self.prompt
         ).manifest()
         tool_center = ToolCenterTrace.from_session(self.session)
+        mcp_center = self.mcp_center or MCPCenterTrace.from_session(self.session)
+        skill_center = self.skill_center or SkillCenterTrace.from_session(self.session)
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
@@ -379,6 +477,13 @@ class AgentRunTraceBundle:
                 "tool_center_call_count": int(tool_center.get("call_count") or 0),
                 "tool_center_failed_count": int(tool_center.get("failed_count") or 0),
                 "tool_center_route_plan_count": int(tool_center.get("route_plan_count") or 0),
+                "mcp_server_count": int(mcp_center.get("server_count") or 0),
+                "mcp_failed_server_count": int(mcp_center.get("failed_server_count") or 0),
+                "mcp_partial_inventory_refresh_count": int(
+                    mcp_center.get("partial_inventory_refresh_count") or 0
+                ),
+                "skill_loaded_count": int(skill_center.get("loaded_skill_count") or 0),
+                "skill_resource_view_count": int(skill_center.get("resource_view_count") or 0),
                 "policy_decision_record_count": int(self.policy_decisions.get("record_count") or 0),
                 "approval_record_count": int(self.approvals.get("record_count") or 0),
                 "event_log_count": int(self.event_log.get("event_count") or 0),
@@ -433,6 +538,8 @@ class AgentRunTraceBundle:
             "embedding": dict(self.embedding),
             "tool_replay": dict(self.tool_replay),
             "tool_center": dict(tool_center),
+            "mcp_center": dict(mcp_center),
+            "skill_center": dict(skill_center),
             "policy_decisions": dict(self.policy_decisions),
             "approvals": dict(self.approvals),
             "event_log": dict(self.event_log),
@@ -514,6 +621,28 @@ def _count_call_field(calls: tuple[dict[str, Any], ...], field_name: str) -> dic
             continue
         counts[value] = counts.get(value, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _mcp_manifest_from_session(session: dict[str, Any]) -> dict[str, Any]:
+    mcp = session.get("mcp") if isinstance(session.get("mcp"), dict) else {}
+    if mcp.get("schema_version") == "agent-core-mcp-center/v1":
+        return dict(mcp)
+    capabilities = session.get("capabilities") if isinstance(session.get("capabilities"), dict) else {}
+    mcp = capabilities.get("mcp") if isinstance(capabilities.get("mcp"), dict) else {}
+    if mcp.get("schema_version") == "agent-core-mcp-center/v1":
+        return dict(mcp)
+    return {}
+
+
+def _skills_manifest_from_session(session: dict[str, Any]) -> dict[str, Any]:
+    skills = session.get("skills") if isinstance(session.get("skills"), dict) else {}
+    if skills.get("schema_version") == "agent-core-skills-context/v1":
+        return dict(skills)
+    capabilities = session.get("capabilities") if isinstance(session.get("capabilities"), dict) else {}
+    skills = capabilities.get("skills") if isinstance(capabilities.get("skills"), dict) else {}
+    if skills.get("schema_version") == "agent-core-skills-context/v1":
+        return dict(skills)
+    return {}
 
 
 def _count_route_field(route_plans: tuple[dict[str, Any], ...], field_name: str) -> dict[str, int]:

@@ -243,6 +243,77 @@ def _trace_manifest() -> dict[str, object]:
                 },
             ],
         },
+        "mcp_center": {
+            "schema_version": "agent-core-mcp-center-trace/v1",
+            "server_count": 2,
+            "tool_count": 1,
+            "resource_count": 1,
+            "prompt_count": 1,
+            "inventory_refresh_count": 2,
+            "failed_server_count": 1,
+            "disabled_server_count": 0,
+            "partial_inventory_refresh_count": 1,
+            "server_names": ["broken", "fs"],
+            "server_statuses": {"broken": "failed", "fs": "refreshed"},
+            "refreshed_servers": ["fs"],
+            "failed_servers": ["broken"],
+            "disabled_servers": [],
+            "partial_servers": ["fs"],
+            "transports": {"stdio": 2},
+            "servers": [
+                {
+                    "name": "fs",
+                    "transport": "stdio",
+                    "enabled": True,
+                    "state": {"status": "refreshed", "tool_count": 1},
+                },
+                {
+                    "name": "broken",
+                    "transport": "stdio",
+                    "enabled": True,
+                    "state": {"status": "failed", "last_error": "boom"},
+                },
+            ],
+            "last_inventory_refresh": [
+                {
+                    "server_name": "fs",
+                    "status": "partial",
+                    "ok": False,
+                    "tool_count": 1,
+                    "resource_count": 1,
+                    "prompt_count": 0,
+                    "prompt_error": "prompt listing failed",
+                },
+                {
+                    "server_name": "broken",
+                    "status": "failed",
+                    "ok": False,
+                    "tool_count": 0,
+                    "resource_count": 0,
+                    "prompt_count": 0,
+                },
+            ],
+        },
+        "skill_center": {
+            "schema_version": "agent-core-skill-center-trace/v1",
+            "available_skill_count": 3,
+            "loaded_skill_count": 1,
+            "resource_view_count": 1,
+            "loaded_skill_names": ["review"],
+            "resource_view_ids": ["review:rules.md:abcd"],
+            "resource_view_skill_names": ["review"],
+            "loaded_skills": [{"name": "review", "description": "Review code"}],
+            "views": [
+                {
+                    "view_id": "review:rules.md:abcd",
+                    "skill_name": "review",
+                    "file_path": "rules.md",
+                    "offset": 1,
+                    "total_lines": 4,
+                    "max_bytes": 1024,
+                }
+            ],
+        },
         "storage_backends": {
             "schema_version": "agent-core-storage-backend-trace/v1",
             "backend_count": 3,
@@ -349,6 +420,10 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "prompt_bucket_budget_applied",
         "prompt_semantic_trim_applied",
         "prompt_trim_applied",
+        "mcp_inventory_partial",
+        "mcp_inventory_failed",
+        "skill_loaded",
+        "skill_resource_view_loaded",
         "provider_call_completed",
         "provider_call_completed",
     )
@@ -357,8 +432,12 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
     assert manifest["steps"][5]["source"] == "prompt_semantic_trim"
     assert manifest["steps"][5]["payload"]["roles"] == ["dynamic", "timeline_open"]
     assert manifest["steps"][5]["payload"]["dropped_units"] == 3
-    assert manifest["steps"][7]["source"] == "provider"
-    assert manifest["steps"][7]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][7]["source"] == "mcp_center"
+    assert manifest["steps"][7]["payload"]["server_name"] == "fs"
+    assert manifest["steps"][9]["source"] == "skill_center"
+    assert manifest["steps"][10]["payload"]["view_id"] == "review:rules.md:abcd"
+    assert manifest["steps"][11]["source"] == "provider"
+    assert manifest["steps"][11]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1360,6 +1439,79 @@ def test_trace_eval_reports_tool_center_contract_failures() -> None:
     assert {issue.code for issue in missing.issues} == {"tool_center_missing"}
 
 
+def test_trace_eval_validates_mcp_and_skill_center_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_mcp_center=True,
+            required_mcp_server_names=("fs", "broken"),
+            required_mcp_refreshed_servers=("fs",),
+            max_mcp_failed_servers=1,
+            max_mcp_partial_inventory_refreshes=1,
+            require_skill_center=True,
+            required_loaded_skills=("review",),
+            required_skill_resource_view_ids=("review:rules.md:abcd",),
+            required_skill_resource_view_skills=("review",),
+            max_skill_resource_views=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_mcp_center"] is True
+    assert report.summary["mcp_server_count"] == 2
+    assert report.summary["mcp_server_names"] == ["broken", "fs"]
+    assert report.summary["mcp_refreshed_servers"] == ["fs"]
+    assert report.summary["mcp_failed_servers"] == ["broken"]
+    assert report.summary["mcp_partial_servers"] == ["fs"]
+    assert report.summary["has_skill_center"] is True
+    assert report.summary["loaded_skill_names"] == ["review"]
+    assert report.summary["skill_resource_view_ids"] == ["review:rules.md:abcd"]
+
+
+def test_trace_eval_reports_mcp_and_skill_center_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_mcp_server_names=("db",),
+            required_mcp_refreshed_servers=("broken",),
+            forbidden_mcp_server_statuses=("failed",),
+            max_mcp_failed_servers=0,
+            max_mcp_partial_inventory_refreshes=0,
+            required_loaded_skills=("triage",),
+            required_skill_resource_view_ids=("triage:index.md:1234",),
+            required_skill_resource_view_skills=("triage",),
+            max_skill_resource_views=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {
+            key: value
+            for key, value in _trace_manifest().items()
+            if key not in {"mcp_center", "skill_center"}
+        },
+        TraceEvalSpec(require_mcp_center=True, require_skill_center=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_mcp_server",
+        "mcp_server_not_refreshed",
+        "forbidden_mcp_server_status",
+        "mcp_failed_server_limit_exceeded",
+        "mcp_partial_inventory_refresh_limit_exceeded",
+        "missing_loaded_skill",
+        "missing_skill_resource_view",
+        "missing_skill_resource_view_skill",
+        "skill_resource_view_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {
+        "mcp_center_missing",
+        "skill_center_missing",
+    }
+
+
 def test_trace_eval_validates_storage_backend_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
@@ -1711,7 +1863,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 9
+    assert report.summary["baseline_step_count"] == 13
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -1745,6 +1897,10 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "prompt_bucket_budget_applied",
         "prompt_semantic_trim_applied",
         "prompt_trim_applied",
+        "mcp_inventory_partial",
+        "mcp_inventory_failed",
+        "skill_loaded",
+        "skill_resource_view_loaded",
         "provider_call_completed",
         "provider_call_completed",
     ]
