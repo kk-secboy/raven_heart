@@ -384,6 +384,8 @@ calling any concrete model client.
 - `ToolSpec`, `ToolRegistry`, and `ToolCenter`.
 - Runtime mounts.
 - Tool tags, aliases, manifests, inventory, and search.
+- `ToolRoutePlan`, `ToolRouteCandidate`, and `ToolCenterCallRecord` for
+  prompt-safe preflight routing and call audit across mounted tool runtimes.
 - `ToolExecutionCenter`, `ToolRetryPolicy`, and tool execution attempt records
   for retryable failure recovery and audit.
 - `validate_tool_arguments()` and pre-execution schema validation for
@@ -646,6 +648,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Lifecycle hook trace/eval contracts | MVP implemented |
 | Interrupt/cancel/timeout semantics | MVP implemented |
 | Tool center | MVP implemented |
+| Tool center route/call audit | MVP implemented |
 | Tool replay store | MVP implemented |
 | Skill center | MVP implemented |
 | MCP center | MVP implemented |

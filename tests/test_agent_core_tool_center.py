@@ -71,6 +71,7 @@ async def test_tool_center_mounts_searches_manifests_and_invokes_runtimes() -> N
 
     specs = center.specs()
     search = center.search("filesystem remote")
+    route_plan = center.route_plan("say")
     local_result = await center.invoke(ToolInvocation(tool_name="say", arguments={"text": "hi"}))
     mcp_result = await center.invoke(
         ToolInvocation(tool_name="mcp__fs__read_file", arguments={"path": "README.md"})
@@ -80,6 +81,10 @@ async def test_tool_center_mounts_searches_manifests_and_invokes_runtimes() -> N
     assert [spec.name for spec in specs] == ["echo", "mcp__fs__read_file"]
     assert "builtin" in specs[0].tags
     assert search[0].name == "mcp__fs__read_file"
+    assert route_plan.ready
+    assert route_plan.selected_mount == "local"
+    assert route_plan.selected_tool_name == "echo"
+    assert route_plan.candidates[0].matched_name == "say"
     assert local_result.content == "local:hi"
     assert local_result.tool_name == "echo"
     assert local_result.metadata["tool_center"]["requested_tool_name"] == "say"
@@ -87,6 +92,41 @@ async def test_tool_center_mounts_searches_manifests_and_invokes_runtimes() -> N
     assert mcp_result.metadata["tool_center"]["mount"] == "mcp"
     assert manifest["schema_version"] == "agent-core-tool-center/v1"
     assert [mount["name"] for mount in manifest["mounts"]] == ["local", "mcp"]
+    assert manifest["call_count"] == 2
+    assert manifest["calls"][0]["route_plan"]["selected_mount"] == "local"
+    assert manifest["calls"][0]["route_plan"]["selected_tool_name"] == "echo"
+    assert manifest["calls"][0]["result"]["content_sha256"]
+    assert "local:hi" not in str(manifest)
+    assert manifest["calls"][1]["route_plan"]["selected_mount"] == "mcp"
+
+
+@pytest.mark.asyncio
+async def test_tool_center_route_plan_and_call_records_unknown_or_disabled_tools() -> None:
+    registry = ToolRegistry()
+    registry.register(ToolSpec(name="disabled", enabled=False), _local_handler)
+    center = ToolCenter()
+    center.mount("local", registry)
+
+    missing_plan = center.route_plan("missing")
+    disabled_plan = center.route_plan("disabled")
+    missing = await center.invoke(ToolInvocation(tool_name="missing"))
+    disabled = await center.invoke(ToolInvocation(tool_name="disabled"))
+    manifest = center.manifest()
+
+    assert not missing_plan.ready
+    assert missing_plan.candidates == ()
+    assert not disabled_plan.ready
+    assert disabled_plan.candidates[0].reason == "disabled"
+    assert missing.status == "failed"
+    assert missing.error == "unknown tool: missing"
+    assert disabled.status == "failed"
+    assert disabled.error == "tool disabled: disabled"
+    assert manifest["call_count"] == 2
+    assert [call["error"] for call in manifest["calls"]] == [
+        "unknown tool: missing",
+        "tool disabled: disabled",
+    ]
+    assert manifest["calls"][1]["route_plan"]["candidates"][0]["enabled"] is False
 
 
 @pytest.mark.asyncio

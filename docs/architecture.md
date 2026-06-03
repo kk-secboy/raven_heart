@@ -279,6 +279,13 @@ The SDK ships in-memory, SQLite, and Markdown stores for local or inspectable
 replay. Production PG/object-storage backends should live in the runtime or a
 separate adapter package.
 
+`ToolCenter` aggregates local, MCP-backed, or runtime-owned tool runtimes behind
+one route boundary. `ToolRoutePlan` explains which mount and concrete tool name
+will handle a requested name or alias, including disabled/unknown candidates
+when the mounted runtime exposes them. `ToolCenterCallRecord` records the
+selected route and prompt-safe result manifest after invocation, while concrete
+tool side effects and runtime process/network isolation remain outside the SDK.
+
 `ToolExecutionCenter` wraps any `ToolRuntimePort` with provider-neutral retry
 and audit semantics. `ToolRetryPolicy` decides whether retryable failed results
 or exceptions may be attempted again, and `ToolExecutionRecord` captures attempt

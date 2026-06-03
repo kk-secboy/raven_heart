@@ -400,6 +400,75 @@ class ToolInventorySelection:
 
 
 @dataclass(frozen=True)
+class ToolRouteCandidate:
+    mount_name: str
+    tool_name: str
+    matched_name: str = ""
+    selected: bool = False
+    enabled: bool = True
+    reason: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-route-candidate/v1",
+            "mount_name": self.mount_name,
+            "tool_name": self.tool_name,
+            "matched_name": self.matched_name,
+            "selected": self.selected,
+            "enabled": self.enabled,
+            "reason": self.reason,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ToolRoutePlan:
+    requested_tool_name: str
+    selected_mount: str = ""
+    selected_tool_name: str = ""
+    candidates: tuple[ToolRouteCandidate, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.selected_mount and self.selected_tool_name)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-route-plan/v1",
+            "requested_tool_name": self.requested_tool_name,
+            "ready": self.ready,
+            "selected_mount": self.selected_mount,
+            "selected_tool_name": self.selected_tool_name,
+            "candidate_count": len(self.candidates),
+            "candidates": [candidate.manifest() for candidate in self.candidates],
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ToolCenterCallRecord:
+    requested_tool_name: str
+    status: str
+    route_plan: ToolRoutePlan
+    result: ToolResult | None = None
+    error: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-tool-center-call-record/v1",
+            "requested_tool_name": self.requested_tool_name,
+            "status": self.status,
+            "route_plan": self.route_plan.manifest(),
+            "result": self.result.manifest() if self.result is not None else None,
+            "error": self.error,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class ToolRuntimeMount:
     name: str
     runtime: "ToolRuntimePort"
@@ -625,6 +694,7 @@ class ToolCenter(ToolRuntimePort):
 
     def __init__(self) -> None:
         self._mounts: dict[str, ToolRuntimeMount] = {}
+        self.calls: list[ToolCenterCallRecord] = []
 
     def mount(
         self,
@@ -754,17 +824,74 @@ class ToolCenter(ToolRuntimePort):
             "schema_version": "agent-core-tool-center/v1",
             "mounts": [mount.manifest() for mount in self.mounts()],
             "tools": [tool_manifest_item(spec) for spec in self.specs()],
+            "call_count": len(self.calls),
+            "calls": [call.manifest() for call in self.calls],
         }
 
+    def route_plan(self, tool_name: str) -> ToolRoutePlan:
+        requested = tool_name.strip()
+        candidates: list[ToolRouteCandidate] = []
+        selected_mount = ""
+        selected_tool_name = ""
+        for mount in self.mounts():
+            for spec in _runtime_specs(mount.runtime, include_disabled=True):
+                names = (spec.name, *spec.aliases)
+                matched = next((name for name in names if name == requested), "")
+                if not matched:
+                    continue
+                selected = spec.enabled and not selected_mount
+                reason = "selected" if selected else "disabled" if not spec.enabled else "eligible_not_selected"
+                candidates.append(
+                    ToolRouteCandidate(
+                        mount_name=mount.name,
+                        tool_name=spec.name,
+                        matched_name=matched,
+                        selected=selected,
+                        enabled=spec.enabled,
+                        reason=reason,
+                        metadata={
+                            "tool": tool_manifest_item(spec),
+                            "mount_tags": list(mount.tags),
+                            "mount_metadata": dict(mount.metadata),
+                        },
+                    )
+                )
+                if selected:
+                    selected_mount = mount.name
+                    selected_tool_name = spec.name
+        return ToolRoutePlan(
+            requested_tool_name=tool_name,
+            selected_mount=selected_mount,
+            selected_tool_name=selected_tool_name,
+            candidates=tuple(candidates),
+            metadata={"mount_count": len(self._mounts)},
+        )
+
     async def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        plan = self.route_plan(invocation.tool_name)
         route = self._route_table().get(invocation.tool_name)
-        if route is None:
-            return ToolResult(
+        if route is None or not plan.ready:
+            error = (
+                f"tool disabled: {invocation.tool_name}"
+                if plan.candidates
+                else f"unknown tool: {invocation.tool_name}"
+            )
+            result = ToolResult(
                 call_id=invocation.call_id,
                 tool_name=invocation.tool_name,
                 status="failed",
-                error=f"unknown tool: {invocation.tool_name}",
+                error=error,
             )
+            self._record_call(
+                ToolCenterCallRecord(
+                    requested_tool_name=invocation.tool_name,
+                    status="failed",
+                    route_plan=plan,
+                    result=result,
+                    error=result.error,
+                )
+            )
+            return result
         mount, spec = route
         routed = ToolInvocation(
             tool_name=spec.name,
@@ -776,8 +903,19 @@ class ToolCenter(ToolRuntimePort):
                 "tool_center_mount": mount.name,
             },
         )
-        result = await mount.runtime.invoke(routed)
-        return ToolResult(
+        try:
+            result = await mount.runtime.invoke(routed)
+        except Exception as exc:
+            self._record_call(
+                ToolCenterCallRecord(
+                    requested_tool_name=invocation.tool_name,
+                    status="failed",
+                    route_plan=plan,
+                    error=str(exc),
+                )
+            )
+            raise
+        routed_result = ToolResult(
             call_id=result.call_id,
             tool_name=result.tool_name,
             status=result.status,
@@ -793,6 +931,18 @@ class ToolCenter(ToolRuntimePort):
                 },
             },
         )
+        self._record_call(
+            ToolCenterCallRecord(
+                requested_tool_name=invocation.tool_name,
+                status=routed_result.status,
+                route_plan=plan,
+                result=routed_result,
+            )
+        )
+        return routed_result
+
+    def _record_call(self, record: ToolCenterCallRecord) -> None:
+        self.calls.append(record)
 
     def _route_table(self) -> dict[str, tuple[ToolRuntimeMount, ToolSpec]]:
         routes: dict[str, tuple[ToolRuntimeMount, ToolSpec]] = {}
@@ -858,6 +1008,18 @@ def _tool_spec_for_invocation(runtime: ToolRuntimePort, tool_name: str) -> ToolS
         if tool_name == spec.name or tool_name in spec.aliases:
             return spec
     return None
+
+
+def _runtime_specs(runtime: ToolRuntimePort, *, include_disabled: bool = False) -> tuple[ToolSpec, ...]:
+    specs = getattr(runtime, "specs", None)
+    if not callable(specs):
+        return ()
+    if include_disabled:
+        try:
+            return specs(include_disabled=True)
+        except TypeError:
+            return specs()
+    return specs()
 
 
 def schema_from_callable(func: ToolFunction) -> dict[str, Any]:
