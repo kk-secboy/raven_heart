@@ -167,13 +167,17 @@ runtime responsibilities.
 
 `LLMProviderCenter` records provider-neutral call manifests for completed and
 failed attempts. The core records provider name, model, attempt, streamed flag,
-usage, retryability, and request shape. Concrete provider clients, credentials,
-rate limits, and vendor-specific response payloads remain runtime-owned.
+usage, retryability, routed request shape, and original request shape. Concrete
+provider clients, credentials, rate limits, and vendor-specific response
+payloads remain runtime-owned.
 `LLMModelCapabilities` lets runtimes declare context windows, output limits,
 streaming support, tool-call support, JSON mode, structured-output support, and
 modalities without importing a vendor SDK. The center uses those declarations to
 skip incompatible routes when a request declares required capabilities or
-estimated token/output size.
+estimated token/output size. Routed call manifests retain the selected
+capability profile, and trace evals can require specific provider names, model
+names, or capabilities such as `structured_output`, `json_mode`, `tool_calls`,
+and `streaming`.
 `TransportLLMProvider`, `LLMTransportPort`, and `LLMProviderCodecPort` form the
 dependency-free adapter boundary: runtimes can provide a transport and optional
 vendor codec while the SDK keeps provider-neutral request, response, stream, and

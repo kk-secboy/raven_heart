@@ -75,6 +75,11 @@ class TraceEvalSpec:
     max_iterations: int | None = None
     max_provider_calls: int | None = None
     max_cost_usd: float | None = None
+    required_provider_names: tuple[str, ...] = ()
+    required_provider_models: tuple[str, ...] = ()
+    require_provider_model_capabilities: bool = False
+    required_provider_model_capabilities: tuple[str, ...] = ()
+    forbidden_provider_model_capabilities: tuple[str, ...] = ()
     require_journal_ok: bool = True
     require_resume: bool = False
     require_resume_plan: bool = False
@@ -124,6 +129,15 @@ class TraceEvalSpec:
             "max_iterations": self.max_iterations,
             "max_provider_calls": self.max_provider_calls,
             "max_cost_usd": self.max_cost_usd,
+            "required_provider_names": list(self.required_provider_names),
+            "required_provider_models": list(self.required_provider_models),
+            "require_provider_model_capabilities": self.require_provider_model_capabilities,
+            "required_provider_model_capabilities": list(
+                self.required_provider_model_capabilities
+            ),
+            "forbidden_provider_model_capabilities": list(
+                self.forbidden_provider_model_capabilities
+            ),
             "require_journal_ok": self.require_journal_ok,
             "require_resume": self.require_resume,
             "require_resume_plan": self.require_resume_plan,
@@ -350,6 +364,15 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         run = trace.get("run") if isinstance(trace.get("run"), dict) else {}
         summary = trace.get("summary") if isinstance(trace.get("summary"), dict) else {}
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
+        provider_call_records = _provider_call_records(provider)
+        provider_names = _provider_call_values(provider_call_records, "provider_name")
+        provider_models = _provider_call_values(provider_call_records, "model")
+        provider_model_capability_manifests = _provider_model_capability_manifests(
+            provider_call_records
+        )
+        provider_model_capabilities = _provider_model_capability_names(
+            provider_model_capability_manifests
+        )
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
         storage_backends = _storage_backends(trace)
@@ -438,6 +461,50 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     f"cost {cost} exceeded limit {spec.max_cost_usd}",
                 )
             )
+        for provider_name in spec.required_provider_names:
+            if provider_name not in provider_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_name",
+                        f"required provider missing: {provider_name}",
+                    )
+                )
+        for model in spec.required_provider_models:
+            if model not in provider_models:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_model",
+                        f"required provider model missing: {model}",
+                    )
+                )
+        if spec.require_provider_model_capabilities and not provider_model_capability_manifests:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_model_capabilities_missing",
+                    "provider model capability trace is required",
+                )
+            )
+        for capability in spec.required_provider_model_capabilities:
+            if capability not in provider_model_capabilities:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_model_capability",
+                        f"required provider model capability missing: {capability}",
+                    )
+                )
+        for capability in spec.forbidden_provider_model_capabilities:
+            if capability in provider_model_capabilities:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_provider_model_capability",
+                        f"forbidden provider model capability present: {capability}",
+                    )
+                )
         if spec.require_journal_ok and summary.get("journal_ok") is False:
             issues.append(TraceEvalIssue("error", "journal_not_ok", "journal replay reported issues"))
         if spec.require_resume and not resume:
@@ -843,6 +910,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "status": status,
                 "iterations": iterations,
                 "provider_call_count": provider_calls,
+                "provider_names": sorted(provider_names),
+                "provider_models": sorted(provider_models),
+                "provider_model_capability_count": len(provider_model_capability_manifests),
+                "provider_model_capabilities": sorted(provider_model_capabilities),
                 "cost_usd": cost,
                 "event_types": sorted(event_types),
                 "tool_names": sorted(tool_names),
@@ -1188,6 +1259,61 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _provider_call_records(provider: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    calls = provider.get("calls")
+    if not isinstance(calls, (list, tuple)):
+        return ()
+    return tuple(dict(item) for item in calls if isinstance(item, dict))
+
+
+def _provider_call_values(calls: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in calls if item.get(key)}
+
+
+def _provider_model_capability_manifests(
+    calls: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    manifests: list[dict[str, Any]] = []
+    for call in calls:
+        metadata = call.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        capability = metadata.get("model_capabilities")
+        if isinstance(capability, dict):
+            manifests.append(dict(capability))
+            continue
+        request = metadata.get("request")
+        if not isinstance(request, dict):
+            continue
+        request_metadata = request.get("metadata")
+        if not isinstance(request_metadata, dict):
+            continue
+        capability = request_metadata.get("model_capabilities")
+        if isinstance(capability, dict):
+            manifests.append(dict(capability))
+    return tuple(manifests)
+
+
+def _provider_model_capability_names(manifests: tuple[dict[str, Any], ...]) -> set[str]:
+    names: set[str] = set()
+    for manifest in manifests:
+        raw = manifest.get("capabilities")
+        if isinstance(raw, (list, tuple)):
+            names.update(str(item) for item in raw if item)
+        for field_name, capability_name in (
+            ("supports_streaming", "streaming"),
+            ("supports_tool_calls", "tool_calls"),
+            ("supports_structured_output", "structured_output"),
+            ("supports_json_mode", "json_mode"),
+        ):
+            if manifest.get(field_name) is True:
+                names.add(capability_name)
+        modalities = manifest.get("modalities")
+        if isinstance(modalities, (list, tuple)):
+            names.update(f"modality:{item}" for item in modalities if item)
+    return names
 
 
 def _provider_cost(provider: dict[str, Any]) -> float:

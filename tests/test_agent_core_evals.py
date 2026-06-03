@@ -14,7 +14,7 @@ from agent_core.evals import (
 )
 from agent_core.backends import storage_backend_manifest
 from agent_core.runner import AgentRunner, AgentSession
-from agent_core.providers import LLMProviderCenter
+from agent_core.providers import LLMModelCapabilities, LLMProviderCenter
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.testing import MockLLMProvider, MockToolRuntime
 from agent_core.tools import (
@@ -67,7 +67,60 @@ def _trace_manifest() -> dict[str, object]:
         },
         "provider": {
             "call_count": 2,
-            "calls": [{"usage": {"cost_usd": 0.01}}, {"usage": {"cost_usd": 0.02}}],
+            "calls": [
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "usage": {"cost_usd": 0.01},
+                    "metadata": {
+                        "request": {
+                            "metadata": {
+                                "model_capabilities": {
+                                    "schema_version": "agent-core-llm-model-capabilities/v1",
+                                    "supports_streaming": True,
+                                    "supports_tool_calls": True,
+                                    "supports_structured_output": True,
+                                    "supports_json_mode": True,
+                                    "modalities": ["text"],
+                                    "capabilities": [
+                                        "streaming",
+                                        "tool_calls",
+                                        "structured_output",
+                                        "json_mode",
+                                        "modality:text",
+                                    ],
+                                }
+                            }
+                        }
+                    },
+                },
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "usage": {"cost_usd": 0.02},
+                    "metadata": {
+                        "request": {
+                            "metadata": {
+                                "model_capabilities": {
+                                    "schema_version": "agent-core-llm-model-capabilities/v1",
+                                    "supports_streaming": True,
+                                    "supports_tool_calls": True,
+                                    "supports_structured_output": True,
+                                    "supports_json_mode": True,
+                                    "modalities": ["text"],
+                                    "capabilities": [
+                                        "streaming",
+                                        "tool_calls",
+                                        "structured_output",
+                                        "json_mode",
+                                        "modality:text",
+                                    ],
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
         },
         "prompt": {
             "metadata": {
@@ -199,6 +252,10 @@ def test_default_trace_evaluator_accepts_expected_trace() -> None:
             max_iterations=3,
             max_provider_calls=3,
             max_cost_usd=0.05,
+            required_provider_names=("mock",),
+            required_provider_models=("mock-mini",),
+            require_provider_model_capabilities=True,
+            required_provider_model_capabilities=("structured_output", "json_mode"),
             required_event_types=("run_finished", "tool_finished"),
             required_tool_names=("lookup",),
         ),
@@ -206,6 +263,15 @@ def test_default_trace_evaluator_accepts_expected_trace() -> None:
 
     assert report.ok
     assert report.summary["cost_usd"] == 0.03
+    assert report.summary["provider_names"] == ["mock"]
+    assert report.summary["provider_models"] == ["mock-mini"]
+    assert report.summary["provider_model_capabilities"] == [
+        "json_mode",
+        "modality:text",
+        "streaming",
+        "structured_output",
+        "tool_calls",
+    ]
     assert report.summary["tool_names"] == ["lookup"]
     assert report.manifest()["schema_version"] == "agent-core-trace-eval-report/v1"
 
@@ -239,6 +305,39 @@ def test_default_trace_evaluator_reports_contract_failures() -> None:
         "missing_tool_name",
         "forbidden_event_type",
     } <= codes
+
+
+def test_trace_eval_reports_provider_capability_contract_failures() -> None:
+    trace = _trace_manifest()
+    trace["provider"] = {"call_count": 1, "calls": [{"provider_name": "cheap", "model": "tiny"}]}
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_provider_names=("mock",),
+            required_provider_models=("mock-mini",),
+            require_provider_model_capabilities=True,
+            required_provider_model_capabilities=("structured_output",),
+            forbidden_provider_model_capabilities=("streaming",),
+        ),
+    )
+    forbidden = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(forbidden_provider_model_capabilities=("json_mode",)),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_provider_name",
+        "missing_provider_model",
+        "provider_model_capabilities_missing",
+        "missing_provider_model_capability",
+    } <= codes
+    assert not forbidden.ok
+    assert {issue.code for issue in forbidden.issues} == {
+        "forbidden_provider_model_capability"
+    }
 
 
 def test_trace_replay_and_eval_understand_resume_manifests() -> None:
@@ -664,7 +763,16 @@ async def test_trace_eval_harness_evaluates_stored_agent_runner_trace() -> None:
         ]
     )
     center = LLMProviderCenter(default_provider="mock")
-    center.register("mock", provider, default_model="mock-mini")
+    center.register(
+        "mock",
+        provider,
+        default_model="mock-mini",
+        default_capabilities=LLMModelCapabilities(
+            supports_tool_calls=True,
+            supports_structured_output=True,
+            supports_json_mode=True,
+        ),
+    )
     session = AgentSession(
         profile=AgentProfile(name="eval", model="mock-mini", budget=RuntimeBudget(max_iterations=4)),
         provider=center,
@@ -681,6 +789,10 @@ async def test_trace_eval_harness_evaluates_stored_agent_runner_trace() -> None:
         TraceEvalSpec(
             expected_status="completed",
             max_iterations=3,
+            required_provider_names=("mock",),
+            required_provider_models=("mock-mini",),
+            require_provider_model_capabilities=True,
+            required_provider_model_capabilities=("structured_output", "json_mode"),
             required_event_types=("run_finished", "tool_finished"),
             required_tool_names=("lookup",),
         ),
@@ -689,6 +801,8 @@ async def test_trace_eval_harness_evaluates_stored_agent_runner_trace() -> None:
     assert report.ok
     assert report.run_id == outcome.result.run_id
     assert report.summary["provider_call_count"] == 2
+    assert report.summary["provider_names"] == ["mock"]
+    assert "structured_output" in report.summary["provider_model_capabilities"]
     assert report.replay["step_count"] >= 4
     assert harness.manifest()["schema_version"] == "agent-core-trace-eval-harness/v1"
 

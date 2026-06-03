@@ -210,7 +210,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
-  iteration limits, provider call limits, required events, required tools,
+  iteration limits, provider call limits, required provider names/models,
+  required provider model capabilities, required events, required tools,
   resume-plan presence, resume-plan readiness, expected checkpoint id, tool
   execution presence, tool retry, minimum tool attempt counts, and storage
   backend, context injection, memory governance, and prompt bucket budget
@@ -282,7 +283,8 @@ reducer while keeping the same core contract.
 - Request, response, stream event, route, and call record manifests.
 - `LLMStreamAccumulator` for reconstructing a stream into an `LLMResponse`
   plus prompt-safe stream summaries.
-- Provider call audit records for completed and failed attempts.
+- Provider call audit records for completed and failed attempts, including the
+  routed request manifest and original request manifest.
 - Stream error events are treated as failed attempts for retry/fallback audit.
 - Streaming attempts are budget-checked before events are emitted by the center,
   and completed streamed calls record a standard stream summary.
@@ -293,6 +295,10 @@ provider-neutral request/response/stream shapes, stream aggregation, and
 error/retry mapping. When runtimes declare `LLMModelCapabilities`,
 `LLMProviderCenter` can avoid routes that cannot satisfy requested model
 features or declared token/output limits.
+The routed request manifest records the selected provider, model priority, and
+model capabilities so trace/eval contracts can later prove which model ability
+was actually used for structured output, JSON mode, tool calls, streaming, or
+modalities.
 
 ### Tools
 

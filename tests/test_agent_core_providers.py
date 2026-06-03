@@ -243,6 +243,10 @@ async def test_provider_center_routes_by_declared_model_capabilities() -> None:
     assert not small.requests
     assert strong.requests[0].model == "strong-pro"
     assert strong.requests[0].metadata["model_capabilities"]["supports_structured_output"] is True
+    assert center.calls[0].metadata["request"]["metadata"]["model_capabilities"][
+        "supports_structured_output"
+    ] is True
+    assert center.calls[0].metadata["original_request"]["metadata"]["requires_structured_output"] is True
     assert route.provider_name == "strong"
     assert route.metadata["model_capabilities"]["supports_json_mode"] is True
     assert manifest["providers"][0]["default_capabilities"]["context_window_tokens"] == 512
@@ -537,6 +541,8 @@ async def test_provider_center_records_streaming_call_manifests() -> None:
     assert center.calls[0].metadata["stream_summary"]["schema_version"] == "agent-core-llm-stream-summary/v1"
     assert center.calls[0].metadata["stream_summary"]["event_types"] == ["delta", "usage", "message_end"]
     assert center.calls[0].metadata["stream_summary"]["delta_bytes"] == 5
+    assert center.calls[0].metadata["request"]["metadata"]["provider"] == "local"
+    assert center.calls[0].metadata["original_request"]["message_count"] == 1
     assert manifest["calls"][0]["streamed"] is True
     assert manifest["calls"][0]["metadata"]["stream_summary"]["content_bytes"] == 5
     assert manifest["calls"][0]["usage"]["total_tokens"] == 3

@@ -729,7 +729,10 @@ class LLMProviderCenter(LLMProviderPort):
                         attempt=attempt + 1,
                         status="completed",
                         usage=response.usage,
-                        metadata={"request": request.manifest()},
+                        metadata={
+                            "request": routed.manifest(),
+                            "original_request": request.manifest(),
+                        },
                     )
                     return replace(
                         response,
@@ -749,7 +752,10 @@ class LLMProviderCenter(LLMProviderPort):
                         routed.model,
                         attempt + 1,
                         exc,
-                        metadata={"request": request.manifest()},
+                        metadata={
+                            "request": routed.manifest(),
+                            "original_request": request.manifest(),
+                        },
                     )
                     if not self._is_retryable(exc) or attempt + 1 >= attempts:
                         break
@@ -780,7 +786,8 @@ class LLMProviderCenter(LLMProviderPort):
                         streamed=True,
                         usage=usage,
                         metadata={
-                            "request": request.manifest(),
+                            "request": routed.manifest(),
+                            "original_request": request.manifest(),
                             "stream_summary": stream_summary,
                         },
                     )
@@ -797,7 +804,10 @@ class LLMProviderCenter(LLMProviderPort):
                         attempt + 1,
                         exc,
                         streamed=True,
-                        metadata={"request": request.manifest()},
+                        metadata={
+                            "request": routed.manifest(),
+                            "original_request": request.manifest(),
+                        },
                     )
                     if not self._is_retryable(exc, streamed=True) or attempt + 1 >= attempts:
                         break
