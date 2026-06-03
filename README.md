@@ -259,13 +259,17 @@ reducer while keeping the same core contract.
 - Usage/failure accounting.
 - Budget checks.
 - Request, response, stream event, route, and call record manifests.
+- `LLMStreamAccumulator` for reconstructing a stream into an `LLMResponse`
+  plus prompt-safe stream summaries.
 - Provider call audit records for completed and failed attempts.
 - Stream error events are treated as failed attempts for retry/fallback audit.
-- Streaming attempts are budget-checked before events are emitted by the center.
+- Streaming attempts are budget-checked before events are emitted by the center,
+  and completed streamed calls record a standard stream summary.
 
 Concrete clients for OpenAI, Anthropic, local models, gateways, credentials, and
 vendor rate limits live in runtimes or adapter packages. `agent_core` owns the
-provider-neutral request/response/stream shapes and error/retry mapping.
+provider-neutral request/response/stream shapes, stream aggregation, and
+error/retry mapping.
 
 ### Tools
 

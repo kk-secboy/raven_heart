@@ -146,13 +146,18 @@ rate limits, and vendor-specific response payloads remain runtime-owned.
 dependency-free adapter boundary: runtimes can provide a transport and optional
 vendor codec while the SDK keeps provider-neutral request, response, stream, and
 error/retry semantics.
+`LLMStreamAccumulator` gives streaming calls a single reconstruction and audit
+contract: events become an `LLMResponse`, while manifests retain event counts,
+event types, byte counts, usage, finish reason, and action presence without
+embedding raw streamed content.
 `LLMRetryPolicy` and `LLMUsageLimits` give the SDK a provider-neutral way to
 describe retry/fallback behavior, call-attempt ceilings, token ceilings, and
 cost ceilings. Runtime code can derive these policies from tenants, tasks, or
 model classes, while real rate limiters and vendor quotas stay outside core.
 For streaming calls, core treats provider `error` events as failed attempts,
 records streamed failure metadata, and applies retry/fallback and budget checks
-before yielding a successful stream to callers.
+before yielding a successful stream to callers. Completed streamed calls include
+the standard stream summary in provider call metadata.
 
 `ToolReplayStorePort` gives tool replay the same port-based shape as memory and
 journals. Core replay manifests include replay keys, invocation argument hashes,

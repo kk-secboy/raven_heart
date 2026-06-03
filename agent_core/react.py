@@ -39,7 +39,13 @@ from agent_core.policy import (
     PolicySubjectKind,
 )
 from agent_core.prompt import PromptIR
-from agent_core.providers import LLMMessage, LLMProviderPort, LLMRequest, LLMResponse, UsageInfo
+from agent_core.providers import (
+    LLMMessage,
+    LLMProviderPort,
+    LLMRequest,
+    LLMResponse,
+    LLMStreamAccumulator,
+)
 from agent_core.skills import SkillsContext
 from agent_core.structured import (
     JsonStructuredOutputValidator,
@@ -225,6 +231,7 @@ class ReActExecutor:
                     "action": response.action,
                     "finish_reason": response.finish_reason,
                     "usage": response.usage.__dict__,
+                    "metadata": dict(response.metadata),
                 },
             )
             await self._record_timeline(
@@ -664,12 +671,9 @@ class ReActExecutor:
         if not self.config.stream:
             return await self.provider.complete(request)
 
-        content_parts: list[str] = []
-        action: dict[str, Any] | None = None
-        usage = UsageInfo()
-        finish_reason = ""
-        metadata: dict[str, Any] = {"streamed": True}
+        accumulator = LLMStreamAccumulator()
         async for event in self.provider.stream(request):
+            accumulator.add(event)
             await self._emit(
                 "model_stream",
                 run,
@@ -681,24 +685,7 @@ class ReActExecutor:
                     "error": event.error,
                 },
             )
-            if event.delta:
-                content_parts.append(event.delta)
-            if event.action is not None:
-                action = event.action
-            if event.usage is not None:
-                usage = event.usage
-            if event.type == "error":
-                finish_reason = "error"
-                metadata["error"] = event.error
-            elif event.type == "message_end":
-                finish_reason = "stop"
-        return LLMResponse(
-            content="".join(content_parts),
-            action=action,
-            usage=usage,
-            finish_reason=finish_reason,
-            metadata=metadata,
-        )
+        return accumulator.response()
 
     async def _memory_message(self, task: str) -> LLMMessage | None:
         hits = await self.memory.search(MemoryQuery(query=task))

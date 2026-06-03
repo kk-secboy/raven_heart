@@ -17,6 +17,7 @@ from agent_core.providers import (
     LLMRequest,
     LLMResponse,
     LLMRetryPolicy,
+    LLMStreamAccumulator,
     LLMStreamEvent,
     LLMUsageLimits,
     RetryHint,
@@ -187,6 +188,36 @@ def test_provider_center_search_manifest_and_missing_provider() -> None:
 
     with pytest.raises(LLMProviderNotFoundError):
         center.select(LLMRequest(messages=[], metadata={"provider": "missing"}))
+
+
+def test_llm_stream_accumulator_builds_response_and_prompt_safe_manifest() -> None:
+    accumulator = LLMStreamAccumulator()
+
+    accumulator.add(LLMStreamEvent(type="message_start"))
+    accumulator.add(LLMStreamEvent(type="delta", delta="hel"))
+    accumulator.add(
+        LLMStreamEvent(
+            type="action",
+            action={"action": "finish", "arguments": {"output": "hello"}},
+        )
+    )
+    accumulator.add(LLMStreamEvent(type="delta", delta="lo"))
+    accumulator.add(LLMStreamEvent(type="usage", usage=UsageInfo(total_tokens=5, cost_usd=0.01)))
+    accumulator.add(LLMStreamEvent(type="message_end"))
+
+    response = accumulator.response(metadata={"provider": "mock"})
+    manifest = accumulator.manifest()
+
+    assert response.content == "hello"
+    assert response.action == {"action": "finish", "arguments": {"output": "hello"}}
+    assert response.usage.total_tokens == 5
+    assert response.finish_reason == "stop"
+    assert response.metadata["streamed"] is True
+    assert response.metadata["provider"] == "mock"
+    assert response.metadata["stream"]["event_count"] == 6
+    assert manifest["schema_version"] == "agent-core-llm-stream-accumulator/v1"
+    assert manifest["summary"]["content_bytes"] == 5
+    assert "hello" not in str(manifest)
 
 
 @pytest.mark.asyncio
@@ -417,7 +448,11 @@ async def test_provider_center_records_streaming_call_manifests() -> None:
     assert [event.type for event in events] == ["delta", "usage", "message_end"]
     assert center.calls[0].streamed is True
     assert center.calls[0].status == "completed"
+    assert center.calls[0].metadata["stream_summary"]["schema_version"] == "agent-core-llm-stream-summary/v1"
+    assert center.calls[0].metadata["stream_summary"]["event_types"] == ["delta", "usage", "message_end"]
+    assert center.calls[0].metadata["stream_summary"]["delta_bytes"] == 5
     assert manifest["calls"][0]["streamed"] is True
+    assert manifest["calls"][0]["metadata"]["stream_summary"]["content_bytes"] == 5
     assert manifest["calls"][0]["usage"]["total_tokens"] == 3
     assert LLMCallRecord(
         provider_name="local",

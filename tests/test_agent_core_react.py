@@ -419,11 +419,12 @@ async def test_mock_provider_stream_emits_action_and_message_end() -> None:
 async def test_react_executor_can_drive_loop_from_stream_events() -> None:
     provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "streamed"}}])
     events = ListEventSink()
+    harness = InMemoryHarness()
     executor = ReActExecutor(
         provider=provider,
         tool_runtime=MockToolRuntime(),
         action_registry=ActionRegistry(),
-        harness=InMemoryHarness(),
+        harness=harness,
         event_sink=events,
         config=ReActConfig(stream=True),
     )
@@ -432,6 +433,8 @@ async def test_react_executor_can_drive_loop_from_stream_events() -> None:
 
     assert result.status == "completed"
     assert result.output == "streamed"
+    assert harness.model_events[0]["metadata"]["streamed"] is True
+    assert harness.model_events[0]["metadata"]["stream"]["has_action"] is True
     assert [event.type for event in events.events if event.type == "model_stream"]
 
 

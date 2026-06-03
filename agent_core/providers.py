@@ -179,6 +179,71 @@ class LLMStreamEvent:
         }
 
 
+@dataclass
+class LLMStreamAccumulator:
+    """Collect stream events into a response and stream audit summaries."""
+
+    events: list[LLMStreamEvent] = field(default_factory=list)
+    content_parts: list[str] = field(default_factory=list)
+    action: dict[str, Any] | None = None
+    usage: UsageInfo = field(default_factory=UsageInfo)
+    finish_reason: str = ""
+    error: str = ""
+
+    def add(self, event: LLMStreamEvent) -> None:
+        self.events.append(event)
+        if event.delta:
+            self.content_parts.append(event.delta)
+        if event.action is not None:
+            self.action = dict(event.action)
+        if event.usage is not None:
+            self.usage = event.usage
+        if event.type == "error":
+            self.error = event.error
+            self.finish_reason = "error"
+        elif event.type == "message_end" and not self.finish_reason:
+            self.finish_reason = "stop"
+
+    @property
+    def content(self) -> str:
+        return "".join(self.content_parts)
+
+    def response(self, *, metadata: dict[str, Any] | None = None) -> LLMResponse:
+        return LLMResponse(
+            content=self.content,
+            action=dict(self.action) if self.action is not None else None,
+            usage=self.usage,
+            finish_reason=self.finish_reason,
+            metadata={
+                "streamed": True,
+                "stream": self.summary_manifest(),
+                **dict(metadata or {}),
+            },
+        )
+
+    def summary_manifest(self) -> dict[str, Any]:
+        event_types = [event.type for event in self.events]
+        return {
+            "schema_version": "agent-core-llm-stream-summary/v1",
+            "event_count": len(self.events),
+            "event_types": event_types,
+            "delta_bytes": sum(len(event.delta.encode("utf-8")) for event in self.events),
+            "content_bytes": len(self.content.encode("utf-8")),
+            "has_action": self.action is not None,
+            "has_usage": any(event.usage is not None for event in self.events),
+            "finish_reason": self.finish_reason,
+            "error": self.error,
+            "usage": self.usage.manifest(),
+        }
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-stream-accumulator/v1",
+            "summary": self.summary_manifest(),
+            "events": [event.manifest() for event in self.events],
+        }
+
+
 class LLMProviderPort(Protocol):
     """Provider-neutral interface for model calls."""
 
@@ -575,7 +640,7 @@ class LLMProviderCenter(LLMProviderPort):
             for attempt in range(attempts):
                 self._check_call_attempt_limit()
                 try:
-                    events, usage = await self._collect_stream_attempt(
+                    events, usage, stream_summary = await self._collect_stream_attempt(
                         entry,
                         routed,
                         attempt=attempt + 1,
@@ -590,8 +655,7 @@ class LLMProviderCenter(LLMProviderPort):
                         usage=usage,
                         metadata={
                             "request": request.manifest(),
-                            "event_count": len(events),
-                            "delta_bytes": sum(len(event.delta.encode("utf-8")) for event in events),
+                            "stream_summary": stream_summary,
                         },
                     )
                     for event in events:
@@ -621,33 +685,31 @@ class LLMProviderCenter(LLMProviderPort):
         request: LLMRequest,
         *,
         attempt: int,
-    ) -> tuple[tuple[LLMStreamEvent, ...], UsageInfo]:
+    ) -> tuple[tuple[LLMStreamEvent, ...], UsageInfo, dict[str, Any]]:
         events: list[LLMStreamEvent] = []
-        usage = UsageInfo()
+        accumulator = LLMStreamAccumulator()
         async for event in entry.provider.stream(request):
-            if event.usage is not None:
-                usage = event.usage
             if event.type == "error":
                 raise LLMProviderError(
                     event.error or "provider stream error",
                     retry_hint=_retry_hint_from_stream_event(event),
                 )
-            events.append(
-                LLMStreamEvent(
-                    type=event.type,
-                    delta=event.delta,
-                    action=event.action,
-                    usage=event.usage,
-                    error=event.error,
-                    metadata={
-                        **event.metadata,
-                        "provider": entry.spec.name,
-                        "model": request.model,
-                        "attempt": attempt,
-                    },
-                )
+            routed_event = LLMStreamEvent(
+                type=event.type,
+                delta=event.delta,
+                action=event.action,
+                usage=event.usage,
+                error=event.error,
+                metadata={
+                    **event.metadata,
+                    "provider": entry.spec.name,
+                    "model": request.model,
+                    "attempt": attempt,
+                },
             )
-        return tuple(events), usage
+            accumulator.add(routed_event)
+            events.append(routed_event)
+        return tuple(events), accumulator.usage, accumulator.summary_manifest()
 
     def _select_entry(self, request: LLMRequest) -> _ProviderEntry:
         requested_provider = str(request.metadata.get("provider") or "")
