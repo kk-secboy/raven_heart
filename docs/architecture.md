@@ -131,9 +131,11 @@ resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, tool execution presence,
 tool retry, minimum tool attempt counts, required storage backend roles/kinds,
 forbidden backend kinds, external-backend limits, required context injection
-sources/targets, forbidden injection sources, and trimmed/excluded injection
-limits, memory governance allow/rewrite/deny and risk ceilings, and prompt
-bucket budget roles/statuses/over-budget ceilings. Runtime code owns
+names/sources/targets/statuses, required included/trimmed/excluded injection
+sources, forbidden injection sources/statuses, trimmed/excluded injection
+limits, memory governance allow/rewrite/deny and risk ceilings, prompt bucket
+budget roles/statuses/over-budget ceilings, and global prompt trim roles/byte
+ceilings. Runtime code owns
 domain-specific eval datasets, baseline selection, scoring policy, dashboards,
 and release gates.
 
@@ -373,7 +375,9 @@ make prompt trimming auditable before and after the cut. The default rules trim
 volatile timeline material first, then semi-dynamic recall/schema buckets, then
 capability inventory, while protecting high-static system rules and preserving a
 minimum dynamic task window. Runtimes can provide custom rules for code, ops, or
-security agents without changing bucket order or provider calls.
+security agents without changing bucket order or provider calls. Trace evals
+can require or forbid global prompt trim, require specific trimmed semantic
+roles, and cap original/final prompt bytes.
 
 `PromptBucketBudgetPolicy` adds an earlier bucket-local budget pass. It can cap
 specific semantic buckets such as memory, skills, capability inventory, or open
@@ -386,7 +390,10 @@ manifests. Runtimes own the actual budget numbers and rollout policy.
 `ContextInjection` is the SDK-level insertion record for resumable state, memory
 continuity, operator hints, and runtime-supplied context. It declares the target
 bucket, source, priority, and metadata. The runtime still owns the actual content
-and policy for adding it.
+and policy for adding it. Trace evals can require specific injection names,
+sources, target buckets, statuses, included sources, trimmed sources, and
+excluded sources, giving Yaklang-style context routing and auto-trimming a
+provider-neutral acceptance contract.
 
 `ContextInjectionPolicy` is the SDK-level guardrail applied before prompt
 assembly. It can restrict target buckets, trim each injected block, cap total

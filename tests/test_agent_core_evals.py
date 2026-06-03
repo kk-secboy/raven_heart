@@ -149,7 +149,21 @@ def _trace_manifest() -> dict[str, object]:
                         "included": False,
                         "trimmed": False,
                     },
-                ]
+                ],
+                "trim": {
+                    "schema_version": "agent-core-prompt-trim/v1",
+                    "target_bytes": 900,
+                    "original_bytes": 1200,
+                    "final_bytes": 840,
+                    "trimmed_roles": [
+                        {
+                            "role": "timeline_open",
+                            "original_bytes": 500,
+                            "trimmed_bytes": 140,
+                            "reason": "trim volatile timeline context first",
+                        }
+                    ],
+                },
             }
         },
         "tool_replay": {
@@ -940,17 +954,36 @@ def test_trace_eval_validates_context_injection_contracts() -> None:
         _trace_manifest(),
         TraceEvalSpec(
             require_context_injections=True,
+            required_context_injection_names=("memory_recall", "operator_hint"),
             required_context_injection_sources=("memory", "runtime"),
             required_context_injection_targets=("semi_dynamic_1", "dynamic"),
+            required_context_injection_statuses=("trimmed", "included", "target_denied"),
+            required_included_context_injection_sources=("memory", "runtime"),
+            required_trimmed_context_injection_sources=("memory",),
+            required_excluded_context_injection_sources=("runtime",),
+            max_trimmed_context_injections=1,
             max_excluded_context_injections=1,
         ),
     )
 
     assert report.ok
     assert report.summary["context_injection_count"] == 3
+    assert report.summary["context_injection_names"] == [
+        "denied_static",
+        "memory_recall",
+        "operator_hint",
+    ]
     assert report.summary["trimmed_context_injection_count"] == 1
     assert report.summary["excluded_context_injection_count"] == 1
     assert report.summary["context_injection_sources"] == ["memory", "runtime"]
+    assert report.summary["context_injection_statuses"] == [
+        "included",
+        "target_denied",
+        "trimmed",
+    ]
+    assert report.summary["included_context_injection_sources"] == ["memory", "runtime"]
+    assert report.summary["trimmed_context_injection_sources"] == ["memory"]
+    assert report.summary["excluded_context_injection_sources"] == ["runtime"]
     assert report.metadata["spec"]["require_context_injections"] is True
 
 
@@ -958,10 +991,17 @@ def test_trace_eval_reports_context_injection_contract_failures() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
         TraceEvalSpec(
+            required_context_injection_names=("missing_context",),
             required_context_injection_sources=("approval",),
             required_context_injection_targets=("timeline_open",),
+            required_context_injection_statuses=("budget_exceeded",),
+            forbidden_context_injection_statuses=("target_denied",),
+            required_included_context_injection_sources=("approval",),
+            required_trimmed_context_injection_sources=("runtime",),
+            required_excluded_context_injection_sources=("memory",),
             forbidden_context_injection_sources=("runtime",),
             forbid_trimmed_context_injections=True,
+            max_trimmed_context_injections=0,
             max_excluded_context_injections=0,
         ),
     )
@@ -973,14 +1013,69 @@ def test_trace_eval_reports_context_injection_contract_failures() -> None:
 
     assert not report.ok
     assert {
+        "missing_context_injection_name",
         "missing_context_injection_source",
         "missing_context_injection_target",
+        "missing_context_injection_status",
+        "forbidden_context_injection_status",
+        "missing_included_context_injection_source",
+        "missing_trimmed_context_injection_source",
+        "missing_excluded_context_injection_source",
         "forbidden_context_injection_source",
         "context_injection_trimmed_forbidden",
+        "context_injection_trimmed_limit_exceeded",
         "context_injection_excluded_limit_exceeded",
     } <= codes
     assert not missing.ok
     assert {issue.code for issue in missing.issues} == {"context_injections_missing"}
+
+
+def test_trace_eval_validates_prompt_trim_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_prompt_trim=True,
+            required_prompt_trim_roles=("timeline_open",),
+            max_prompt_trim_original_bytes=1200,
+            max_prompt_trim_final_bytes=900,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_prompt_trim"] is True
+    assert report.summary["prompt_trim_roles"] == ["timeline_open"]
+    assert report.summary["prompt_trim_original_bytes"] == 1200
+    assert report.summary["prompt_trim_final_bytes"] == 840
+    assert report.metadata["spec"]["require_prompt_trim"] is True
+
+
+def test_trace_eval_reports_prompt_trim_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            forbid_prompt_trim=True,
+            required_prompt_trim_roles=("semi_dynamic_1",),
+            forbidden_prompt_trim_roles=("timeline_open",),
+            max_prompt_trim_original_bytes=1000,
+            max_prompt_trim_final_bytes=800,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "prompt"},
+        TraceEvalSpec(require_prompt_trim=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "prompt_trim_forbidden",
+        "missing_prompt_trim_role",
+        "forbidden_prompt_trim_role",
+        "prompt_trim_original_bytes_exceeded",
+        "prompt_trim_final_bytes_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"prompt_trim_missing"}
 
 
 def test_trace_eval_validates_memory_governance_contracts() -> None:

@@ -203,8 +203,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `StorageBackendTrace` collects backend manifests from session, memory,
   replay, approval, policy, event, artifact, and trace components into one
   run-level backend inventory.
-- `ContextInjectionTrace` summarizes prompt injection decisions by source,
-  target bucket, status, included count, excluded count, and trimmed count.
+- `ContextInjectionTrace` summarizes prompt injection decisions by name,
+  source, target bucket, status, included count, excluded count, and trimmed
+  count.
 - `MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny decisions,
   risk levels, stores, and prompt-safe leak hashes.
 - `TraceCorrelationIndex` cross-references provider calls, tool replay records,
@@ -231,8 +232,10 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   embedding call limits, required embedding providers/models/dimensions,
   required events, required tools, resume-plan presence, resume-plan readiness,
   expected checkpoint id, tool execution presence, tool retry, tool schema
-  validation, minimum tool attempt counts, and storage backend, context
-  injection, memory governance, and prompt bucket budget constraints.
+  validation, minimum tool attempt counts, storage backend constraints,
+  context injection name/source/target/status constraints, included/trimmed/
+  excluded injection source constraints, memory governance constraints, prompt
+  bucket budget constraints, and global prompt trim constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.

@@ -117,10 +117,17 @@ class TraceEvalSpec:
     forbid_external_storage_backends: bool = False
     max_external_storage_backends: int | None = None
     require_context_injections: bool = False
+    required_context_injection_names: tuple[str, ...] = ()
     required_context_injection_sources: tuple[str, ...] = ()
     required_context_injection_targets: tuple[str, ...] = ()
+    required_context_injection_statuses: tuple[str, ...] = ()
+    forbidden_context_injection_statuses: tuple[str, ...] = ()
+    required_included_context_injection_sources: tuple[str, ...] = ()
+    required_trimmed_context_injection_sources: tuple[str, ...] = ()
+    required_excluded_context_injection_sources: tuple[str, ...] = ()
     forbidden_context_injection_sources: tuple[str, ...] = ()
     forbid_trimmed_context_injections: bool = False
+    max_trimmed_context_injections: int | None = None
     max_excluded_context_injections: int | None = None
     require_memory_governance: bool = False
     required_memory_governance_decisions: tuple[str, ...] = ()
@@ -135,6 +142,12 @@ class TraceEvalSpec:
     forbid_over_budget_prompt_buckets: bool = False
     max_prompt_bucket_budget_trimmed: int | None = None
     max_prompt_bucket_budget_over_budget: int | None = None
+    require_prompt_trim: bool = False
+    forbid_prompt_trim: bool = False
+    required_prompt_trim_roles: tuple[str, ...] = ()
+    forbidden_prompt_trim_roles: tuple[str, ...] = ()
+    max_prompt_trim_final_bytes: int | None = None
+    max_prompt_trim_original_bytes: int | None = None
     forbidden_event_types: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -200,10 +213,23 @@ class TraceEvalSpec:
             "forbid_external_storage_backends": self.forbid_external_storage_backends,
             "max_external_storage_backends": self.max_external_storage_backends,
             "require_context_injections": self.require_context_injections,
+            "required_context_injection_names": list(self.required_context_injection_names),
             "required_context_injection_sources": list(self.required_context_injection_sources),
             "required_context_injection_targets": list(self.required_context_injection_targets),
+            "required_context_injection_statuses": list(self.required_context_injection_statuses),
+            "forbidden_context_injection_statuses": list(self.forbidden_context_injection_statuses),
+            "required_included_context_injection_sources": list(
+                self.required_included_context_injection_sources
+            ),
+            "required_trimmed_context_injection_sources": list(
+                self.required_trimmed_context_injection_sources
+            ),
+            "required_excluded_context_injection_sources": list(
+                self.required_excluded_context_injection_sources
+            ),
             "forbidden_context_injection_sources": list(self.forbidden_context_injection_sources),
             "forbid_trimmed_context_injections": self.forbid_trimmed_context_injections,
+            "max_trimmed_context_injections": self.max_trimmed_context_injections,
             "max_excluded_context_injections": self.max_excluded_context_injections,
             "require_memory_governance": self.require_memory_governance,
             "required_memory_governance_decisions": list(self.required_memory_governance_decisions),
@@ -222,6 +248,12 @@ class TraceEvalSpec:
             "forbid_over_budget_prompt_buckets": self.forbid_over_budget_prompt_buckets,
             "max_prompt_bucket_budget_trimmed": self.max_prompt_bucket_budget_trimmed,
             "max_prompt_bucket_budget_over_budget": self.max_prompt_bucket_budget_over_budget,
+            "require_prompt_trim": self.require_prompt_trim,
+            "forbid_prompt_trim": self.forbid_prompt_trim,
+            "required_prompt_trim_roles": list(self.required_prompt_trim_roles),
+            "forbidden_prompt_trim_roles": list(self.forbidden_prompt_trim_roles),
+            "max_prompt_trim_final_bytes": self.max_prompt_trim_final_bytes,
+            "max_prompt_trim_original_bytes": self.max_prompt_trim_original_bytes,
             "forbidden_event_types": list(self.forbidden_event_types),
             "metadata": dict(self.metadata),
         }
@@ -460,13 +492,30 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             backend for backend in storage_backends if backend.get("core_builtin") is False
         )
         context_injections = _context_injections(trace)
+        context_injection_names = _context_injection_values(context_injections, "name")
         context_injection_sources = _context_injection_values(context_injections, "source")
         context_injection_targets = _context_injection_values(context_injections, "target")
+        context_injection_statuses = _context_injection_values(context_injections, "status")
+        included_context_injections = tuple(
+            injection for injection in context_injections if injection.get("included") is True
+        )
         trimmed_context_injections = tuple(
             injection for injection in context_injections if injection.get("trimmed") is True
         )
         excluded_context_injections = tuple(
             injection for injection in context_injections if injection.get("included") is False
+        )
+        included_context_injection_sources = _context_injection_values(
+            included_context_injections,
+            "source",
+        )
+        trimmed_context_injection_sources = _context_injection_values(
+            trimmed_context_injections,
+            "source",
+        )
+        excluded_context_injection_sources = _context_injection_values(
+            excluded_context_injections,
+            "source",
         )
         memory_governance_decisions = _memory_governance_decisions(trace)
         memory_governance_statuses = _memory_governance_values(
@@ -502,6 +551,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             for decision in prompt_bucket_budget_decisions
             if _prompt_bucket_budget_decision_over_budget(decision)
         )
+        prompt_trim = _prompt_trim(trace)
+        prompt_trim_roles = _prompt_trim_roles(prompt_trim)
+        prompt_trim_final_bytes = _prompt_trim_int(prompt_trim, "final_bytes")
+        prompt_trim_original_bytes = _prompt_trim_int(prompt_trim, "original_bytes")
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -803,6 +856,15 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     "context injection trace is required",
                 )
             )
+        for name in spec.required_context_injection_names:
+            if name not in context_injection_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_context_injection_name",
+                        f"required context injection name missing: {name}",
+                    )
+                )
         for source in spec.required_context_injection_sources:
             if source not in context_injection_sources:
                 issues.append(
@@ -821,6 +883,51 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         f"required context injection target missing: {target}",
                     )
                 )
+        for status_value in spec.required_context_injection_statuses:
+            if status_value not in context_injection_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_context_injection_status",
+                        f"required context injection status missing: {status_value}",
+                    )
+                )
+        for status_value in spec.forbidden_context_injection_statuses:
+            if status_value in context_injection_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_context_injection_status",
+                        f"forbidden context injection status present: {status_value}",
+                    )
+                )
+        for source in spec.required_included_context_injection_sources:
+            if source not in included_context_injection_sources:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_included_context_injection_source",
+                        f"required included context injection source missing: {source}",
+                    )
+                )
+        for source in spec.required_trimmed_context_injection_sources:
+            if source not in trimmed_context_injection_sources:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_trimmed_context_injection_source",
+                        f"required trimmed context injection source missing: {source}",
+                    )
+                )
+        for source in spec.required_excluded_context_injection_sources:
+            if source not in excluded_context_injection_sources:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_excluded_context_injection_source",
+                        f"required excluded context injection source missing: {source}",
+                    )
+                )
         for source in spec.forbidden_context_injection_sources:
             if source in context_injection_sources:
                 issues.append(
@@ -837,6 +944,21 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     "context_injection_trimmed_forbidden",
                     "trimmed context injections are forbidden",
                     metadata={"trimmed_count": len(trimmed_context_injections)},
+                )
+            )
+        if (
+            spec.max_trimmed_context_injections is not None
+            and len(trimmed_context_injections) > spec.max_trimmed_context_injections
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "context_injection_trimmed_limit_exceeded",
+                    "trimmed context injection count exceeded limit",
+                    metadata={
+                        "actual": len(trimmed_context_injections),
+                        "limit": spec.max_trimmed_context_injections,
+                    },
                 )
             )
         if (
@@ -995,6 +1117,70 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     metadata={
                         "actual": len(over_budget_prompt_buckets),
                         "limit": spec.max_prompt_bucket_budget_over_budget,
+                    },
+                )
+            )
+        if spec.require_prompt_trim and not prompt_trim:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_trim_missing",
+                    "prompt trim trace is required",
+                )
+            )
+        if spec.forbid_prompt_trim and prompt_trim:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_trim_forbidden",
+                    "prompt trim trace is forbidden",
+                )
+            )
+        for role in spec.required_prompt_trim_roles:
+            if role not in prompt_trim_roles:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_prompt_trim_role",
+                        f"required prompt trim role missing: {role}",
+                    )
+                )
+        for role in spec.forbidden_prompt_trim_roles:
+            if role in prompt_trim_roles:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_prompt_trim_role",
+                        f"forbidden prompt trim role present: {role}",
+                    )
+                )
+        if (
+            spec.max_prompt_trim_final_bytes is not None
+            and prompt_trim_final_bytes > spec.max_prompt_trim_final_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_trim_final_bytes_exceeded",
+                    "prompt trim final bytes exceeded limit",
+                    metadata={
+                        "actual": prompt_trim_final_bytes,
+                        "limit": spec.max_prompt_trim_final_bytes,
+                    },
+                )
+            )
+        if (
+            spec.max_prompt_trim_original_bytes is not None
+            and prompt_trim_original_bytes > spec.max_prompt_trim_original_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_trim_original_bytes_exceeded",
+                    "prompt trim original bytes exceeded limit",
+                    metadata={
+                        "actual": prompt_trim_original_bytes,
+                        "limit": spec.max_prompt_trim_original_bytes,
                     },
                 )
             )
@@ -1215,8 +1401,15 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "storage_backend_kinds": sorted(storage_backend_kinds),
                 "external_storage_backend_count": len(external_storage_backends),
                 "context_injection_count": len(context_injections),
+                "context_injection_names": sorted(context_injection_names),
                 "context_injection_sources": sorted(context_injection_sources),
                 "context_injection_targets": sorted(context_injection_targets),
+                "context_injection_statuses": sorted(context_injection_statuses),
+                "included_context_injection_sources": sorted(
+                    included_context_injection_sources
+                ),
+                "trimmed_context_injection_sources": sorted(trimmed_context_injection_sources),
+                "excluded_context_injection_sources": sorted(excluded_context_injection_sources),
                 "trimmed_context_injection_count": len(trimmed_context_injections),
                 "excluded_context_injection_count": len(excluded_context_injections),
                 "memory_governance_decision_count": len(memory_governance_decisions),
@@ -1230,6 +1423,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "prompt_bucket_budget_statuses": sorted(prompt_bucket_budget_statuses),
                 "prompt_bucket_budget_trimmed_count": len(trimmed_prompt_buckets),
                 "prompt_bucket_budget_over_budget_count": len(over_budget_prompt_buckets),
+                "has_prompt_trim": bool(prompt_trim),
+                "prompt_trim_roles": sorted(prompt_trim_roles),
+                "prompt_trim_original_bytes": prompt_trim_original_bytes,
+                "prompt_trim_final_bytes": prompt_trim_final_bytes,
             },
             metadata={"spec": spec.manifest()},
         )
@@ -1839,6 +2036,38 @@ def _prompt_bucket_budget_decision_over_budget(decision: dict[str, Any]) -> bool
         return int(decision.get("final_bytes") or 0) > int(max_bytes)
     except (TypeError, ValueError):
         return False
+
+
+def _prompt_trim(trace: dict[str, Any]) -> dict[str, Any]:
+    prompt = trace.get("prompt")
+    prompt_metadata = prompt.get("metadata") if isinstance(prompt, dict) else {}
+    trim = prompt_metadata.get("trim") if isinstance(prompt_metadata, dict) else {}
+    if isinstance(trim, dict) and trim:
+        return dict(trim)
+    metadata = trace.get("metadata")
+    trim = metadata.get("prompt_trim") if isinstance(metadata, dict) else {}
+    return dict(trim) if isinstance(trim, dict) else {}
+
+
+def _prompt_trim_roles(trim: dict[str, Any]) -> set[str]:
+    raw = trim.get("trimmed_roles") if isinstance(trim, dict) else ()
+    roles: set[str] = set()
+    if not isinstance(raw, (list, tuple)):
+        return roles
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        if role:
+            roles.add(str(role))
+    return roles
+
+
+def _prompt_trim_int(trim: dict[str, Any], key: str) -> int:
+    try:
+        return int(trim.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _tool_names(trace: dict[str, Any]) -> set[str]:
