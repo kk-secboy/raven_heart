@@ -76,6 +76,10 @@ class TraceEvalSpec:
     max_provider_calls: int | None = None
     max_cost_usd: float | None = None
     require_journal_ok: bool = True
+    require_resume: bool = False
+    require_resume_plan: bool = False
+    require_resume_plan_ready: bool = False
+    expected_resume_checkpoint_id: str = ""
     required_event_types: tuple[str, ...] = ()
     required_tool_names: tuple[str, ...] = ()
     forbidden_event_types: tuple[str, ...] = ()
@@ -90,6 +94,10 @@ class TraceEvalSpec:
             "max_provider_calls": self.max_provider_calls,
             "max_cost_usd": self.max_cost_usd,
             "require_journal_ok": self.require_journal_ok,
+            "require_resume": self.require_resume,
+            "require_resume_plan": self.require_resume_plan,
+            "require_resume_plan_ready": self.require_resume_plan_ready,
+            "expected_resume_checkpoint_id": self.expected_resume_checkpoint_id,
             "required_event_types": list(self.required_event_types),
             "required_tool_names": list(self.required_tool_names),
             "forbidden_event_types": list(self.forbidden_event_types),
@@ -213,6 +221,29 @@ class TraceReplayHarness:
     def replay(self, trace: dict[str, Any]) -> TraceReplayResult:
         run_id = _trace_run_id(trace)
         steps: list[TraceReplayStep] = []
+        resume_plan = _trace_dict(trace, "resume_plan")
+        if resume_plan:
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="resume_plan",
+                    event_type="resume_plan_selected",
+                    run_id=str(resume_plan.get("run_id") or run_id),
+                    payload=dict(resume_plan),
+                )
+            )
+        resume = _trace_dict(trace, "resume")
+        if resume:
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="resume",
+                    event_type="resume_checkpoint_loaded",
+                    run_id=str(resume.get("run_id") or run_id),
+                    turn_id=str(resume.get("turn_id") or ""),
+                    payload=dict(resume),
+                )
+            )
         for item in _journal_events(trace):
             steps.append(
                 TraceReplayStep(
@@ -253,6 +284,8 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         run = trace.get("run") if isinstance(trace.get("run"), dict) else {}
         summary = trace.get("summary") if isinstance(trace.get("summary"), dict) else {}
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
+        resume = _trace_dict(trace, "resume")
+        resume_plan = _trace_dict(trace, "resume_plan")
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -292,6 +325,38 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             )
         if spec.require_journal_ok and summary.get("journal_ok") is False:
             issues.append(TraceEvalIssue("error", "journal_not_ok", "journal replay reported issues"))
+        if spec.require_resume and not resume:
+            issues.append(TraceEvalIssue("error", "resume_missing", "resume manifest is required"))
+        if spec.require_resume_plan and not resume_plan:
+            issues.append(TraceEvalIssue("error", "resume_plan_missing", "resume plan manifest is required"))
+        if spec.require_resume_plan_ready and not bool(resume_plan.get("ready")):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "resume_plan_not_ready",
+                    "resume plan is required to be ready",
+                    metadata={"status": resume_plan.get("status")},
+                )
+            )
+        if spec.expected_resume_checkpoint_id:
+            resume_checkpoint_id = str(resume.get("checkpoint_id") or "")
+            resume_plan_checkpoint_id = str(resume_plan.get("checkpoint_id") or "")
+            if spec.expected_resume_checkpoint_id not in {
+                resume_checkpoint_id,
+                resume_plan_checkpoint_id,
+            }:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "resume_checkpoint_mismatch",
+                        "resume checkpoint id did not match expected value",
+                        metadata={
+                            "expected_checkpoint_id": spec.expected_resume_checkpoint_id,
+                            "resume_checkpoint_id": resume_checkpoint_id,
+                            "resume_plan_checkpoint_id": resume_plan_checkpoint_id,
+                        },
+                    )
+                )
 
         event_types = set(replay.event_types())
         for event_type in spec.required_event_types:
@@ -336,6 +401,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "cost_usd": cost,
                 "event_types": sorted(event_types),
                 "tool_names": sorted(tool_names),
+                "has_resume": bool(resume),
+                "has_resume_plan": bool(resume_plan),
+                "resume_plan_ready": bool(resume_plan.get("ready")) if resume_plan else False,
+                "resume_checkpoint_id": str(resume.get("checkpoint_id") or ""),
+                "resume_plan_checkpoint_id": str(resume_plan.get("checkpoint_id") or ""),
             },
             metadata={"spec": spec.manifest()},
         )
@@ -564,6 +634,11 @@ def _trace_run_id(trace: dict[str, Any]) -> str:
     if not isinstance(run, dict):
         return ""
     return str(run.get("run_id") or "")
+
+
+def _trace_dict(trace: dict[str, Any], key: str) -> dict[str, Any]:
+    value = trace.get(key)
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _journal_events(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:

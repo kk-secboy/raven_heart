@@ -36,6 +36,7 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         approvals={"record_count": 3},
         event_log={"event_count": 9},
         resume={"checkpoint_id": "c1"},
+        resume_plan={"ready": True, "checkpoint_id": "c1"},
         timeline_reduction={"compressed_bytes": 10},
         capability_discovery={"match_count": 4},
         memory_search={"hit_count": 2},
@@ -55,12 +56,15 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["event_log_count"] == 9
     assert manifest["summary"]["correlation_entry_count"] == 0
     assert manifest["summary"]["has_resume"] is True
+    assert manifest["summary"]["has_resume_plan"] is True
+    assert manifest["summary"]["resume_plan_ready"] is True
     assert manifest["summary"]["has_timeline_reduction"] is True
     assert manifest["summary"]["capability_discovery_match_count"] == 4
     assert manifest["summary"]["memory_search_hit_count"] == 2
     assert manifest["summary"]["has_prompt_trim"] is True
     assert manifest["capability_discovery"]["match_count"] == 4
     assert manifest["memory_search"]["hit_count"] == 2
+    assert manifest["resume_plan"]["checkpoint_id"] == "c1"
 
 
 def test_trace_correlation_index_cross_references_trace_materials() -> None:
@@ -206,6 +210,8 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     assert trace["summary"]["policy_decision_record_count"] == 3
     assert trace["summary"]["event_log_count"] == event_sink.manifest()["event_count"]
     assert trace["summary"]["correlation_entry_count"] > 0
+    assert trace["summary"]["has_resume_plan"] is False
+    assert trace["summary"]["resume_plan_ready"] is False
     assert trace["journal_replay"]["ok"] is True
     assert trace["provider"]["calls"][0]["provider_name"] == "mock"
     assert trace["provider"]["calls"][0]["metadata"]["request"]["metadata"]["run_id"] == outcome.result.run_id

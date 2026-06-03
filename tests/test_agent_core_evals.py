@@ -14,6 +14,7 @@ from agent_core.evals import (
 )
 from agent_core.runner import AgentRunner, AgentSession
 from agent_core.providers import LLMProviderCenter
+from agent_core.harness import InMemoryAgentJournal
 from agent_core.testing import MockLLMProvider, MockToolRuntime
 from agent_core.tools import InMemoryToolReplay
 from agent_core.trace import InMemoryRunTraceStore
@@ -137,6 +138,73 @@ def test_default_trace_evaluator_reports_contract_failures() -> None:
     } <= codes
 
 
+def test_trace_replay_and_eval_understand_resume_manifests() -> None:
+    trace = {
+        **_trace_manifest(),
+        "resume": {
+            "schema_version": "agent-core-resume/v1",
+            "run_id": "source-run",
+            "turn_id": "turn-1",
+            "checkpoint_id": "checkpoint-1",
+            "sequence": 2,
+            "state": {"step": "halfway"},
+        },
+        "resume_plan": {
+            "schema_version": "agent-core-resume-plan-summary/v1",
+            "status": "ready",
+            "ready": True,
+            "selected_by": "run_id",
+            "candidate_count": 1,
+            "run_id": "source-run",
+            "checkpoint_id": "checkpoint-1",
+            "checkpoint_sequence": 2,
+            "terminal": False,
+            "issue_count": 0,
+            "issue_codes": [],
+        },
+    }
+
+    replay = TraceReplayHarness().replay(trace)
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            expected_status="completed",
+            require_resume=True,
+            require_resume_plan=True,
+            require_resume_plan_ready=True,
+            expected_resume_checkpoint_id="checkpoint-1",
+            required_event_types=("resume_plan_selected", "resume_checkpoint_loaded"),
+        ),
+    )
+
+    assert replay.event_types()[:2] == ("resume_plan_selected", "resume_checkpoint_loaded")
+    assert report.ok
+    assert report.summary["has_resume"] is True
+    assert report.summary["resume_plan_ready"] is True
+    assert report.summary["resume_checkpoint_id"] == "checkpoint-1"
+
+
+def test_trace_eval_reports_resume_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_resume=True,
+            require_resume_plan=True,
+            require_resume_plan_ready=True,
+            expected_resume_checkpoint_id="missing-checkpoint",
+        ),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "resume_missing",
+        "resume_plan_missing",
+        "resume_plan_not_ready",
+        "resume_checkpoint_mismatch",
+    } <= codes
+
+
 def test_trace_replay_comparator_accepts_matching_trace() -> None:
     trace = _trace_manifest()
     report = TraceReplayComparator().compare(trace, trace)
@@ -246,3 +314,40 @@ async def test_trace_eval_harness_evaluates_stored_agent_runner_trace() -> None:
     assert report.summary["provider_call_count"] == 2
     assert report.replay["step_count"] >= 4
     assert harness.manifest()["schema_version"] == "agent-core-trace-eval-harness/v1"
+
+
+@pytest.mark.asyncio
+async def test_trace_eval_harness_validates_stored_resume_runner_trace() -> None:
+    trace_store = InMemoryRunTraceStore()
+    journal = InMemoryAgentJournal()
+    original_run = await journal.start_run("original")
+    original_turn = await journal.start_turn(original_run, 0)
+    checkpoint = await journal.checkpoint(original_turn, {"step": "resume"})
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "resumed"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="resume-eval"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        harness=journal,
+        trace_store=trace_store,
+        event_sink=ListEventSink(),
+    )
+
+    outcome = await AgentRunner(session).resume("continue")
+    harness = TraceEvalHarness(trace_store=trace_store)
+    report = await harness.evaluate_run(
+        outcome.result.run_id,
+        TraceEvalSpec(
+            expected_status="completed",
+            require_resume=True,
+            require_resume_plan=True,
+            require_resume_plan_ready=True,
+            expected_resume_checkpoint_id=checkpoint.checkpoint_id,
+            required_event_types=("resume_plan_selected", "resume_checkpoint_loaded", "run_finished"),
+        ),
+    )
+
+    assert report.ok
+    assert outcome.trace_manifest["summary"]["has_resume_plan"] is True
+    assert outcome.trace_manifest["summary"]["resume_plan_ready"] is True
+    assert report.summary["resume_plan_checkpoint_id"] == checkpoint.checkpoint_id

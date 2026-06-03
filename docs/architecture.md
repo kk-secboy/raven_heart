@@ -100,7 +100,8 @@ systems can ingest the index, but the SDK owns the correlation schema.
 trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. The core checks generic contracts such as
 final status, iteration limits, provider call limits, required events, required
-tools, cost ceilings, event ordering, and journal integrity. Runtime code owns
+tools, cost ceilings, event ordering, journal integrity, resume-plan presence,
+resume-plan readiness, and expected resume checkpoint ids. Runtime code owns
 domain-specific eval datasets, baseline selection, scoring policy, dashboards,
 and release gates.
 

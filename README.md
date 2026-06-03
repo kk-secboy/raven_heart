@@ -190,11 +190,13 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 ### Replay And Eval
 
 - `TraceReplayHarness` builds a deterministic replay timeline from journal and
-  event-log trace manifests.
+  event-log trace manifests, including resume-plan and checkpoint-loaded steps
+  when a run was resumed.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
-  iteration limits, provider call limits, required events, and required tools.
+  iteration limits, provider call limits, required events, required tools,
+  resume-plan presence, resume-plan readiness, and expected checkpoint id.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
