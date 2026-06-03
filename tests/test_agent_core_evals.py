@@ -174,6 +174,31 @@ def _trace_manifest() -> dict[str, object]:
                         }
                     ],
                 },
+                "semantic_trim": {
+                    "schema_version": "agent-core-prompt-semantic-trim-result/v1",
+                    "target_bytes": 900,
+                    "original_bytes": 1180,
+                    "final_bytes": 820,
+                    "trimmed_count": 1,
+                    "decisions": [
+                        {
+                            "role": "timeline_open",
+                            "status": "trimmed",
+                            "original_bytes": 520,
+                            "final_bytes": 180,
+                            "selected_units": 2,
+                            "dropped_units": 3,
+                        },
+                        {
+                            "role": "dynamic",
+                            "status": "protected",
+                            "original_bytes": 220,
+                            "final_bytes": 220,
+                            "protected": True,
+                            "dropped_units": 0,
+                        },
+                    ],
+                },
             }
         },
         "tool_replay": {
@@ -246,6 +271,31 @@ def _trace_manifest() -> dict[str, object]:
                     "final_bytes": 220,
                     "max_bytes": 80,
                     "protected": True,
+                },
+            ],
+        },
+        "prompt_semantic_trim": {
+            "schema_version": "agent-core-prompt-semantic-trim-result/v1",
+            "target_bytes": 900,
+            "original_bytes": 1180,
+            "final_bytes": 820,
+            "trimmed_count": 1,
+            "decisions": [
+                {
+                    "role": "timeline_open",
+                    "status": "trimmed",
+                    "original_bytes": 520,
+                    "final_bytes": 180,
+                    "selected_units": 2,
+                    "dropped_units": 3,
+                },
+                {
+                    "role": "dynamic",
+                    "status": "protected",
+                    "original_bytes": 220,
+                    "final_bytes": 220,
+                    "protected": True,
+                    "dropped_units": 0,
                 },
             ],
         },
@@ -1495,6 +1545,73 @@ def test_trace_eval_reports_prompt_bucket_budget_contract_failures() -> None:
     } <= codes
     assert not missing.ok
     assert {issue.code for issue in missing.issues} == {"prompt_bucket_budget_missing"}
+
+
+def test_trace_eval_validates_prompt_semantic_trim_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_prompt_semantic_trim=True,
+            required_prompt_semantic_trim_roles=("timeline_open", "dynamic"),
+            required_prompt_semantic_trim_statuses=("trimmed", "protected"),
+            max_prompt_semantic_trimmed=1,
+            max_prompt_semantic_dropped_units=3,
+            max_prompt_semantic_trim_original_bytes=1200,
+            max_prompt_semantic_trim_final_bytes=900,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_prompt_semantic_trim"] is True
+    assert report.summary["prompt_semantic_trim_roles"] == ["dynamic", "timeline_open"]
+    assert report.summary["prompt_semantic_trim_statuses"] == ["protected", "trimmed"]
+    assert report.summary["prompt_semantic_trimmed_count"] == 1
+    assert report.summary["prompt_semantic_dropped_units"] == 3
+    assert report.summary["prompt_semantic_trim_original_bytes"] == 1180
+    assert report.summary["prompt_semantic_trim_final_bytes"] == 820
+    assert report.metadata["spec"]["require_prompt_semantic_trim"] is True
+
+
+def test_trace_eval_reports_prompt_semantic_trim_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            forbid_prompt_semantic_trim=True,
+            required_prompt_semantic_trim_roles=("semi_dynamic_1",),
+            required_prompt_semantic_trim_statuses=("unchanged",),
+            forbidden_prompt_semantic_trim_statuses=("protected",),
+            max_prompt_semantic_trimmed=0,
+            max_prompt_semantic_dropped_units=2,
+            max_prompt_semantic_trim_original_bytes=1000,
+            max_prompt_semantic_trim_final_bytes=800,
+        ),
+    )
+    missing_trace = _trace_manifest()
+    missing_trace.pop("prompt_semantic_trim", None)
+    missing_prompt = dict(missing_trace["prompt"])
+    missing_metadata = dict(missing_prompt.get("metadata") or {})
+    missing_metadata.pop("semantic_trim", None)
+    missing_prompt["metadata"] = missing_metadata
+    missing_trace["prompt"] = missing_prompt
+    missing = DefaultTraceEvaluator().evaluate(
+        missing_trace,
+        TraceEvalSpec(require_prompt_semantic_trim=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "prompt_semantic_trim_forbidden",
+        "missing_prompt_semantic_trim_role",
+        "missing_prompt_semantic_trim_status",
+        "forbidden_prompt_semantic_trim_status",
+        "prompt_semantic_trimmed_limit_exceeded",
+        "prompt_semantic_dropped_units_exceeded",
+        "prompt_semantic_trim_original_bytes_exceeded",
+        "prompt_semantic_trim_final_bytes_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"prompt_semantic_trim_missing"}
 
 
 def test_trace_replay_comparator_accepts_matching_trace() -> None:

@@ -146,8 +146,9 @@ hook event/status/failure constraints, required context injection
 names/sources/targets/statuses, required included/trimmed/excluded injection
 sources, forbidden injection sources/statuses,
 trimmed/excluded injection limits, memory governance allow/rewrite/deny and risk
-ceilings, prompt bucket budget roles/statuses/over-budget ceilings, and global
-prompt trim roles/byte ceilings. Runtime code owns
+ceilings, prompt bucket budget roles/statuses/over-budget ceilings, runtime
+semantic prompt trim roles/statuses/dropped-unit ceilings, and global prompt
+trim roles/byte ceilings. Runtime code owns
 domain-specific eval datasets, baseline selection, scoring policy, dashboards,
 and release gates.
 

@@ -158,6 +158,15 @@ class TraceEvalSpec:
     forbid_over_budget_prompt_buckets: bool = False
     max_prompt_bucket_budget_trimmed: int | None = None
     max_prompt_bucket_budget_over_budget: int | None = None
+    require_prompt_semantic_trim: bool = False
+    forbid_prompt_semantic_trim: bool = False
+    required_prompt_semantic_trim_roles: tuple[str, ...] = ()
+    required_prompt_semantic_trim_statuses: tuple[str, ...] = ()
+    forbidden_prompt_semantic_trim_statuses: tuple[str, ...] = ()
+    max_prompt_semantic_trimmed: int | None = None
+    max_prompt_semantic_dropped_units: int | None = None
+    max_prompt_semantic_trim_final_bytes: int | None = None
+    max_prompt_semantic_trim_original_bytes: int | None = None
     require_prompt_trim: bool = False
     forbid_prompt_trim: bool = False
     required_prompt_trim_roles: tuple[str, ...] = ()
@@ -284,6 +293,21 @@ class TraceEvalSpec:
             "forbid_over_budget_prompt_buckets": self.forbid_over_budget_prompt_buckets,
             "max_prompt_bucket_budget_trimmed": self.max_prompt_bucket_budget_trimmed,
             "max_prompt_bucket_budget_over_budget": self.max_prompt_bucket_budget_over_budget,
+            "require_prompt_semantic_trim": self.require_prompt_semantic_trim,
+            "forbid_prompt_semantic_trim": self.forbid_prompt_semantic_trim,
+            "required_prompt_semantic_trim_roles": list(
+                self.required_prompt_semantic_trim_roles
+            ),
+            "required_prompt_semantic_trim_statuses": list(
+                self.required_prompt_semantic_trim_statuses
+            ),
+            "forbidden_prompt_semantic_trim_statuses": list(
+                self.forbidden_prompt_semantic_trim_statuses
+            ),
+            "max_prompt_semantic_trimmed": self.max_prompt_semantic_trimmed,
+            "max_prompt_semantic_dropped_units": self.max_prompt_semantic_dropped_units,
+            "max_prompt_semantic_trim_final_bytes": self.max_prompt_semantic_trim_final_bytes,
+            "max_prompt_semantic_trim_original_bytes": self.max_prompt_semantic_trim_original_bytes,
             "require_prompt_trim": self.require_prompt_trim,
             "forbid_prompt_trim": self.forbid_prompt_trim,
             "required_prompt_trim_roles": list(self.required_prompt_trim_roles),
@@ -607,6 +631,27 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             for decision in prompt_bucket_budget_decisions
             if _prompt_bucket_budget_decision_over_budget(decision)
         )
+        prompt_semantic_trim = _prompt_semantic_trim(trace)
+        prompt_semantic_trim_decisions = _prompt_semantic_trim_decisions(prompt_semantic_trim)
+        prompt_semantic_trim_roles = _prompt_semantic_trim_values(
+            prompt_semantic_trim_decisions,
+            "role",
+        )
+        prompt_semantic_trim_statuses = _prompt_semantic_trim_values(
+            prompt_semantic_trim_decisions,
+            "status",
+        )
+        trimmed_prompt_semantic_buckets = tuple(
+            decision
+            for decision in prompt_semantic_trim_decisions
+            if decision.get("status") == "trimmed"
+        )
+        prompt_semantic_dropped_units = sum(
+            _safe_int(decision.get("dropped_units"))
+            for decision in prompt_semantic_trim_decisions
+        )
+        prompt_semantic_trim_final_bytes = _prompt_trim_int(prompt_semantic_trim, "final_bytes")
+        prompt_semantic_trim_original_bytes = _prompt_trim_int(prompt_semantic_trim, "original_bytes")
         prompt_trim = _prompt_trim(trace)
         prompt_trim_roles = _prompt_trim_roles(prompt_trim)
         prompt_trim_final_bytes = _prompt_trim_int(prompt_trim, "final_bytes")
@@ -1270,6 +1315,109 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_prompt_semantic_trim and not prompt_semantic_trim:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_semantic_trim_missing",
+                    "prompt semantic trim trace is required",
+                )
+            )
+        if spec.forbid_prompt_semantic_trim and prompt_semantic_trim:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_semantic_trim_forbidden",
+                    "prompt semantic trim trace is forbidden",
+                )
+            )
+        for role in spec.required_prompt_semantic_trim_roles:
+            if role not in prompt_semantic_trim_roles:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_prompt_semantic_trim_role",
+                        f"required prompt semantic trim role missing: {role}",
+                    )
+                )
+        for status in spec.required_prompt_semantic_trim_statuses:
+            if status not in prompt_semantic_trim_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_prompt_semantic_trim_status",
+                        f"required prompt semantic trim status missing: {status}",
+                    )
+                )
+        for status in spec.forbidden_prompt_semantic_trim_statuses:
+            if status in prompt_semantic_trim_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_prompt_semantic_trim_status",
+                        f"forbidden prompt semantic trim status present: {status}",
+                    )
+                )
+        if (
+            spec.max_prompt_semantic_trimmed is not None
+            and len(trimmed_prompt_semantic_buckets) > spec.max_prompt_semantic_trimmed
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_semantic_trimmed_limit_exceeded",
+                    "semantic-trimmed prompt bucket count exceeded limit",
+                    metadata={
+                        "actual": len(trimmed_prompt_semantic_buckets),
+                        "limit": spec.max_prompt_semantic_trimmed,
+                    },
+                )
+            )
+        if (
+            spec.max_prompt_semantic_dropped_units is not None
+            and prompt_semantic_dropped_units > spec.max_prompt_semantic_dropped_units
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_semantic_dropped_units_exceeded",
+                    "semantic prompt dropped unit count exceeded limit",
+                    metadata={
+                        "actual": prompt_semantic_dropped_units,
+                        "limit": spec.max_prompt_semantic_dropped_units,
+                    },
+                )
+            )
+        if (
+            spec.max_prompt_semantic_trim_final_bytes is not None
+            and prompt_semantic_trim_final_bytes > spec.max_prompt_semantic_trim_final_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_semantic_trim_final_bytes_exceeded",
+                    "prompt semantic trim final bytes exceeded limit",
+                    metadata={
+                        "actual": prompt_semantic_trim_final_bytes,
+                        "limit": spec.max_prompt_semantic_trim_final_bytes,
+                    },
+                )
+            )
+        if (
+            spec.max_prompt_semantic_trim_original_bytes is not None
+            and prompt_semantic_trim_original_bytes > spec.max_prompt_semantic_trim_original_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_semantic_trim_original_bytes_exceeded",
+                    "prompt semantic trim original bytes exceeded limit",
+                    metadata={
+                        "actual": prompt_semantic_trim_original_bytes,
+                        "limit": spec.max_prompt_semantic_trim_original_bytes,
+                    },
+                )
+            )
         if spec.require_prompt_trim and not prompt_trim:
             issues.append(
                 TraceEvalIssue(
@@ -1640,6 +1788,13 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "prompt_bucket_budget_statuses": sorted(prompt_bucket_budget_statuses),
                 "prompt_bucket_budget_trimmed_count": len(trimmed_prompt_buckets),
                 "prompt_bucket_budget_over_budget_count": len(over_budget_prompt_buckets),
+                "has_prompt_semantic_trim": bool(prompt_semantic_trim),
+                "prompt_semantic_trim_roles": sorted(prompt_semantic_trim_roles),
+                "prompt_semantic_trim_statuses": sorted(prompt_semantic_trim_statuses),
+                "prompt_semantic_trimmed_count": len(trimmed_prompt_semantic_buckets),
+                "prompt_semantic_dropped_units": prompt_semantic_dropped_units,
+                "prompt_semantic_trim_original_bytes": prompt_semantic_trim_original_bytes,
+                "prompt_semantic_trim_final_bytes": prompt_semantic_trim_final_bytes,
                 "has_prompt_trim": bool(prompt_trim),
                 "prompt_trim_roles": sorted(prompt_trim_roles),
                 "prompt_trim_original_bytes": prompt_trim_original_bytes,
@@ -2362,6 +2517,31 @@ def _prompt_bucket_budget_decision_over_budget(decision: dict[str, Any]) -> bool
         return int(decision.get("final_bytes") or 0) > int(max_bytes)
     except (TypeError, ValueError):
         return False
+
+
+def _prompt_semantic_trim(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("prompt_semantic_trim")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    prompt = trace.get("prompt")
+    prompt_metadata = prompt.get("metadata") if isinstance(prompt, dict) else {}
+    semantic = prompt_metadata.get("semantic_trim") if isinstance(prompt_metadata, dict) else {}
+    if isinstance(semantic, dict) and semantic:
+        return dict(semantic)
+    metadata = trace.get("metadata")
+    semantic = metadata.get("prompt_semantic_trim") if isinstance(metadata, dict) else {}
+    return dict(semantic) if isinstance(semantic, dict) else {}
+
+
+def _prompt_semantic_trim_decisions(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    raw = manifest.get("decisions") if isinstance(manifest, dict) else ()
+    if isinstance(raw, (list, tuple)):
+        return tuple(dict(item) for item in raw if isinstance(item, dict))
+    return ()
+
+
+def _prompt_semantic_trim_values(decisions: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in decisions if item.get(key)}
 
 
 def _prompt_trim(trace: dict[str, Any]) -> dict[str, Any]:

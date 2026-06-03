@@ -246,7 +246,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   events, event sequence monotonicity, duplicate sequence limits,
   context injection name/source/target/status constraints, included/trimmed/
   excluded injection source constraints, memory governance constraints, prompt
-  bucket budget constraints, and global prompt trim constraints.
+  bucket budget constraints, runtime semantic prompt trim constraints, and
+  global prompt trim constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
@@ -681,6 +682,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Prompt buckets/trimming | semantic trim plan MVP |
 | Prompt bucket budget policy | MVP implemented |
 | Runtime semantic prompt reducer | MVP implemented |
+| Runtime semantic prompt trace/eval | MVP implemented |
 | Context injection policy | MVP implemented |
 | Context reducer | runner-integrated MVP |
 | Runtime adapter code | intentionally excluded |
