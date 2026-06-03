@@ -38,7 +38,7 @@ def _trace_manifest() -> dict[str, object]:
             "journal_event_count": 2,
             "provider_call_count": 2,
             "tool_replay_record_count": 1,
-            "approval_record_count": 0,
+            "approval_record_count": 3,
             "event_log_count": 2,
         },
         "journal_replay": {
@@ -314,6 +314,55 @@ def _trace_manifest() -> dict[str, object]:
                 }
             ],
         },
+        "approval_trace": {
+            "schema_version": "agent-core-approval-trace/v1",
+            "record_count": 3,
+            "pending_count": 1,
+            "approved_count": 1,
+            "rejected_count": 1,
+            "cancelled_count": 0,
+            "statuses": {"approved": 1, "pending": 1, "rejected": 1},
+            "subjects": {"tool:deploy": 1, "action:finish": 1, "tool:delete": 1},
+            "subject_kinds": {"tool": 2, "action": 1},
+            "records": [
+                {
+                    "approval_id": "approval-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "status": "approved",
+                    "subject": "tool:deploy",
+                    "subject_kind": "tool",
+                    "reason": "deploy gate",
+                    "decision_status": "approved",
+                    "decision_actor": "operator",
+                    "decision_reason": "ok",
+                },
+                {
+                    "approval_id": "approval-2",
+                    "run_id": "run-1",
+                    "turn_id": "turn-2",
+                    "status": "pending",
+                    "subject": "action:finish",
+                    "subject_kind": "action",
+                    "reason": "final gate",
+                    "decision_status": "",
+                    "decision_actor": "",
+                    "decision_reason": "",
+                },
+                {
+                    "approval_id": "approval-3",
+                    "run_id": "run-1",
+                    "turn_id": "turn-3",
+                    "status": "rejected",
+                    "subject": "tool:delete",
+                    "subject_kind": "tool",
+                    "reason": "dangerous",
+                    "decision_status": "rejected",
+                    "decision_actor": "operator",
+                    "decision_reason": "no",
+                },
+            ],
+        },
         "storage_backends": {
             "schema_version": "agent-core-storage-backend-trace/v1",
             "backend_count": 3,
@@ -424,6 +473,9 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "mcp_inventory_failed",
         "skill_loaded",
         "skill_resource_view_loaded",
+        "approval_approved",
+        "approval_pending",
+        "approval_rejected",
         "provider_call_completed",
         "provider_call_completed",
     )
@@ -436,8 +488,10 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
     assert manifest["steps"][7]["payload"]["server_name"] == "fs"
     assert manifest["steps"][9]["source"] == "skill_center"
     assert manifest["steps"][10]["payload"]["view_id"] == "review:rules.md:abcd"
-    assert manifest["steps"][11]["source"] == "provider"
-    assert manifest["steps"][11]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][11]["source"] == "approval_trace"
+    assert manifest["steps"][11]["payload"]["subject"] == "tool:deploy"
+    assert manifest["steps"][14]["source"] == "provider"
+    assert manifest["steps"][14]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1439,6 +1493,63 @@ def test_trace_eval_reports_tool_center_contract_failures() -> None:
     assert {issue.code for issue in missing.issues} == {"tool_center_missing"}
 
 
+def test_trace_eval_validates_approval_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_approvals=True,
+            required_approval_statuses=("approved", "pending", "rejected"),
+            required_approval_subjects=("tool:deploy", "action:finish"),
+            required_approval_subject_kinds=("tool", "action"),
+            max_pending_approvals=1,
+            max_rejected_approvals=1,
+            require_approved_approval_subjects=("tool:deploy",),
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_approval_trace"] is True
+    assert report.summary["approval_record_count"] == 3
+    assert report.summary["approval_statuses"] == ["approved", "pending", "rejected"]
+    assert report.summary["approval_subject_kinds"] == ["action", "tool"]
+    assert report.summary["pending_approval_count"] == 1
+    assert report.summary["rejected_approval_count"] == 1
+    assert report.summary["approved_approval_subjects"] == ["tool:deploy"]
+
+
+def test_trace_eval_reports_approval_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_approval_statuses=("cancelled",),
+            forbidden_approval_statuses=("rejected",),
+            required_approval_subjects=("tool:scan",),
+            required_approval_subject_kinds=("mcp",),
+            max_pending_approvals=0,
+            max_rejected_approvals=0,
+            require_approved_approval_subjects=("action:finish",),
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "approval_trace"},
+        TraceEvalSpec(require_approvals=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_approval_status",
+        "forbidden_approval_status",
+        "missing_approval_subject",
+        "missing_approval_subject_kind",
+        "pending_approval_limit_exceeded",
+        "rejected_approval_limit_exceeded",
+        "approval_subject_not_approved",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"approval_trace_missing"}
+
+
 def test_trace_eval_validates_mcp_and_skill_center_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
@@ -1863,7 +1974,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 13
+    assert report.summary["baseline_step_count"] == 16
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -1901,6 +2012,9 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "mcp_inventory_failed",
         "skill_loaded",
         "skill_resource_view_loaded",
+        "approval_approved",
+        "approval_pending",
+        "approval_rejected",
         "provider_call_completed",
         "provider_call_completed",
     ]

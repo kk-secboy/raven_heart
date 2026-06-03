@@ -207,8 +207,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   prompt trim manifests when available.
 - Summary counters include capability discovery matches, memory hits, and
   storage backend, context injection, memory governance, ToolCenter, MCP center,
-  and skill center counts, plus whether the prompt was semantically trimmed or
-  bucket-budgeted.
+  skill center, and approval status counts, plus whether the prompt was
+  semantically trimmed or bucket-budgeted.
 - `StorageBackendTrace` collects backend manifests from session, memory,
   replay, approval, policy, event, artifact, and trace components into one
   run-level backend inventory.
@@ -217,6 +217,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   count.
 - `MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny decisions,
   risk levels, stores, and prompt-safe leak hashes.
+- `ApprovalTrace` summarizes human approval status, subject, subject kind, and
+  decision metadata without depending on an operator UI or workflow engine.
 - `MCPCenterTrace` summarizes prompt-safe MCP server inventory, refreshed/
   failed/partial servers, transports, tool/resource/prompt counts, and the last
   inventory refresh records.
@@ -237,8 +239,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `TraceReplayHarness` builds a deterministic replay timeline from journal,
   event-log, and provider call manifests, including resume-plan,
   checkpoint-loaded, prompt-bucket-budget, prompt-semantic-trim,
-  prompt-trim, MCP inventory/server, skill-load/resource-view, provider-call,
-  provider-stream, embedding-call, and lifecycle-hook steps.
+  prompt-trim, MCP inventory/server, skill-load/resource-view, approval
+  request/decision, provider-call, provider-stream, embedding-call, and
+  lifecycle-hook steps.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
@@ -250,7 +253,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   expected checkpoint id, tool execution presence, tool retry, tool schema
   validation, minimum tool attempt counts, ToolCenter route/call audit
   constraints, MCP center inventory constraints, skill center constraints,
-  storage backend constraints,
+  approval status/subject constraints, storage backend constraints,
   lifecycle hook constraints, event-log presence, event-log types, terminal
   events, event sequence monotonicity, duplicate sequence limits,
   context injection name/source/target/status constraints, included/trimmed/
@@ -280,6 +283,9 @@ retention.
   inspectable SDK runs.
 - `NullApprovalStore` for runtimes that only need per-run approval metadata.
 - `ApprovalRecord` and `ApprovalDecisionRecord` manifests for audit/replay.
+- `ApprovalTrace` and trace eval contracts for required approval statuses,
+  subjects, subject kinds, approved subjects, pending limits, and rejected
+  limits.
 - `ApprovalCenter`, `ApprovalQueueView`, and `ApprovalResolution` for queue
   inspection, approve/reject/cancel helpers, and resume-context generation.
 - `ApprovalResumeContext` for passing approved decisions into resumed runs.
@@ -694,6 +700,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Storage backend catalog/selection | MVP implemented |
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |
+| Approval trace/eval contracts | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |
 | Prompt bucket budget policy | MVP implemented |
 | Runtime semantic prompt reducer | MVP implemented |

@@ -115,6 +115,14 @@ class TraceEvalSpec:
     terminal_event_types: tuple[str, ...] = ("run_finished", "run_cancelled", "run_timeout")
     require_event_sequence_monotonic: bool = False
     max_duplicate_event_sequences: int | None = None
+    require_approvals: bool = False
+    required_approval_statuses: tuple[str, ...] = ()
+    forbidden_approval_statuses: tuple[str, ...] = ()
+    required_approval_subjects: tuple[str, ...] = ()
+    required_approval_subject_kinds: tuple[str, ...] = ()
+    max_pending_approvals: int | None = None
+    max_rejected_approvals: int | None = None
+    require_approved_approval_subjects: tuple[str, ...] = ()
     required_tool_names: tuple[str, ...] = ()
     required_tool_execution_names: tuple[str, ...] = ()
     required_tool_execution_ok_names: tuple[str, ...] = ()
@@ -253,6 +261,16 @@ class TraceEvalSpec:
             "terminal_event_types": list(self.terminal_event_types),
             "require_event_sequence_monotonic": self.require_event_sequence_monotonic,
             "max_duplicate_event_sequences": self.max_duplicate_event_sequences,
+            "require_approvals": self.require_approvals,
+            "required_approval_statuses": list(self.required_approval_statuses),
+            "forbidden_approval_statuses": list(self.forbidden_approval_statuses),
+            "required_approval_subjects": list(self.required_approval_subjects),
+            "required_approval_subject_kinds": list(self.required_approval_subject_kinds),
+            "max_pending_approvals": self.max_pending_approvals,
+            "max_rejected_approvals": self.max_rejected_approvals,
+            "require_approved_approval_subjects": list(
+                self.require_approved_approval_subjects
+            ),
             "required_tool_names": list(self.required_tool_names),
             "required_tool_execution_names": list(self.required_tool_execution_names),
             "required_tool_execution_ok_names": list(self.required_tool_execution_ok_names),
@@ -543,6 +561,17 @@ class TraceReplayHarness:
                     payload=dict(item.get("payload") or {}),
                 )
             )
+        for item in _approval_replay_steps(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="approval_trace",
+                    event_type=str(item.get("event_type") or ""),
+                    run_id=str(item.get("run_id") or run_id),
+                    turn_id=str(item.get("turn_id") or ""),
+                    payload=dict(item.get("payload") or {}),
+                )
+            )
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
         for item in _provider_call_records(provider):
             steps.append(
@@ -762,6 +791,22 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         event_log_sequences = _event_log_sequences(event_log_events)
         duplicate_event_sequence_count = _duplicate_event_sequence_count(event_log_sequences)
         event_sequence_monotonic = _event_sequence_monotonic(event_log_sequences)
+        approval_trace = _approval_trace(trace)
+        approval_records = _approval_records(approval_trace)
+        approval_statuses = _approval_values(approval_records, "status")
+        approval_subjects = _approval_values(approval_records, "subject")
+        approval_subject_kinds = _approval_values(approval_records, "subject_kind")
+        pending_approvals = tuple(
+            record for record in approval_records if record.get("status") == "pending"
+        )
+        rejected_approvals = tuple(
+            record for record in approval_records if record.get("status") == "rejected"
+        )
+        approved_approval_subjects = {
+            str(record.get("subject") or "")
+            for record in approval_records
+            if record.get("status") == "approved" and record.get("subject")
+        }
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -1684,6 +1729,89 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_approvals and not approval_trace:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "approval_trace_missing",
+                    "approval trace is required",
+                )
+            )
+        for approval_status in spec.required_approval_statuses:
+            if approval_status not in approval_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_approval_status",
+                        f"required approval status missing: {approval_status}",
+                    )
+                )
+        for approval_status in spec.forbidden_approval_statuses:
+            if approval_status in approval_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_approval_status",
+                        f"forbidden approval status present: {approval_status}",
+                    )
+                )
+        for subject in spec.required_approval_subjects:
+            if subject not in approval_subjects:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_approval_subject",
+                        f"required approval subject missing: {subject}",
+                    )
+                )
+        for subject_kind in spec.required_approval_subject_kinds:
+            if subject_kind not in approval_subject_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_approval_subject_kind",
+                        f"required approval subject kind missing: {subject_kind}",
+                    )
+                )
+        if (
+            spec.max_pending_approvals is not None
+            and len(pending_approvals) > spec.max_pending_approvals
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "pending_approval_limit_exceeded",
+                    "pending approval count exceeded limit",
+                    metadata={
+                        "actual": len(pending_approvals),
+                        "limit": spec.max_pending_approvals,
+                    },
+                )
+            )
+        if (
+            spec.max_rejected_approvals is not None
+            and len(rejected_approvals) > spec.max_rejected_approvals
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "rejected_approval_limit_exceeded",
+                    "rejected approval count exceeded limit",
+                    metadata={
+                        "actual": len(rejected_approvals),
+                        "limit": spec.max_rejected_approvals,
+                    },
+                )
+            )
+        for subject in spec.require_approved_approval_subjects:
+            if subject not in approved_approval_subjects:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "approval_subject_not_approved",
+                        f"required approval subject was not approved: {subject}",
+                    )
+                )
         tool_names = _tool_names(trace)
         for tool_name in spec.required_tool_names:
             if tool_name not in tool_names:
@@ -2099,6 +2227,14 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "event_log_types": sorted(event_log_types),
                 "event_log_sequence_monotonic": event_sequence_monotonic,
                 "duplicate_event_sequence_count": duplicate_event_sequence_count,
+                "has_approval_trace": bool(approval_trace),
+                "approval_record_count": len(approval_records),
+                "approval_statuses": sorted(approval_statuses),
+                "approval_subjects": sorted(approval_subjects),
+                "approval_subject_kinds": sorted(approval_subject_kinds),
+                "pending_approval_count": len(pending_approvals),
+                "rejected_approval_count": len(rejected_approvals),
+                "approved_approval_subjects": sorted(approved_approval_subjects),
                 "terminal_event_types": sorted(
                     {str(event.get("type") or "") for event in terminal_events}
                 ),
@@ -2455,6 +2591,28 @@ def _capability_center_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, An
                 "source": "skill_center",
                 "event_type": "skill_resource_view_loaded",
                 "payload": _skill_resource_view_replay_payload(view),
+            }
+        )
+    return tuple(steps)
+
+
+def _approval_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    steps: list[dict[str, Any]] = []
+    for record in _approval_records(_approval_trace(trace)):
+        status = str(record.get("status") or "pending")
+        steps.append(
+            {
+                "event_type": f"approval_{status}",
+                "run_id": str(record.get("run_id") or ""),
+                "turn_id": str(record.get("turn_id") or ""),
+                "payload": {
+                    "approval_id": str(record.get("approval_id") or ""),
+                    "subject": str(record.get("subject") or ""),
+                    "subject_kind": str(record.get("subject_kind") or ""),
+                    "status": status,
+                    "decision_status": str(record.get("decision_status") or ""),
+                    "decision_actor": str(record.get("decision_actor") or ""),
+                },
             }
         )
     return tuple(steps)
@@ -3228,6 +3386,72 @@ def _manifest_values(manifest: dict[str, Any], key: str) -> tuple[str, ...]:
     if isinstance(raw, (list, tuple, set)):
         return tuple(str(item) for item in raw if str(item))
     return ()
+
+
+def _approval_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("approval_trace")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    approvals = trace.get("approvals") if isinstance(trace.get("approvals"), dict) else {}
+    records = tuple(_approval_trace_record(item) for item in _dict_items(approvals.get("records")))
+    records = tuple(record for record in records if record.get("approval_id"))
+    if not records:
+        return {}
+    statuses = _count_values(records, "status")
+    subjects = _count_values(records, "subject")
+    subject_kinds = _count_values(records, "subject_kind")
+    return {
+        "schema_version": "agent-core-approval-trace/v1",
+        "record_count": len(records),
+        "pending_count": sum(1 for record in records if record.get("status") == "pending"),
+        "approved_count": sum(1 for record in records if record.get("status") == "approved"),
+        "rejected_count": sum(1 for record in records if record.get("status") == "rejected"),
+        "cancelled_count": sum(1 for record in records if record.get("status") == "cancelled"),
+        "statuses": statuses,
+        "subjects": subjects,
+        "subject_kinds": subject_kinds,
+        "records": list(records),
+    }
+
+
+def _approval_trace_record(record: dict[str, Any]) -> dict[str, Any]:
+    request = record.get("request") if isinstance(record.get("request"), dict) else {}
+    decision = record.get("decision") if isinstance(record.get("decision"), dict) else {}
+    subject = str(request.get("subject") or record.get("subject") or "")
+    status = str(record.get("status") or decision.get("status") or "")
+    return {
+        "approval_id": str(record.get("approval_id") or ""),
+        "run_id": str(record.get("run_id") or ""),
+        "turn_id": str(record.get("turn_id") or ""),
+        "status": status,
+        "subject": subject,
+        "subject_kind": str(record.get("subject_kind") or (subject.split(":", 1)[0] if ":" in subject else "")),
+        "reason": str(request.get("reason") or record.get("reason") or ""),
+        "created_at": str(record.get("created_at") or ""),
+        "decision_status": str(decision.get("status") or record.get("decision_status") or ""),
+        "decision_actor": str(decision.get("actor") or record.get("decision_actor") or ""),
+        "decision_reason": str(decision.get("reason") or record.get("decision_reason") or ""),
+        "decided_at": str(decision.get("decided_at") or record.get("decided_at") or ""),
+        "metadata": dict(record.get("metadata") or {}) if isinstance(record.get("metadata"), dict) else {},
+    }
+
+
+def _approval_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("records")))
+
+
+def _approval_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in records if item.get(key)}
+
+
+def _count_values(records: tuple[dict[str, Any], ...], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        value = str(record.get(key) or "")
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _dict_items(value: Any) -> tuple[dict[str, Any], ...]:

@@ -21,6 +21,7 @@ from agent_core.tools import (
 )
 from agent_core.trace import (
     AgentRunTraceBundle,
+    ApprovalTrace,
     ContextInjectionTrace,
     InMemoryRunTraceStore,
     MarkdownRunTraceStore,
@@ -49,7 +50,35 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         provider={"call_count": 2},
         tool_replay={"record_count": 1},
         policy_decisions={"record_count": 2},
-        approvals={"record_count": 3},
+        approvals={
+            "record_count": 3,
+            "records": [
+                {
+                    "approval_id": "approval-1",
+                    "status": "approved",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "request": {"subject": "tool:deploy", "reason": "deploy gate"},
+                    "decision": {"status": "approved", "actor": "operator", "reason": "ok"},
+                },
+                {
+                    "approval_id": "approval-2",
+                    "status": "pending",
+                    "run_id": "run-1",
+                    "turn_id": "turn-2",
+                    "request": {"subject": "action:finish", "reason": "final gate"},
+                    "decision": None,
+                },
+                {
+                    "approval_id": "approval-3",
+                    "status": "rejected",
+                    "run_id": "run-1",
+                    "turn_id": "turn-3",
+                    "request": {"subject": "tool:delete", "reason": "dangerous"},
+                    "decision": {"status": "rejected", "actor": "operator", "reason": "no"},
+                },
+            ],
+        },
         event_log={"event_count": 9},
         resume={"checkpoint_id": "c1"},
         resume_plan={"ready": True, "checkpoint_id": "c1"},
@@ -177,8 +206,17 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["skill_center"]["loaded_skill_names"] == ["review"]
     assert manifest["summary"]["policy_decision_record_count"] == 2
     assert manifest["summary"]["approval_record_count"] == 3
+    assert manifest["summary"]["approval_pending_count"] == 1
+    assert manifest["summary"]["approval_approved_count"] == 1
+    assert manifest["summary"]["approval_rejected_count"] == 1
+    assert manifest["approval_trace"]["statuses"] == {
+        "approved": 1,
+        "pending": 1,
+        "rejected": 1,
+    }
+    assert manifest["approval_trace"]["subject_kinds"] == {"action": 1, "tool": 2}
     assert manifest["summary"]["event_log_count"] == 9
-    assert manifest["summary"]["correlation_entry_count"] == 0
+    assert manifest["summary"]["correlation_entry_count"] == 3
     assert manifest["summary"]["has_resume"] is True
     assert manifest["summary"]["has_resume_plan"] is True
     assert manifest["summary"]["resume_plan_ready"] is True

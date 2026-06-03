@@ -112,7 +112,8 @@ capability discovery, memory recall/search, ToolCenter, MCP center, skill
 center, memory governance, and prompt trim manifests. The SDK
 owns the shape and summary counters, including discovery match counts, memory
 hit counts, storage backend counts, context injection counts, ToolCenter counts,
-MCP/skill center counts, memory governance counts, and prompt-trim presence.
+MCP/skill center counts, approval status counts, memory governance counts, and
+prompt-trim presence.
 `StorageBackendTrace` deduplicates the backend manifests visible
 across those components so a runtime can audit which state lived in core
 builtins and which state lived in external PG/vector/graph/object-store
@@ -122,6 +123,11 @@ count. `MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny
 decisions, risk levels, stores, reasons, and prompt-safe leak hashes. Runtime
 code owns where the bundle is stored, how long it is retained, and how it is
 queried for product observability or incident review.
+
+`ApprovalTrace` is derived from approval store manifests. It records approval
+ids, run/turn ids, status, subject, subject kind, and prompt-safe decision
+metadata so eval and replay can assert human-in-loop behavior without importing
+identity, notification, ticketing, or workflow runtime code.
 
 `TraceCorrelationIndex` is generated inside the trace bundle. It gives
 provider-neutral cross references across provider calls, tool replay records,
@@ -134,7 +140,7 @@ trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
 streaming calls using prompt-safe summaries, prompt bucket budget, semantic
-prompt trim, global prompt trim, embedding calls, and lifecycle hook records. The core
+prompt trim, global prompt trim, approval records, embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, required events, required tools,
@@ -150,8 +156,9 @@ names/sources/targets/statuses, required included/trimmed/excluded injection
 sources, forbidden injection sources/statuses,
 trimmed/excluded injection limits, memory governance allow/rewrite/deny and risk
 ceilings, prompt bucket budget roles/statuses/over-budget ceilings, runtime
-semantic prompt trim roles/statuses/dropped-unit ceilings, and global prompt
-trim roles/byte ceilings. Runtime code owns
+semantic prompt trim roles/statuses/dropped-unit ceilings, approval
+status/subject/pending/rejected constraints, and global prompt trim roles/byte
+ceilings. Runtime code owns
 domain-specific eval datasets, baseline selection, scoring policy, dashboards,
 and release gates.
 

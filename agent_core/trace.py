@@ -172,6 +172,41 @@ class MemoryGovernanceTrace:
         }
 
 
+@dataclass(frozen=True)
+class ApprovalTrace:
+    """Run-level summary of human approval records and decisions."""
+
+    records: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_approvals(cls, approvals: dict[str, Any]) -> "ApprovalTrace":
+        raw = approvals.get("records") if isinstance(approvals, dict) else ()
+        records = tuple(_approval_trace_record(item) for item in _dict_items(raw))
+        records = tuple(record for record in records if record.get("approval_id"))
+        return cls(records=records)
+
+    def manifest(self) -> dict[str, Any]:
+        records = tuple(dict(item) for item in self.records)
+        pending = tuple(item for item in records if item.get("status") == "pending")
+        approved = tuple(item for item in records if item.get("status") == "approved")
+        rejected = tuple(item for item in records if item.get("status") == "rejected")
+        cancelled = tuple(item for item in records if item.get("status") == "cancelled")
+        return {
+            "schema_version": "agent-core-approval-trace/v1",
+            "record_count": len(records),
+            "pending_count": len(pending),
+            "approved_count": len(approved),
+            "rejected_count": len(rejected),
+            "cancelled_count": len(cancelled),
+            "statuses": _count_injection_field(records, "status"),
+            "subjects": _count_injection_field(records, "subject"),
+            "subject_kinds": _count_injection_field(records, "subject_kind"),
+            "records": list(records),
+            "metadata": dict(self.metadata),
+        }
+
+
 class ToolCenterTrace:
     """Run-level summary of ToolCenter route and call audit records."""
 
@@ -412,6 +447,7 @@ class AgentRunTraceBundle:
     tool_replay: dict[str, Any] = field(default_factory=dict)
     policy_decisions: dict[str, Any] = field(default_factory=dict)
     approvals: dict[str, Any] = field(default_factory=dict)
+    approval_trace: dict[str, Any] = field(default_factory=dict)
     event_log: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
     resume_plan: dict[str, Any] = field(default_factory=dict)
@@ -444,6 +480,9 @@ class AgentRunTraceBundle:
         tool_center = ToolCenterTrace.from_session(self.session)
         mcp_center = self.mcp_center or MCPCenterTrace.from_session(self.session)
         skill_center = self.skill_center or SkillCenterTrace.from_session(self.session)
+        approval_trace = self.approval_trace or ApprovalTrace.from_approvals(
+            self.approvals
+        ).manifest()
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
@@ -486,6 +525,10 @@ class AgentRunTraceBundle:
                 "skill_resource_view_count": int(skill_center.get("resource_view_count") or 0),
                 "policy_decision_record_count": int(self.policy_decisions.get("record_count") or 0),
                 "approval_record_count": int(self.approvals.get("record_count") or 0),
+                "approval_pending_count": int(approval_trace.get("pending_count") or 0),
+                "approval_approved_count": int(approval_trace.get("approved_count") or 0),
+                "approval_rejected_count": int(approval_trace.get("rejected_count") or 0),
+                "approval_cancelled_count": int(approval_trace.get("cancelled_count") or 0),
                 "event_log_count": int(self.event_log.get("event_count") or 0),
                 "correlation_entry_count": int(correlation.get("entry_count") or 0),
                 "has_resume": bool(self.resume),
@@ -542,6 +585,7 @@ class AgentRunTraceBundle:
             "skill_center": dict(skill_center),
             "policy_decisions": dict(self.policy_decisions),
             "approvals": dict(self.approvals),
+            "approval_trace": dict(approval_trace),
             "event_log": dict(self.event_log),
             "resume": dict(self.resume),
             "resume_plan": dict(self.resume_plan),
@@ -643,6 +687,27 @@ def _skills_manifest_from_session(session: dict[str, Any]) -> dict[str, Any]:
     if skills.get("schema_version") == "agent-core-skills-context/v1":
         return dict(skills)
     return {}
+
+
+def _approval_trace_record(record: dict[str, Any]) -> dict[str, Any]:
+    request = record.get("request") if isinstance(record.get("request"), dict) else {}
+    decision = record.get("decision") if isinstance(record.get("decision"), dict) else {}
+    subject = str(request.get("subject") or "")
+    return {
+        "approval_id": str(record.get("approval_id") or ""),
+        "run_id": str(record.get("run_id") or ""),
+        "turn_id": str(record.get("turn_id") or ""),
+        "status": str(record.get("status") or ""),
+        "subject": subject,
+        "subject_kind": subject.split(":", 1)[0] if ":" in subject else "",
+        "reason": str(request.get("reason") or ""),
+        "created_at": str(record.get("created_at") or ""),
+        "decision_status": str(decision.get("status") or ""),
+        "decision_actor": str(decision.get("actor") or ""),
+        "decision_reason": str(decision.get("reason") or ""),
+        "decided_at": str(decision.get("decided_at") or ""),
+        "metadata": dict(record.get("metadata") or {}) if isinstance(record.get("metadata"), dict) else {},
+    }
 
 
 def _count_route_field(route_plans: tuple[dict[str, Any], ...], field_name: str) -> dict[str, int]:
