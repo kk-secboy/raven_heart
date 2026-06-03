@@ -11,6 +11,7 @@ ops agents, research agents, and future automation systems.
 `agent_core` contains only reusable agent mechanics:
 
 - ReAct loop and structured action execution.
+- Structured final output contracts with validation and repair feedback.
 - Harness lifecycle, checkpoint, resume, trace, and replay primitives.
 - LLM provider abstractions and provider routing.
 - Provider call records and usage/failure manifests.
@@ -33,6 +34,7 @@ ops agents, research agents, and future automation systems.
 - Human-in-loop approval request and decision queue primitives.
 - Approval resume context for approved action/tool gate continuation.
 - Policy gates, budget metadata, loop guards, and capability manifests.
+- Structured output specs and validator ports for provider-neutral final answers.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
 
@@ -63,6 +65,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Memory and journal ports | Graphiti, RAG, durable product stores |
 | Planner protocol and plan state | Domain-specific planning strategy and product workflow |
 | Context reducer protocol | Domain summarizers, archive storage, and retrieval strategy |
+| Structured output contracts | Domain schemas and downstream business handling |
 | Approval request and decision queue | Approval UI, identity, permissions, and workflow routing |
 | Harness state contracts | API routes, UI events, production persistence backend |
 
@@ -95,12 +98,27 @@ agent_core never imports runtime
 
 - Provider-neutral ReAct loop.
 - Structured action parsing.
+- Structured final output validation and repair feedback.
 - Built-in actions: `finish`, `fail`, `call_tool`, `search_skill`, `load_skill`, memory actions.
 - Loop guard.
 - Tool replay.
 - Prompt timeline.
 - Memory injection.
 - Artifact compaction.
+
+### Structured Output
+
+- `StructuredOutputSpec` defines a request-level final answer contract.
+- `JsonStructuredOutputValidator` validates a deterministic JSON schema subset.
+- `StructuredOutputValidatorPort` lets runtimes replace validation without
+  changing ReAct execution.
+- `AgentRunRequest.structured_output` injects the schema into prompt context.
+- `ReActExecutor` validates `finish.output`; if invalid, it feeds a repair
+  message back into the loop before failing the run.
+
+The SDK owns schema injection, validation lifecycle, repair feedback, and
+manifests. Runtimes own domain schemas, typed business objects, UI rendering,
+and downstream persistence.
 
 ### Events
 

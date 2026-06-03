@@ -29,6 +29,7 @@ agent_core
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Run trace bundle | Durable trace export, observability pipeline, retention |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
+| Structured output specs and validation lifecycle | Domain schemas, typed business objects, persistence |
 | Context reducer protocol and reduction manifests | Domain summarizers, archive stores, retrieval policy |
 | Planner protocol and plan state | Domain-specific plan generation and workflow policy |
 | Harness/ReAct runner | UI events, API routes, production persistence backend |
@@ -49,6 +50,12 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Artifacts | `ArtifactStorePort` | In-memory, SQLite, Markdown | Filesystem, object storage, CI/build artifacts |
 | Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
+
+Structured output is intentionally contract-based rather than provider-specific.
+`StructuredOutputSpec` can be attached to an `AgentRunRequest`; the runner injects
+the schema into prompt context, and `ReActExecutor` validates `finish.output`.
+Invalid output becomes repair feedback inside the ReAct loop. Runtime code owns
+the domain schema, typed object mapping, and downstream storage.
 
 The SDK must not require a production database driver. Production backends should
 be added by the host runtime or by separate adapter packages that implement the

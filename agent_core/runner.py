@@ -25,6 +25,7 @@ from agent_core.prompt import PromptBucketRole
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
 from agent_core.reducer import ContextReducerPort, ReducerRequest, apply_reduction_to_timeline
 from agent_core.skills import SkillsContext
+from agent_core.structured import StructuredOutputSpec, StructuredOutputValidatorPort
 from agent_core.timeline import TimelineBudget, TimelineStore
 from agent_core.tools import NullToolReplay, ToolReplayPort, ToolRuntimePort
 from agent_core.trace import AgentJournalReplay, AgentRunTraceBundle, NullRunTraceStore, RunTraceStorePort
@@ -50,6 +51,7 @@ class AgentSession:
     tool_replay: ToolReplayPort = field(default_factory=NullToolReplay)
     trace_store: RunTraceStorePort = field(default_factory=NullRunTraceStore)
     action_verifier: ActionVerifierPort | None = None
+    structured_output_validator: StructuredOutputValidatorPort | None = None
     loop_guard: LoopGuard | None = None
     artifact_store: ArtifactStorePort | None = None
     cancel_token: CancelToken = field(default_factory=CancelToken)
@@ -106,6 +108,7 @@ class AgentRunRequest:
     refresh: bool = False
     resume_token: ResumeToken | None = None
     approval_resume: ApprovalResumeContext | None = None
+    structured_output: StructuredOutputSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -177,7 +180,7 @@ class AgentRunner:
         prompt = self._prompt_builder().build(context).trim_to_budget(
             self.session.profile.budget.max_prompt_bytes
         )
-        executor = self._executor(run_request.approval_resume)
+        executor = self._executor(run_request.approval_resume, run_request.structured_output)
         result = await executor.run(run_request.task, prompt)
         session_manifest = self.session.manifest()
         trace_manifest = await self._trace_manifest(
@@ -282,10 +285,14 @@ class AgentRunner:
             metadata["approval_resume"] = approval_resume_manifest
         if timeline_reduction_manifest:
             metadata["timeline_reduction"] = timeline_reduction_manifest
+        schema = base.schema
+        if request.structured_output is not None:
+            metadata["structured_output"] = request.structured_output.manifest()
+            schema = _append_context_block(schema, request.structured_output.render_prompt())
         return AgentContextPack(
             system=system,
             task_instruction=base.task_instruction,
-            schema=base.schema,
+            schema=schema,
             output_example=base.output_example,
             recent_tools_cache=base.recent_tools_cache,
             user_history=base.user_history,
@@ -347,7 +354,11 @@ class AgentRunner:
             ),
         )
 
-    def _executor(self, approval_resume: ApprovalResumeContext | None = None) -> ReActExecutor:
+    def _executor(
+        self,
+        approval_resume: ApprovalResumeContext | None = None,
+        structured_output: StructuredOutputSpec | None = None,
+    ) -> ReActExecutor:
         budget = self.session.profile.budget
         return ReActExecutor(
             provider=self.session.provider,
@@ -363,6 +374,7 @@ class AgentRunner:
             timeline=self.session.timeline,
             tool_replay=self.session.tool_replay,
             action_verifier=self.session.action_verifier,
+            structured_output_validator=self.session.structured_output_validator,
             loop_guard=self.session.loop_guard,
             artifact_store=self.session.artifact_store,
             cancel_token=self.session.cancel_token,
@@ -370,6 +382,7 @@ class AgentRunner:
                 model=self.session.profile.model,
                 max_iterations=budget.max_iterations,
                 budget=budget,
+                structured_output=structured_output,
             ),
         )
 
@@ -658,6 +671,12 @@ def _memory_context_block(hits: tuple[MemoryHit, ...]) -> str:
         source = hit.source or "memory"
         lines.append(f"- {source} ({hit.score:.3f}): {hit.content}")
     return "[memory]\n" + "\n".join(lines)
+
+
+def _append_context_block(existing: str, block: str) -> str:
+    if not existing:
+        return block
+    return existing.rstrip() + "\n\n" + block
 
 
 def _replace_run(

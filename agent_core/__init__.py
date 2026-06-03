@@ -148,6 +148,13 @@ from agent_core.skills import (
     parse_skill_resource_ref,
     skill_from_markdown,
 )
+from agent_core.structured import (
+    JsonStructuredOutputValidator,
+    StructuredOutputResult,
+    StructuredOutputSpec,
+    StructuredOutputValidatorPort,
+    structured_output_feedback,
+)
 from agent_core.trace import (
     AgentJournalReplay,
     AgentReplayEvent,
@@ -304,6 +311,7 @@ __all__ = [
     "InMemoryJournalStore",
     "InMemoryMemoryStore",
     "InMemoryPlanner",
+    "JsonStructuredOutputValidator",
     "MarkdownMemoryStore",
     "MarkdownJournalStore",
     "MarkdownApprovalStore",
@@ -329,6 +337,10 @@ __all__ = [
     "SQLiteToolReplayStore",
     "SQLiteRunTraceStore",
     "SQLiteMemoryStore",
+    "StructuredOutputResult",
+    "StructuredOutputSpec",
+    "StructuredOutputValidatorPort",
+    "structured_output_feedback",
     "TERMINAL_RUN_STATUSES",
     "TERMINAL_PLAN_STEP_STATUSES",
     "TERMINAL_TURN_STATUSES",

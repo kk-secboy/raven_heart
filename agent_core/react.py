@@ -31,6 +31,12 @@ from agent_core.policy import AllowAllPolicy, ApprovalRequest, PolicyPort
 from agent_core.prompt import PromptIR
 from agent_core.providers import LLMMessage, LLMProviderPort, LLMRequest, LLMResponse, UsageInfo
 from agent_core.skills import SkillsContext
+from agent_core.structured import (
+    JsonStructuredOutputValidator,
+    StructuredOutputSpec,
+    StructuredOutputValidatorPort,
+    structured_output_feedback,
+)
 from agent_core.timeline import TimelineStore
 from agent_core.tools import (
     NullToolReplay,
@@ -57,6 +63,7 @@ class ReActConfig:
     stream: bool = False
     budget: RuntimeBudget = field(default_factory=RuntimeBudget)
     loop_guard: LoopGuardConfig = field(default_factory=LoopGuardConfig)
+    structured_output: StructuredOutputSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,7 @@ class ReActExecutor:
         timeline: TimelineStore | None = None,
         tool_replay: ToolReplayPort | None = None,
         action_verifier: ActionVerifierPort | None = None,
+        structured_output_validator: StructuredOutputValidatorPort | None = None,
         loop_guard: LoopGuard | None = None,
         artifact_store: ArtifactStorePort | None = None,
         cancel_token: CancelToken | None = None,
@@ -104,6 +112,7 @@ class ReActExecutor:
         self.timeline = timeline
         self.tool_replay = tool_replay or NullToolReplay()
         self.action_verifier = action_verifier or NullActionVerifier()
+        self.structured_output_validator = structured_output_validator or JsonStructuredOutputValidator()
         self.cancel_token = cancel_token or CancelToken()
         self.config = config or ReActConfig()
         self.loop_guard = loop_guard or LoopGuard(self.config.loop_guard)
@@ -122,6 +131,7 @@ class ReActExecutor:
             messages.append(memory_message)
         result_output = ""
         final_action: ParsedAction | None = None
+        structured_output_repairs = 0
 
         for index in range(self.config.max_iterations):
             if self.cancel_token.cancelled:
@@ -291,11 +301,103 @@ class ReActExecutor:
             if action.name == self.config.finish_action:
                 result_output = str(action.arguments.get("output") or action.arguments.get("answer") or "")
                 final_action = action
+                structured_output_result = None
+                if self.config.structured_output is not None:
+                    structured_output_result = await self.structured_output_validator.validate(
+                        result_output,
+                        self.config.structured_output,
+                    )
+                    if not structured_output_result.ok:
+                        if structured_output_repairs < self.config.structured_output.max_repairs:
+                            structured_output_repairs += 1
+                            feedback = self._feedback(
+                                "structured_output_error",
+                                structured_output_feedback(
+                                    structured_output_result,
+                                    self.config.structured_output,
+                                ),
+                            )
+                            messages.extend(
+                                [
+                                    LLMMessage(
+                                        role="assistant",
+                                        content=response.content or json.dumps(action.raw),
+                                    ),
+                                    feedback,
+                                ]
+                            )
+                            await self.harness.checkpoint(
+                                turn,
+                                {
+                                    "status": "structured_output_error",
+                                    "error": structured_output_result.error,
+                                    "repair_attempt": structured_output_repairs,
+                                    "iteration": index,
+                                },
+                            )
+                            await self._record_timeline(
+                                structured_output_result.error,
+                                kind="structured_output_error",
+                            )
+                            await self._emit(
+                                "error",
+                                run,
+                                turn_id=turn.turn_id,
+                                payload={
+                                    "kind": "structured_output_error",
+                                    "message": structured_output_result.error,
+                                    "repair_attempt": structured_output_repairs,
+                                },
+                            )
+                            continue
+                        await self.harness.checkpoint(
+                            turn,
+                            {
+                                "status": "structured_output_failed",
+                                "output": result_output,
+                                "error": structured_output_result.error,
+                                "iteration": index,
+                            },
+                        )
+                        await self.harness.finish_run(
+                            run,
+                            "output_validation_failed",
+                            {
+                                "output": result_output,
+                                "structured_output": structured_output_result.manifest(),
+                            },
+                        )
+                        await self._emit(
+                            "run_finished",
+                            run,
+                            turn_id=turn.turn_id,
+                            payload={"status": "output_validation_failed"},
+                        )
+                        return ReActResult(
+                            run_id=run.run_id,
+                            status="output_validation_failed",
+                            output=result_output,
+                            iterations=index + 1,
+                            final_action=action,
+                            metadata={"structured_output": structured_output_result.manifest()},
+                        )
+                finish_metadata = {}
+                if structured_output_result is not None:
+                    finish_metadata["structured_output"] = structured_output_result.manifest()
                 await self.harness.checkpoint(
                     turn,
-                    {"status": "finished", "output": result_output, "iteration": index},
+                    {
+                        "status": "finished",
+                        "output": result_output,
+                        "iteration": index,
+                        **finish_metadata,
+                    },
                 )
-                await self.harness.finish_run(run, "completed", {"output": result_output})
+                await self.harness.finish_run(
+                    run,
+                    "completed",
+                    {"output": result_output, **finish_metadata},
+                )
                 await self._emit(
                     "run_finished",
                     run,
@@ -308,6 +410,7 @@ class ReActExecutor:
                     output=result_output,
                     iterations=index + 1,
                     final_action=action,
+                    metadata=finish_metadata,
                 )
 
             tool_result = await self._execute_action(run, turn.turn_id, action)
