@@ -85,6 +85,9 @@ class TraceEvalSpec:
     required_provider_stream_event_types: tuple[str, ...] = ()
     forbidden_provider_stream_event_types: tuple[str, ...] = ()
     max_provider_stream_errors: int | None = None
+    require_provider_tool_calls: bool = False
+    required_provider_tool_call_names: tuple[str, ...] = ()
+    max_provider_tool_calls: int | None = None
     required_embedding_provider_names: tuple[str, ...] = ()
     required_embedding_models: tuple[str, ...] = ()
     required_embedding_dimensions: tuple[int, ...] = ()
@@ -161,6 +164,9 @@ class TraceEvalSpec:
                 self.forbidden_provider_stream_event_types
             ),
             "max_provider_stream_errors": self.max_provider_stream_errors,
+            "require_provider_tool_calls": self.require_provider_tool_calls,
+            "required_provider_tool_call_names": list(self.required_provider_tool_call_names),
+            "max_provider_tool_calls": self.max_provider_tool_calls,
             "required_embedding_provider_names": list(self.required_embedding_provider_names),
             "required_embedding_models": list(self.required_embedding_models),
             "required_embedding_dimensions": list(self.required_embedding_dimensions),
@@ -443,6 +449,8 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             provider_call_records,
             provider_stream_summaries,
         )
+        provider_tool_calls = _provider_tool_calls(provider_call_records, provider_stream_summaries)
+        provider_tool_call_names = _provider_tool_call_names(provider_tool_calls)
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
         storage_backends = _storage_backends(trace)
@@ -657,6 +665,38 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     metadata={
                         "actual": provider_stream_error_count,
                         "limit": spec.max_provider_stream_errors,
+                    },
+                )
+            )
+        if spec.require_provider_tool_calls and not provider_tool_calls:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_tool_calls_missing",
+                    "provider-native tool calls are required",
+                )
+            )
+        for tool_name in spec.required_provider_tool_call_names:
+            if tool_name not in provider_tool_call_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_tool_call",
+                        f"required provider-native tool call missing: {tool_name}",
+                    )
+                )
+        if (
+            spec.max_provider_tool_calls is not None
+            and len(provider_tool_calls) > spec.max_provider_tool_calls
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_tool_call_limit_exceeded",
+                    "provider-native tool call count exceeded limit",
+                    metadata={
+                        "actual": len(provider_tool_calls),
+                        "limit": spec.max_provider_tool_calls,
                     },
                 )
             )
@@ -1143,6 +1183,8 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "provider_stream_summary_count": len(provider_stream_summaries),
                 "provider_stream_event_types": sorted(provider_stream_event_types),
                 "provider_stream_error_count": provider_stream_error_count,
+                "provider_tool_call_count": len(provider_tool_calls),
+                "provider_tool_call_names": sorted(provider_tool_call_names),
                 "cost_usd": cost,
                 "event_types": sorted(event_types),
                 "tool_names": sorted(tool_names),
@@ -1513,6 +1555,7 @@ def _provider_call_replay_payload(call: dict[str, Any]) -> dict[str, Any]:
     metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
     stream_summary = metadata.get("stream_summary") if isinstance(metadata, dict) else None
     request = metadata.get("request") if isinstance(metadata, dict) else None
+    response = metadata.get("response") if isinstance(metadata, dict) else None
     request_metadata = request.get("metadata") if isinstance(request, dict) else {}
     payload = {
         "provider_name": str(call.get("provider_name") or ""),
@@ -1530,6 +1573,8 @@ def _provider_call_replay_payload(call: dict[str, Any]) -> dict[str, Any]:
     }
     if isinstance(stream_summary, dict):
         payload["stream_summary"] = dict(stream_summary)
+    if isinstance(response, dict):
+        payload["response"] = dict(response)
     if call.get("error"):
         payload["error"] = str(call.get("error") or "")
     return payload
@@ -1665,6 +1710,36 @@ def _provider_stream_error_count(
         if summary.get("error") or "error" in set(summary.get("event_types") or ())
     )
     return failed_streamed_calls + summary_errors
+
+
+def _provider_tool_calls(
+    calls: tuple[dict[str, Any], ...],
+    summaries: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    tool_calls: list[dict[str, Any]] = []
+    for call in calls:
+        metadata = call.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        response = metadata.get("response")
+        if isinstance(response, dict):
+            tool_calls.extend(_tool_call_manifests(response))
+    for summary in summaries:
+        tool_calls.extend(_tool_call_manifests(summary))
+    return tuple(tool_calls)
+
+
+def _tool_call_manifests(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    raw = manifest.get("tool_calls")
+    if isinstance(raw, (list, tuple)):
+        return tuple(dict(item) for item in raw if isinstance(item, dict))
+    if int(manifest.get("tool_call_count") or 0) > 0:
+        return tuple({"tool_name": ""} for _ in range(int(manifest.get("tool_call_count") or 0)))
+    return ()
+
+
+def _provider_tool_call_names(tool_calls: tuple[dict[str, Any], ...]) -> set[str]:
+    return {str(item.get("tool_name") or "") for item in tool_calls if item.get("tool_name")}
 
 
 def _provider_cost(provider: dict[str, Any]) -> float:

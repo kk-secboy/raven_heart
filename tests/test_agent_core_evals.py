@@ -395,6 +395,87 @@ def test_trace_eval_validates_provider_stream_contracts() -> None:
     assert report.summary["provider_stream_error_count"] == 0
 
 
+def test_trace_eval_validates_provider_native_tool_call_contracts() -> None:
+    trace = {
+        **_trace_manifest(),
+        "provider": {
+            "call_count": 2,
+            "calls": [
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "status": "completed",
+                    "streamed": False,
+                    "metadata": {
+                        "response": {
+                            "schema_version": "agent-core-llm-response/v1",
+                            "tool_call_count": 1,
+                            "tool_calls": [
+                                {
+                                    "schema_version": "agent-core-llm-tool-call/v1",
+                                    "tool_name": "lookup",
+                                    "call_id": "call-1",
+                                    "argument_keys": ["target"],
+                                    "arguments_sha256": "hash",
+                                    "metadata": {},
+                                }
+                            ],
+                        }
+                    },
+                },
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "status": "completed",
+                    "streamed": True,
+                    "metadata": {
+                        "stream_summary": {
+                            "schema_version": "agent-core-llm-stream-summary/v1",
+                            "event_types": ["tool_call", "message_end"],
+                            "tool_call_count": 1,
+                            "tool_calls": [
+                                {
+                                    "schema_version": "agent-core-llm-tool-call/v1",
+                                    "tool_name": "scan",
+                                    "call_id": "call-2",
+                                    "argument_keys": ["url"],
+                                    "arguments_sha256": "hash",
+                                    "metadata": {},
+                                }
+                            ],
+                        }
+                    },
+                },
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_provider_tool_calls=True,
+            required_provider_tool_call_names=("lookup", "scan"),
+            max_provider_tool_calls=2,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_provider_tool_call_names=("missing",),
+            max_provider_tool_calls=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["provider_tool_call_count"] == 2
+    assert report.summary["provider_tool_call_names"] == ["lookup", "scan"]
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {
+        "missing_provider_tool_call",
+        "provider_tool_call_limit_exceeded",
+    }
+
+
 def test_trace_replay_harness_includes_provider_stream_steps() -> None:
     trace = {
         **_trace_manifest(),

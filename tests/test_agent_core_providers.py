@@ -303,6 +303,33 @@ def test_llm_response_supports_provider_native_tool_calls() -> None:
     assert decoded.tool_calls[0].call_id == "call-1"
 
 
+@pytest.mark.asyncio
+async def test_provider_center_records_response_tool_call_manifest() -> None:
+    provider = MockLLMProvider(
+        [
+            LLMResponse(
+                tool_calls=(
+                    LLMToolCall(
+                        tool_name="lookup",
+                        arguments={"target": "demo"},
+                        call_id="call-1",
+                    ),
+                )
+            )
+        ]
+    )
+    center = LLMProviderCenter(default_provider="mock")
+    center.register("mock", provider)
+
+    await center.complete(LLMRequest(messages=[]))
+
+    response_manifest = center.calls[0].metadata["response"]
+    assert response_manifest["tool_call_count"] == 1
+    assert response_manifest["tool_calls"][0]["tool_name"] == "lookup"
+    assert response_manifest["tool_calls"][0]["argument_keys"] == ["target"]
+    assert "demo" not in str(response_manifest)
+
+
 def test_llm_tool_contract_can_be_derived_from_tool_spec_like_objects() -> None:
     contract = LLMToolContract.from_tool_spec(
         ToolSpec(

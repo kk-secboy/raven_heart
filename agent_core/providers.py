@@ -1014,6 +1014,7 @@ class LLMProviderCenter(LLMProviderPort):
                         metadata={
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
+                            "response": response.manifest(),
                         },
                     )
                     return replace(

@@ -225,6 +225,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
   iteration limits, provider call limits, required provider names/models,
   required provider model capabilities, provider stream event contracts,
+  provider-native tool-call presence and tool-call names,
   embedding call limits, required embedding providers/models/dimensions,
   required events, required tools, resume-plan presence, resume-plan readiness,
   expected checkpoint id, tool execution presence, tool retry, tool schema

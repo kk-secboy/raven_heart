@@ -125,7 +125,8 @@ checkpoint loading, journal events, event-log entries, provider calls, provider
 streaming calls using prompt-safe summaries, and embedding calls. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
-required events, required tools, cost ceilings, event ordering, journal integrity,
+provider-native tool-call presence/names, required events, required tools,
+cost ceilings, event ordering, journal integrity,
 resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, tool execution presence,
 tool retry, minimum tool attempt counts, required storage backend roles/kinds,
