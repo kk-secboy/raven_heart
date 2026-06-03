@@ -159,6 +159,12 @@ availability, active claims, pending queues, interrupted restored runs, and
 capacity rejection reasons without owning core state layout. Production
 schedulers, distributed workers, PG-backed workflow state, and tenant isolation
 remain runtime or adapter responsibilities.
+`AgentLifecycleHookCenter` gives runtimes one SDK-level hook bus for
+`run_starting`, `run_completed`, and `run_failed`. Hook records use prompt-safe
+task hashes/byte counts and capture hook errors without breaking execution by
+default; runtimes can opt into fail-fast hooks when metrics, tenant gates, or
+audit systems must be mandatory. Concrete middleware stacks, metrics exporters,
+policy services, and UI notifications remain outside `agent_core`.
 
 `HandoffSpec`, `HandoffRequest`, `HandoffRouter`, and `MultiAgentCoordinator`
 provide a provider-neutral multi-agent handoff contract. The core can advertise

@@ -9,6 +9,7 @@ from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack, ContextInjectionPolicy
 from agent_core.errors import ResumeError
 from agent_core.harness import InMemoryAgentJournal
+from agent_core.lifecycle import AgentLifecycleEvent, AgentLifecycleHookCenter
 from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
 from agent_core.mcp import MCPCenter, MCPServerSpec
 from agent_core.providers import LLMProviderCenter
@@ -44,6 +45,19 @@ class _BlockingProvider:
         self.requests.append(request)
         await self.release.wait()
         return LLMResponse(action={"action": "finish", "arguments": {"output": "done"}})
+
+
+class _RecordingLifecycleHook:
+    def __init__(self) -> None:
+        self.events: list[AgentLifecycleEvent] = []
+
+    async def on_lifecycle_event(self, event: AgentLifecycleEvent) -> None:
+        self.events.append(event)
+
+
+class _FailingLifecycleHook:
+    async def on_lifecycle_event(self, event: AgentLifecycleEvent) -> None:
+        raise RuntimeError(f"hook failed: {event.type}")
 
 
 @pytest.mark.asyncio
@@ -184,6 +198,76 @@ async def test_agent_runner_native_tool_call_session_default_can_be_overridden()
     assert provider.requests[0].tools[0].name == "lookup"
     assert override_outcome.trace_manifest["metadata"]["native_tool_calls"] is False
     assert provider.requests[1].tools == ()
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_emits_lifecycle_hooks_and_prompt_safe_manifest() -> None:
+    hook = _RecordingLifecycleHook()
+    lifecycle = AgentLifecycleHookCenter()
+    lifecycle.register("audit", hook, metadata={"sink": "test"})
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="lifecycle"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        lifecycle_hooks=lifecycle,
+    )
+
+    outcome = await AgentRunner(session).run("private task")
+    manifest = outcome.session_manifest["lifecycle_hooks"]
+
+    assert [event.type for event in hook.events] == ["run_starting", "run_completed"]
+    assert hook.events[1].run_id == outcome.result.run_id
+    assert manifest["schema_version"] == "agent-core-lifecycle-hook-center/v1"
+    assert manifest["hook_count"] == 1
+    assert manifest["record_count"] == 2
+    assert [record["event_type"] for record in manifest["records"]] == [
+        "run_starting",
+        "run_completed",
+    ]
+    assert manifest["records"][0]["event"]["task_bytes"] == len("private task")
+    assert manifest["records"][0]["event"]["task_sha256"]
+    assert "private task" not in str(manifest)
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_records_non_fatal_lifecycle_hook_failures() -> None:
+    lifecycle = AgentLifecycleHookCenter()
+    lifecycle.register("failing", _FailingLifecycleHook())
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="lifecycle-soft-fail"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        lifecycle_hooks=lifecycle,
+    )
+
+    outcome = await AgentRunner(session).run("task")
+    records = outcome.session_manifest["lifecycle_hooks"]["records"]
+
+    assert outcome.result.status == "completed"
+    assert [record["status"] for record in records] == ["failed", "failed"]
+    assert records[0]["error"] == "hook failed: run_starting"
+    assert records[1]["error"] == "hook failed: run_completed"
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_lifecycle_hooks_can_fail_fast() -> None:
+    lifecycle = AgentLifecycleHookCenter(fail_fast=True)
+    lifecycle.register("failing", _FailingLifecycleHook())
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="lifecycle-fail-fast"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        lifecycle_hooks=lifecycle,
+    )
+
+    with pytest.raises(RuntimeError, match="hook failed: run_starting"):
+        await AgentRunner(session).run("task")
+
+    assert not provider.requests
+    assert lifecycle.records[0].status == "failed"
 
 
 @pytest.mark.asyncio

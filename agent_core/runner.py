@@ -38,6 +38,7 @@ from agent_core.harness import (
     ResumePlan,
     ResumeToken,
 )
+from agent_core.lifecycle import AgentLifecycleEvent, AgentLifecycleHookCenter, NullLifecycleHooks
 from agent_core.loop_guard import LoopGuard
 from agent_core.memory import MemoryHit, MemoryPort, MemoryQuery, NullMemory
 from agent_core.mcp import MCPCenter
@@ -75,6 +76,7 @@ class AgentSession:
     approval_store: ApprovalStorePort = field(default_factory=NullApprovalStore)
     tool_replay: ToolReplayPort = field(default_factory=NullToolReplay)
     trace_store: RunTraceStorePort = field(default_factory=NullRunTraceStore)
+    lifecycle_hooks: AgentLifecycleHookCenter = field(default_factory=NullLifecycleHooks)
     action_verifier: ActionVerifierPort | None = None
     structured_output_validator: StructuredOutputValidatorPort | None = None
     loop_guard: LoopGuard | None = None
@@ -120,6 +122,7 @@ class AgentSession:
             "approvals": _component_manifest_sync(self.approval_store),
             "event_log": _component_manifest_sync(self.event_sink),
             "trace_store": _component_manifest_sync(self.trace_store),
+            "lifecycle_hooks": self.lifecycle_hooks.manifest(),
             "artifact_store": _component_manifest_sync(self.artifact_store),
             "native_tool_calls": self.native_tool_calls,
             "context_reducer": _context_reducer_manifest(self.context_reducer),
@@ -549,53 +552,87 @@ class AgentRunner:
 
     async def run(self, request: AgentRunRequest | str) -> AgentRunOutcome:
         run_request = request if isinstance(request, AgentRunRequest) else AgentRunRequest(task=str(request))
-        if run_request.refresh:
-            await self.refresh()
-        resume_manifest = await self._resume_manifest(run_request.resume_token)
-        capability_discovery_manifest = self._capability_discovery_manifest(run_request)
-        memory_recall = await self._memory_recall(run_request)
-        timeline_reduction_manifest = await self._reduce_timeline_if_needed(run_request)
-        context = self._context_for(
-            run_request,
-            resume_manifest=resume_manifest,
-            injections=memory_recall.injections,
-            timeline_reduction_manifest=timeline_reduction_manifest,
+        await self._emit_lifecycle_event(
+            AgentLifecycleEvent(
+                type="run_starting",
+                session_name=self.session.profile.name,
+                task=run_request.task,
+                metadata={"request_metadata": dict(run_request.metadata)},
+            )
         )
-        prompt = self._prompt_builder().build(context)
-        if self.session.prompt_bucket_budget_policy is not None:
-            prompt = self.session.prompt_bucket_budget_policy.apply(prompt)
-        prompt = prompt.trim_to_budget(self.session.profile.budget.max_prompt_bytes)
-        executor = self._executor(
-            run_request.approval_resume,
-            run_request.structured_output,
-            run_request.timeout_seconds,
-            run_request.native_tool_calls,
-        )
-        result = await executor.run(run_request.task, prompt)
-        session_manifest = self.session.manifest()
-        trace_manifest = await self._trace_manifest(
-            result,
-            session_manifest=session_manifest,
-            prompt_manifest=prompt.manifest(),
-            resume_manifest=resume_manifest,
-            resume_plan_manifest=_request_resume_plan_manifest(run_request),
-            timeline_reduction_manifest=timeline_reduction_manifest,
-            capability_discovery_manifest=capability_discovery_manifest,
-            memory_search_manifest=memory_recall.manifest,
-            request=run_request,
-        )
-        await self.session.trace_store.save(trace_manifest)
-        return AgentRunOutcome(
-            result=result,
-            session_manifest=session_manifest,
-            prompt_manifest=prompt.manifest(),
-            resume_manifest=resume_manifest,
-            resume_plan_manifest=_request_resume_plan_manifest(run_request),
-            timeline_reduction_manifest=timeline_reduction_manifest,
-            capability_discovery_manifest=capability_discovery_manifest,
-            memory_search_manifest=memory_recall.manifest,
-            trace_manifest=trace_manifest,
-        )
+        try:
+            if run_request.refresh:
+                await self.refresh()
+            resume_manifest = await self._resume_manifest(run_request.resume_token)
+            capability_discovery_manifest = self._capability_discovery_manifest(run_request)
+            memory_recall = await self._memory_recall(run_request)
+            timeline_reduction_manifest = await self._reduce_timeline_if_needed(run_request)
+            context = self._context_for(
+                run_request,
+                resume_manifest=resume_manifest,
+                injections=memory_recall.injections,
+                timeline_reduction_manifest=timeline_reduction_manifest,
+            )
+            prompt = self._prompt_builder().build(context)
+            if self.session.prompt_bucket_budget_policy is not None:
+                prompt = self.session.prompt_bucket_budget_policy.apply(prompt)
+            prompt = prompt.trim_to_budget(self.session.profile.budget.max_prompt_bytes)
+            executor = self._executor(
+                run_request.approval_resume,
+                run_request.structured_output,
+                run_request.timeout_seconds,
+                run_request.native_tool_calls,
+            )
+            result = await executor.run(run_request.task, prompt)
+            await self._emit_lifecycle_event(
+                AgentLifecycleEvent(
+                    type="run_completed",
+                    session_name=self.session.profile.name,
+                    run_id=result.run_id,
+                    task=run_request.task,
+                    status=result.status,
+                    metadata={
+                        "iterations": result.iterations,
+                        "output_bytes": len(result.output.encode("utf-8")),
+                    },
+                )
+            )
+            session_manifest = self.session.manifest()
+            trace_manifest = await self._trace_manifest(
+                result,
+                session_manifest=session_manifest,
+                prompt_manifest=prompt.manifest(),
+                resume_manifest=resume_manifest,
+                resume_plan_manifest=_request_resume_plan_manifest(run_request),
+                timeline_reduction_manifest=timeline_reduction_manifest,
+                capability_discovery_manifest=capability_discovery_manifest,
+                memory_search_manifest=memory_recall.manifest,
+                request=run_request,
+            )
+            await self.session.trace_store.save(trace_manifest)
+            return AgentRunOutcome(
+                result=result,
+                session_manifest=session_manifest,
+                prompt_manifest=prompt.manifest(),
+                resume_manifest=resume_manifest,
+                resume_plan_manifest=_request_resume_plan_manifest(run_request),
+                timeline_reduction_manifest=timeline_reduction_manifest,
+                capability_discovery_manifest=capability_discovery_manifest,
+                memory_search_manifest=memory_recall.manifest,
+                trace_manifest=trace_manifest,
+            )
+        except Exception as exc:
+            await self._emit_lifecycle_event(
+                AgentLifecycleEvent(
+                    type="run_failed",
+                    session_name=self.session.profile.name,
+                    task=run_request.task,
+                    status="failed",
+                    error=str(exc),
+                    metadata={"request_metadata": dict(run_request.metadata)},
+                )
+            )
+            raise
 
     def resume_index(self, *, include_terminal: bool = True) -> ResumeIndex:
         return _resume_index_for_harness(self.session.harness, include_terminal=include_terminal)
@@ -623,6 +660,9 @@ class AgentRunner:
             capabilities=self.session.capability_catalog(),
             injection_policy=self.session.context_injection_policy,
         )
+
+    async def _emit_lifecycle_event(self, event: AgentLifecycleEvent) -> None:
+        await self.session.lifecycle_hooks.emit(event)
 
     def _timeline_budget(self) -> TimelineBudget:
         return TimelineBudget(max_bytes=self.session.profile.budget.max_timeline_bytes)

@@ -127,6 +127,15 @@ from agent_core.harness import (
     TurnStatus,
     TurnState,
 )
+from agent_core.lifecycle import (
+    AgentLifecycleEvent,
+    AgentLifecycleHookCenter,
+    AgentLifecycleHookPort,
+    AgentLifecycleHookRecord,
+    LifecycleEventType,
+    LifecycleHookStatus,
+    NullLifecycleHooks,
+)
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig, LoopGuardDecision
 from agent_core.memory import (
     AllowAllMemoryGovernance,
@@ -466,6 +475,13 @@ __all__ = [
     "LLMToolContract",
     "LLMUsageLimits",
     "LLMTransportPort",
+    "AgentLifecycleEvent",
+    "AgentLifecycleHookCenter",
+    "AgentLifecycleHookPort",
+    "AgentLifecycleHookRecord",
+    "LifecycleEventType",
+    "LifecycleHookStatus",
+    "NullLifecycleHooks",
     "LoopGuard",
     "LoopGuardConfig",
     "LoopGuardDecision",

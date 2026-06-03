@@ -126,6 +126,10 @@ agent_core never imports runtime
   `restored_from_status` metadata instead of being auto-executed.
 - `AgentManagerScheduleSnapshot` and `AgentManagerCapacityStatus` for
   provider-neutral queue/schedule/capacity audit before runtime scheduling.
+- `AgentLifecycleHookCenter` and `AgentLifecycleEvent` for SDK-level
+  run-start/run-complete/run-fail hooks with prompt-safe audit records.
+- Lifecycle hooks default to non-fatal recording; `fail_fast=True` lets a
+  runtime make hook failures block execution.
 
 ### ReAct
 
@@ -637,6 +641,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Schema validation contracts | MVP implemented |
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |
+| Lifecycle hook contracts | MVP implemented |
 | Interrupt/cancel/timeout semantics | MVP implemented |
 | Tool center | MVP implemented |
 | Tool replay store | MVP implemented |
