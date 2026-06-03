@@ -480,6 +480,14 @@ backend is a core builtin. Runtime-owned PG, vector, graph, object-store, or
 product backends should export the same shape while living outside this
 repository.
 
+`StorageBackendCatalog` registers those manifests and preflights backend
+selection through `StorageBackendRequirement`. It can select by role, allowed
+kind, namespace, durability, queryability, transaction support, inspectability,
+and required capabilities, then return a prompt-safe `StorageBackendSelection`
+with every candidate and rejection reason. This is the SDK-level contract for
+SQLite/Markdown/PG/vector/graph choices; concrete drivers stay in runtime or
+adapter packages.
+
 ### Planner
 
 - `PlannerPort` for plan-and-execute agents.
@@ -658,6 +666,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | External memory call audit | MVP implemented |
 | Memory governance trace/eval | MVP implemented |
 | Unified storage backend manifests | MVP implemented |
+| Storage backend catalog/selection | MVP implemented |
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |

@@ -35,6 +35,8 @@ from agent_core import (
     SQLitePolicyDecisionStore,
     SQLiteRunTraceStore,
     SQLiteToolReplayStore,
+    StorageBackendCatalog,
+    StorageBackendRequirement,
     StorageBackendSpec,
     storage_backend_manifest,
 )
@@ -113,7 +115,105 @@ def test_core_store_manifests_include_unified_backend_metadata(tmp_path) -> None
         assert backend["core_builtin"] is True
 
 
+def test_storage_backend_catalog_selects_runtime_owned_backends_without_adapters() -> None:
+    catalog = StorageBackendCatalog(
+        (
+            storage_backend_manifest(
+                role="memory",
+                kind="sqlite",
+                name="local-memory",
+                capabilities=("keyword",),
+            ),
+            storage_backend_manifest(
+                role="memory",
+                kind="postgres",
+                name="tenant-memory",
+                namespace="tenant-a",
+                core_builtin=False,
+                capabilities=("keyword", "semantic", "vector"),
+                location="postgres://runtime-owned",
+            ),
+            storage_backend_manifest(
+                role="journal",
+                kind="markdown",
+                name="local-journal",
+            ),
+            {
+                "role": "artifact",
+                "kind": "object_storage",
+                "name": "runtime-artifacts",
+                "core_builtin": False,
+            },
+        )
+    )
+
+    selection = catalog.select(
+        StorageBackendRequirement(
+            role="memory",
+            allowed_kinds=("postgres", "vector"),
+            required_capabilities=("semantic", "vector"),
+            namespace="tenant-a",
+            require_durable=True,
+            require_queryable=True,
+        )
+    )
+    manifest = selection.manifest()
+
+    assert selection.ready is True
+    assert selection.selected is not None
+    assert selection.selected.backend.name == "tenant-memory"
+    assert manifest["schema_version"] == "agent-core-storage-backend-selection/v1"
+    assert manifest["selected"]["backend"]["core_builtin"] is False
+    assert manifest["selected"]["backend"]["kind"] == "postgres"
+    assert manifest["candidate_count"] == 2
+    assert catalog.manifest()["external_backend_count"] == 2
+    assert catalog.manifest()["roles"]["memory"] == 2
+    artifacts = catalog.select(role="artifact", allowed_kinds=("object_storage",), require_durable=True)
+    assert artifacts.ready is True
+    assert artifacts.selected is not None
+    assert artifacts.selected.backend.durable is True
+
+
+def test_storage_backend_catalog_records_missing_selection_reasons() -> None:
+    catalog = StorageBackendCatalog(
+        (
+            storage_backend_manifest(
+                role="memory",
+                kind="sqlite",
+                name="local-memory",
+                capabilities=("keyword",),
+            ),
+            storage_backend_manifest(
+                role="memory",
+                kind="postgres",
+                name="external-memory",
+                core_builtin=False,
+                capabilities=("keyword", "semantic"),
+            ),
+        )
+    )
+
+    selection = catalog.select(
+        role="memory",
+        allowed_kinds=("postgres",),
+        required_capabilities=("graph",),
+        allow_external=False,
+    )
+    manifest = selection.manifest()
+
+    assert selection.ready is False
+    assert manifest["status"] == "missing"
+    assert manifest["selected"] == {}
+    reasons = {candidate["backend"]["name"]: candidate["reason"] for candidate in manifest["candidates"]}
+    assert "kind_not_allowed" in reasons["local-memory"]
+    assert "missing_capabilities" in reasons["external-memory"]
+    assert "external_backend_not_allowed" in reasons["external-memory"]
+    external = next(candidate for candidate in manifest["candidates"] if candidate["backend"]["name"] == "external-memory")
+    assert external["missing_capabilities"] == ["graph"]
+
+
 def test_agent_core_package_exports_storage_backend_contracts() -> None:
     assert agent_core.StorageBackendSpec is StorageBackendSpec
+    assert agent_core.StorageBackendCatalog is StorageBackendCatalog
     assert agent_core.storage_backend_manifest is storage_backend_manifest
     assert "StorageBackendKind" in agent_core.__all__

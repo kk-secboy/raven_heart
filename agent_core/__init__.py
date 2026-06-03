@@ -36,8 +36,12 @@ from agent_core.artifacts import (
     SQLiteArtifactStore,
 )
 from agent_core.backends import (
+    StorageBackendCandidate,
+    StorageBackendCatalog,
     StorageBackendKind,
+    StorageBackendRequirement,
     StorageBackendRole,
+    StorageBackendSelection,
     StorageBackendSpec,
     storage_backend_manifest,
 )
@@ -557,8 +561,12 @@ __all__ = [
     "SkillSpec",
     "SkillsContext",
     "SkillViewWindow",
+    "StorageBackendCandidate",
+    "StorageBackendCatalog",
     "StorageBackendKind",
+    "StorageBackendRequirement",
     "StorageBackendRole",
+    "StorageBackendSelection",
     "StorageBackendSpec",
     "StorageBackendTrace",
     "compute_skill_hash",

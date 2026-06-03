@@ -82,6 +82,14 @@ runtime adapters can use `postgres`, `vector`, `graph`, `object_storage`,
 `product`, `external`, or `custom` without changing ReAct, harness, replay, or
 manager code.
 
+`StorageBackendCatalog` is the SDK boundary for choosing among those backends.
+It registers built-in and runtime-owned backend manifests, evaluates
+`StorageBackendRequirement` constraints, and returns a
+`StorageBackendSelection` with candidate scores and rejection reasons. A runtime
+can therefore preflight "memory must be tenant-a, durable, semantic, vector
+capable" without putting a PostgreSQL, graph, or vector client inside
+`agent_core`.
+
 `AgentJournalReplay` turns a journal snapshot into a replayable event manifest
 and reports consistency issues before a runtime depends on that state for UI,
 debugging, audit, or resume decisions.
