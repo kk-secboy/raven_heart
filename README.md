@@ -165,6 +165,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `AgentRunOutcome.trace_manifest` includes session, prompt, journal replay,
   provider call audit, tool replay, policy decisions, approvals, event log,
   resume, and timeline reduction manifests when available.
+- `TraceCorrelationIndex` cross-references provider calls, tool replay records,
+  policy decisions, approvals, event log entries, and journal replay events by
+  run, turn, call id, approval id, decision id, and subject.
 - `RunTraceStorePort` plus `InMemoryRunTraceStore`, `SQLiteRunTraceStore`, and
   `MarkdownRunTraceStore` for lightweight durable trace capture.
 - `AgentSession.trace_store` lets `AgentRunner` persist trace bundles
@@ -440,6 +443,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Harness/ReAct core | MVP implemented |
 | Provider center | MVP implemented |
 | Provider call audit | MVP implemented |
+| Trace correlation | MVP implemented |
 | Tool center | MVP implemented |
 | Tool replay store | MVP implemented |
 | Skill center | MVP implemented |

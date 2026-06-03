@@ -15,6 +15,7 @@ from agent_core.trace import (
     InMemoryRunTraceStore,
     MarkdownRunTraceStore,
     SQLiteRunTraceStore,
+    TraceCorrelationIndex,
 )
 
 
@@ -49,8 +50,88 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["policy_decision_record_count"] == 2
     assert manifest["summary"]["approval_record_count"] == 3
     assert manifest["summary"]["event_log_count"] == 9
+    assert manifest["summary"]["correlation_entry_count"] == 0
     assert manifest["summary"]["has_resume"] is True
     assert manifest["summary"]["has_timeline_reduction"] is True
+
+
+def test_trace_correlation_index_cross_references_trace_materials() -> None:
+    index = TraceCorrelationIndex.from_trace_components(
+        run_id="run-1",
+        provider={
+            "calls": [
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "attempt": 0,
+                    "status": "completed",
+                    "metadata": {
+                        "request": {"metadata": {"run_id": "run-1", "turn_id": "turn-1"}}
+                    },
+                }
+            ]
+        },
+        tool_replay={
+            "records": [
+                {
+                    "replay_key": "lookup:{}",
+                    "invocation": {"call_id": "call-1", "tool_name": "lookup"},
+                    "result": {"call_id": "call-1", "tool_name": "lookup", "status": "completed"},
+                }
+            ]
+        },
+        policy_decisions={
+            "records": [
+                {
+                    "decision_id": "decision-1",
+                    "sequence": 1,
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "subject": "tool:lookup",
+                    "decision": {"status": "allow"},
+                    "metadata": {"call_id": "call-1"},
+                }
+            ]
+        },
+        approvals={
+            "records": [
+                {
+                    "approval_id": "approval-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "status": "approved",
+                    "request": {"subject": "tool:lookup", "reason": "ok"},
+                    "decision": {"status": "approved", "actor": "operator"},
+                }
+            ]
+        },
+        event_log={
+            "events": [
+                {
+                    "type": "tool_finished",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 3,
+                    "payload": {"call_id": "call-1", "status": "completed"},
+                },
+                {
+                    "type": "approval_requested",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 4,
+                    "payload": {"approval_id": "approval-1", "request": {"subject": "tool:lookup"}},
+                },
+            ]
+        },
+    )
+    manifest = index.manifest()
+
+    assert manifest["schema_version"] == "agent-core-trace-correlation-index/v1"
+    assert manifest["entry_count"] == 6
+    assert "run-1:turn-1" in manifest["groups"]["turns"]
+    assert any("tool_replay" in key for key in manifest["groups"]["calls"]["call-1"])
+    assert manifest["groups"]["approvals"]["approval-1"]
+    assert manifest["groups"]["policy_decisions"]["decision-1"]
 
 
 @pytest.mark.asyncio
@@ -116,10 +197,14 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     assert trace["summary"]["tool_replay_record_count"] == 1
     assert trace["summary"]["policy_decision_record_count"] == 3
     assert trace["summary"]["event_log_count"] == event_sink.manifest()["event_count"]
+    assert trace["summary"]["correlation_entry_count"] > 0
     assert trace["journal_replay"]["ok"] is True
     assert trace["provider"]["calls"][0]["provider_name"] == "mock"
+    assert trace["provider"]["calls"][0]["metadata"]["request"]["metadata"]["run_id"] == outcome.result.run_id
     assert trace["tool_replay"]["records"][0]["result"]["tool_name"] == "lookup"
     assert trace["policy_decisions"]["records"][1]["subject"] == "tool:lookup"
+    call_id = trace["tool_replay"]["records"][0]["result"]["call_id"]
+    assert trace["correlation"]["groups"]["calls"][call_id]
     assert trace["prompt"]["metadata"]["profile"] == "traceable"
 
 

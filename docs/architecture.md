@@ -83,6 +83,12 @@ manifests. The SDK owns the shape and summary counters. Runtime code owns where
 the bundle is stored, how long it is retained, and how it is queried for product
 observability or incident review.
 
+`TraceCorrelationIndex` is generated inside the trace bundle. It gives
+provider-neutral cross references across provider calls, tool replay records,
+policy decisions, approvals, event entries, and journal replay events by run,
+turn, call id, approval id, decision id, and subject. Runtime observability
+systems can ingest the index, but the SDK owns the correlation schema.
+
 `TraceReplayHarness`, `TraceReplayComparator`, and `TraceEvalHarness` turn run
 trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. The core checks generic contracts such as

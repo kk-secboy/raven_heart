@@ -15,6 +15,7 @@ async def test_event_sinks_persist_manifests_and_run_filters(tmp_path) -> None:
 
     for sink in sinks:
         await sink.emit(AgentEvent(type="run_started", run_id="run-1", payload={"task": "inspect"}))
+        await sink.emit(AgentEvent(type="policy_decision", run_id="run-1", turn_id="turn-1", payload={"decision_id": "d1"}))
         await sink.emit(AgentEvent(type="tool_finished", run_id="run-1", turn_id="turn-1", payload={"ok": True}))
         await sink.emit(AgentEvent(type="run_finished", run_id="run-2"))
 
@@ -22,10 +23,11 @@ async def test_event_sinks_persist_manifests_and_run_filters(tmp_path) -> None:
         run_records = sink.records(run_id="run-1")
         manifest = sink.manifest()
 
-        assert [event.sequence for event in records] == [1, 2, 3]
-        assert [event.type for event in run_records] == ["run_started", "tool_finished"]
-        assert manifest["event_count"] == 3
-        assert manifest["events"][1]["payload"]["ok"] is True
+        assert [event.sequence for event in records] == [1, 2, 3, 4]
+        assert [event.type for event in run_records] == ["run_started", "policy_decision", "tool_finished"]
+        assert manifest["event_count"] == 4
+        assert manifest["events"][1]["payload"]["decision_id"] == "d1"
+        assert manifest["events"][2]["payload"]["ok"] is True
 
 
 @pytest.mark.asyncio

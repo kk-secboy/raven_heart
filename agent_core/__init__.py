@@ -233,6 +233,8 @@ from agent_core.trace import (
     RunTraceStorePort,
     SQLiteRunTraceStore,
     ToolTrace,
+    TraceCorrelationEntry,
+    TraceCorrelationIndex,
 )
 from agent_core.tools import (
     InMemoryToolReplay,
@@ -457,6 +459,8 @@ __all__ = [
     "ToolReplayPort",
     "ToolReplayStorePort",
     "TraceEvalHarness",
+    "TraceCorrelationEntry",
+    "TraceCorrelationIndex",
     "TraceEvalIssue",
     "TraceEvalReport",
     "TraceEvalSpec",

@@ -63,6 +63,105 @@ class CapabilityTrace:
 
 
 @dataclass(frozen=True)
+class TraceCorrelationEntry:
+    """One normalized pointer into trace materials."""
+
+    source: str
+    kind: str
+    run_id: str = ""
+    turn_id: str = ""
+    sequence: int = 0
+    call_id: str = ""
+    approval_id: str = ""
+    decision_id: str = ""
+    subject: str = ""
+    status: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def key(self) -> str:
+        parts = [self.source, self.kind]
+        if self.run_id:
+            parts.append(f"run={self.run_id}")
+        if self.turn_id:
+            parts.append(f"turn={self.turn_id}")
+        if self.call_id:
+            parts.append(f"call={self.call_id}")
+        if self.approval_id:
+            parts.append(f"approval={self.approval_id}")
+        if self.decision_id:
+            parts.append(f"decision={self.decision_id}")
+        if self.sequence:
+            parts.append(f"seq={self.sequence}")
+        return "|".join(parts)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "source": self.source,
+            "kind": self.kind,
+            "run_id": self.run_id,
+            "turn_id": self.turn_id,
+            "sequence": self.sequence,
+            "call_id": self.call_id,
+            "approval_id": self.approval_id,
+            "decision_id": self.decision_id,
+            "subject": self.subject,
+            "status": self.status,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class TraceCorrelationIndex:
+    """Cross-reference index for one run trace bundle."""
+
+    entries: tuple[TraceCorrelationEntry, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_trace_components(
+        cls,
+        *,
+        run_id: str,
+        journal_replay: dict[str, Any] | None = None,
+        provider: dict[str, Any] | None = None,
+        tool_replay: dict[str, Any] | None = None,
+        policy_decisions: dict[str, Any] | None = None,
+        approvals: dict[str, Any] | None = None,
+        event_log: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> "TraceCorrelationIndex":
+        entries: list[TraceCorrelationEntry] = []
+        entries.extend(_correlate_journal(run_id, journal_replay or {}))
+        entries.extend(_correlate_provider(run_id, provider or {}))
+        entries.extend(_correlate_tool_replay(run_id, tool_replay or {}))
+        entries.extend(_correlate_policy_decisions(run_id, policy_decisions or {}))
+        entries.extend(_correlate_approvals(run_id, approvals or {}))
+        entries.extend(_correlate_events(run_id, event_log or {}))
+        return cls(
+            entries=tuple(sorted(entries, key=_correlation_sort_key)),
+            metadata=dict(metadata or {}),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        entries = tuple(self.entries)
+        return {
+            "schema_version": "agent-core-trace-correlation-index/v1",
+            "entry_count": len(entries),
+            "entries": [entry.manifest() for entry in entries],
+            "groups": {
+                "turns": _group_entries(entries, lambda item: _join_id(item.run_id, item.turn_id)),
+                "calls": _group_entries(entries, lambda item: item.call_id),
+                "approvals": _group_entries(entries, lambda item: item.approval_id),
+                "policy_decisions": _group_entries(entries, lambda item: item.decision_id),
+                "subjects": _group_entries(entries, lambda item: item.subject),
+            },
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class AgentRunTraceBundle:
     """One run's provider-neutral trace materials."""
 
@@ -80,10 +179,21 @@ class AgentRunTraceBundle:
     event_log: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
     timeline_reduction: dict[str, Any] = field(default_factory=dict)
+    correlation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def manifest(self) -> dict[str, Any]:
         journal_ok = self.journal_replay.get("ok")
+        correlation = self.correlation or TraceCorrelationIndex.from_trace_components(
+            run_id=self.run_id,
+            journal_replay=self.journal_replay,
+            provider=self.provider,
+            tool_replay=self.tool_replay,
+            policy_decisions=self.policy_decisions,
+            approvals=self.approvals,
+            event_log=self.event_log,
+            metadata={"generated_by": "AgentRunTraceBundle"},
+        ).manifest()
         return {
             "schema_version": "agent-core-run-trace-bundle/v1",
             "run": {
@@ -100,6 +210,7 @@ class AgentRunTraceBundle:
                 "policy_decision_record_count": int(self.policy_decisions.get("record_count") or 0),
                 "approval_record_count": int(self.approvals.get("record_count") or 0),
                 "event_log_count": int(self.event_log.get("event_count") or 0),
+                "correlation_entry_count": int(correlation.get("entry_count") or 0),
                 "has_resume": bool(self.resume),
                 "has_timeline_reduction": bool(self.timeline_reduction),
             },
@@ -113,6 +224,7 @@ class AgentRunTraceBundle:
             "event_log": dict(self.event_log),
             "resume": dict(self.resume),
             "timeline_reduction": dict(self.timeline_reduction),
+            "correlation": dict(correlation),
             "metadata": dict(self.metadata),
         }
 
@@ -536,6 +648,227 @@ def _snapshot_from_manifest(manifest: dict[str, Any]) -> AgentJournalSnapshot:
         errors=tuple(dict(item) for item in manifest.get("errors", ())),
         finished=tuple(dict(item) for item in manifest.get("finished", ())),
     )
+
+
+def _correlate_journal(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorrelationEntry, ...]:
+    entries = []
+    for event in _dict_items(manifest.get("events")):
+        if run_id and str(event.get("run_id") or "") not in {"", run_id}:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        entries.append(
+            TraceCorrelationEntry(
+                source="journal_replay",
+                kind=str(event.get("event_type") or ""),
+                run_id=str(event.get("run_id") or payload.get("run_id") or run_id),
+                turn_id=str(event.get("turn_id") or payload.get("turn_id") or ""),
+                sequence=int(event.get("sequence") or 0),
+                call_id=_first_str(payload, ("call_id",)),
+                approval_id=_approval_id_from_payload(payload),
+                decision_id=_first_str(payload, ("decision_id",)),
+                status=_first_str(payload, ("status",)),
+                metadata={"payload_keys": sorted(str(key) for key in payload)},
+            )
+        )
+    return tuple(entries)
+
+
+def _correlate_provider(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorrelationEntry, ...]:
+    entries = []
+    for index, call in enumerate(_dict_items(manifest.get("calls")), start=1):
+        metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
+        request = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
+        request_metadata = request.get("metadata") if isinstance(request.get("metadata"), dict) else {}
+        entries.append(
+            TraceCorrelationEntry(
+                source="provider",
+                kind="llm_call",
+                run_id=str(request_metadata.get("run_id") or run_id),
+                turn_id=str(request_metadata.get("turn_id") or ""),
+                sequence=index,
+                status=str(call.get("status") or ""),
+                metadata={
+                    "provider_name": str(call.get("provider_name") or ""),
+                    "model": str(call.get("model") or ""),
+                    "attempt": int(call.get("attempt") or 0),
+                    "streamed": bool(call.get("streamed")),
+                    "retryable": bool(call.get("retryable")),
+                },
+            )
+        )
+    return tuple(entries)
+
+
+def _correlate_tool_replay(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorrelationEntry, ...]:
+    entries = []
+    for record in _dict_items(manifest.get("records")):
+        invocation = record.get("invocation") if isinstance(record.get("invocation"), dict) else {}
+        result = record.get("result") if isinstance(record.get("result"), dict) else {}
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        entries.append(
+            TraceCorrelationEntry(
+                source="tool_replay",
+                kind="tool_result",
+                run_id=str(metadata.get("run_id") or run_id),
+                turn_id=str(metadata.get("turn_id") or ""),
+                call_id=str(result.get("call_id") or invocation.get("call_id") or ""),
+                status=str(result.get("status") or ""),
+                subject=str(result.get("tool_name") or invocation.get("tool_name") or ""),
+                metadata={
+                    "replay_key": str(record.get("replay_key") or ""),
+                    "tool_name": str(result.get("tool_name") or invocation.get("tool_name") or ""),
+                },
+            )
+        )
+    return tuple(entries)
+
+
+def _correlate_policy_decisions(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorrelationEntry, ...]:
+    entries = []
+    for record in _dict_items(manifest.get("records")):
+        decision = record.get("decision") if isinstance(record.get("decision"), dict) else {}
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        entries.append(
+            TraceCorrelationEntry(
+                source="policy_decisions",
+                kind="policy_decision",
+                run_id=str(record.get("run_id") or run_id),
+                turn_id=str(record.get("turn_id") or ""),
+                sequence=int(record.get("sequence") or 0),
+                call_id=str(metadata.get("call_id") or ""),
+                approval_id=_approval_id_from_payload(metadata),
+                decision_id=str(record.get("decision_id") or ""),
+                subject=str(record.get("subject") or ""),
+                status=str(decision.get("status") or ""),
+                metadata={
+                    "subject_kind": str(record.get("subject_kind") or ""),
+                    "subject_name": str(record.get("subject_name") or ""),
+                    "approval_resumed": bool(metadata.get("approval_resumed")),
+                },
+            )
+        )
+    return tuple(entries)
+
+
+def _correlate_approvals(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorrelationEntry, ...]:
+    entries = []
+    for record in _dict_items(manifest.get("records")):
+        request = record.get("request") if isinstance(record.get("request"), dict) else {}
+        decision = record.get("decision") if isinstance(record.get("decision"), dict) else {}
+        entries.append(
+            TraceCorrelationEntry(
+                source="approvals",
+                kind="approval_record",
+                run_id=str(record.get("run_id") or run_id),
+                turn_id=str(record.get("turn_id") or ""),
+                approval_id=str(record.get("approval_id") or ""),
+                subject=str(request.get("subject") or ""),
+                status=str(record.get("status") or ""),
+                metadata={
+                    "reason": str(request.get("reason") or ""),
+                    "actor": str(decision.get("actor") or ""),
+                    "decision_status": str(decision.get("status") or ""),
+                },
+            )
+        )
+    return tuple(entries)
+
+
+def _correlate_events(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorrelationEntry, ...]:
+    entries = []
+    for event in _dict_items(manifest.get("events")):
+        if run_id and str(event.get("run_id") or "") not in {"", run_id}:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        entries.append(
+            TraceCorrelationEntry(
+                source="event_log",
+                kind=str(event.get("type") or ""),
+                run_id=str(event.get("run_id") or run_id),
+                turn_id=str(event.get("turn_id") or ""),
+                sequence=int(event.get("sequence") or 0),
+                call_id=_first_str(payload, ("call_id",)),
+                approval_id=_approval_id_from_payload(payload),
+                decision_id=_first_str(payload, ("decision_id",)),
+                subject=_subject_from_payload(payload),
+                status=_first_str(payload, ("status",)),
+                metadata={"payload_keys": sorted(str(key) for key in payload)},
+            )
+        )
+    return tuple(entries)
+
+
+def _dict_items(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(dict(item) for item in value if isinstance(item, dict))
+
+
+def _first_str(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _approval_id_from_payload(payload: dict[str, Any]) -> str:
+    direct = _first_str(payload, ("approval_id",))
+    if direct:
+        return direct
+    approval_record = payload.get("approval_record")
+    if isinstance(approval_record, dict):
+        value = _first_str(approval_record, ("approval_id",))
+        if value:
+            return value
+    grant = payload.get("grant")
+    if isinstance(grant, dict):
+        return _first_str(grant, ("approval_id",))
+    approval = payload.get("approval")
+    if isinstance(approval, dict):
+        record = approval.get("approval_record")
+        if isinstance(record, dict):
+            return _first_str(record, ("approval_id",))
+    return ""
+
+
+def _subject_from_payload(payload: dict[str, Any]) -> str:
+    direct = _first_str(payload, ("subject",))
+    if direct:
+        return direct
+    request = payload.get("request")
+    if isinstance(request, dict):
+        return _first_str(request, ("subject",))
+    grant = payload.get("grant")
+    if isinstance(grant, dict):
+        return _first_str(grant, ("subject",))
+    approval = payload.get("approval")
+    if isinstance(approval, dict):
+        return _first_str(approval, ("subject",))
+    return ""
+
+
+def _correlation_sort_key(entry: TraceCorrelationEntry) -> tuple[str, str, int, str, str]:
+    return (entry.run_id, entry.turn_id, entry.sequence, entry.source, entry.key)
+
+
+def _join_id(first: str, second: str) -> str:
+    if not first and not second:
+        return ""
+    return f"{first}:{second}"
+
+
+def _group_entries(
+    entries: tuple[TraceCorrelationEntry, ...],
+    key_fn: Any,
+) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for entry in entries:
+        key = str(key_fn(entry) or "")
+        if not key:
+            continue
+        groups.setdefault(key, []).append(entry.key)
+    return groups
 
 
 _RUN_TRACE_MARKDOWN_RE = re.compile(

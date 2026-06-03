@@ -545,6 +545,15 @@ class ReActExecutor:
         run: RunState,
         turn_id: str,
     ) -> LLMResponse:
+        request = LLMRequest(
+            messages=tuple(request.messages),
+            model=request.model,
+            metadata={
+                **request.metadata,
+                "run_id": run.run_id,
+                "turn_id": turn_id,
+            },
+        )
         if not self.config.stream:
             return await self.provider.complete(request)
 
