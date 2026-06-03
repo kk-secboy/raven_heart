@@ -784,6 +784,45 @@ async def test_agent_session_manager_queues_when_capacity_full_and_rejection_dis
 
 
 @pytest.mark.asyncio
+async def test_agent_session_manager_cancels_unclaimed_queued_run_without_touching_active_session() -> None:
+    first_provider = _BlockingProvider()
+    second_provider = MockLLMProvider(
+        [{"action": "finish", "arguments": {"output": "should not run"}}]
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="queued-cancel"),
+        provider=first_provider,
+        tools=MockToolRuntime(),
+    )
+    manager = AgentSessionManager(
+        concurrency_policy=AgentManagerConcurrencyPolicy(reject_when_full=False)
+    )
+    manager.register(session)
+
+    first_key = manager.start("queued-cancel", "first task")
+    await asyncio.sleep(0)
+    session.provider = second_provider
+    second_key = manager.start("queued-cancel", "second task")
+    await asyncio.sleep(0)
+
+    assert manager.cancel(second_key, "drop queued") is True
+    cancelled = await manager.wait(second_key)
+    assert cancelled.result.status == "cancelled"
+    assert cancelled.result.metadata["interrupt"]["queued"] is True
+    assert manager.run_state(second_key).status == "cancelled"
+    assert manager.schedule_snapshot().manifest()["queued_run_count"] == 0
+    assert not second_provider.requests
+
+    first_provider.release.set()
+    first = await manager.wait(first_key)
+
+    assert first.result.status == "completed"
+    assert first.result.metadata.get("interrupt") is None
+    assert not second_provider.requests
+    assert not manager.active_runs()
+
+
+@pytest.mark.asyncio
 async def test_agent_session_manager_allows_configured_session_concurrency() -> None:
     first_provider = _BlockingProvider()
     second_provider = _BlockingProvider()

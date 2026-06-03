@@ -142,7 +142,9 @@ and Markdown stores so lightweight managers can restart and inspect state withou
 runtime infrastructure. `AgentManagerConcurrencyPolicy` gives the single-process
 manager explicit active-run and per-session capacity guards. When
 `reject_when_full` is false, the core manager keeps overflow work as queued run
-state and starts it after local capacity is released.
+state and starts it after local capacity is released. Unclaimed queued runs can
+be cancelled as terminal manager state without cancelling the active session
+token or consuming later capacity.
 `AgentManagerScheduleSnapshot` and `AgentManagerCapacityStatus` expose
 provider-neutral schedule/capacity audit manifests so runtimes can inspect
 availability, active claims, pending queues, interrupted restored runs, and

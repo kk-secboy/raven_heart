@@ -995,6 +995,11 @@ class AgentSessionManager:
         run = self._runs.get(run_key)
         if run is None or run.status in {"completed", "cancelled", "timeout", "failed"}:
             return False
+        if run.status == "queued" and not self._run_is_claimed(run_key):
+            cancelled = _replace_run(run, status="cancelled", error=reason)
+            self._save_run(cancelled)
+            self._outcomes[run_key] = self._queued_cancelled_outcome(cancelled, reason)
+            return True
         session = self._sessions.get(run.session_name)
         if session is not None:
             session.cancel_token.cancel(reason)
@@ -1137,6 +1142,13 @@ class AgentSessionManager:
         while True:
             if run_key not in self._runs:
                 raise KeyError(run_key)
+            run = self._runs[run_key]
+            if run.status == "cancelled":
+                self._tasks.pop(run_key, None)
+                return self._outcomes.get(run_key) or self._queued_cancelled_outcome(
+                    run,
+                    run.error or "queued run cancelled",
+                )
             capacity = self._capacity_status(session_name)
             if capacity.available:
                 self._claim_run(session_name, run_key)
@@ -1225,6 +1237,9 @@ class AgentSessionManager:
         if not self._active_by_session[session_name]:
             self._active_by_session.pop(session_name, None)
 
+    def _run_is_claimed(self, run_key: str) -> bool:
+        return any(run_key in keys for keys in self._active_by_session.values())
+
     def _queued_by_session(self) -> dict[str, tuple[str, ...]]:
         queued: dict[str, list[str]] = {}
         active_keys = {
@@ -1237,6 +1252,32 @@ class AgentSessionManager:
                 continue
             queued.setdefault(run.session_name, []).append(run.run_key)
         return {name: tuple(keys) for name, keys in sorted(queued.items())}
+
+    def _queued_cancelled_outcome(self, run: ManagedAgentRun, reason: str) -> AgentRunOutcome:
+        session = self._sessions.get(run.session_name)
+        return AgentRunOutcome(
+            result=ReActResult(
+                run_id="",
+                status="cancelled",
+                output="",
+                iterations=0,
+                metadata={
+                    "interrupt": {
+                        "kind": "cancel",
+                        "reason": reason,
+                        "run_key": run.run_key,
+                        "queued": True,
+                    }
+                },
+            ),
+            session_manifest=session.manifest() if session is not None else {},
+            prompt_manifest={},
+            trace_manifest={
+                "schema_version": "agent-core-queued-run-cancelled/v1",
+                "run": run.manifest(),
+                "reason": reason,
+            },
+        )
 
     @staticmethod
     def _normalize_request(request: AgentRunRequest | str) -> AgentRunRequest:
