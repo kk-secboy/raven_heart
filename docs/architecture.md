@@ -44,7 +44,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | PG, vector DB, graph/RAG, product knowledge |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
-| Tool replay | `ToolReplayStorePort` | In-memory replay store | PG, SQLite, object storage, workflow replay DB |
+| Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | PG, object storage, workflow replay DB |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, CI/build artifacts |
 | Approvals | `ApprovalStorePort` | Null store, in-memory approval queue | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
@@ -72,6 +72,9 @@ rate limits, and vendor-specific response payloads remain runtime-owned.
 journals. Core replay manifests include replay keys, invocation argument hashes,
 and prompt-safe result manifests. Runtime code owns durable storage, retention,
 tenant isolation, and whether replay can cross a run boundary.
+The SDK ships in-memory, SQLite, and Markdown stores for local or inspectable
+replay. Production PG/object-storage backends should live in the runtime or a
+separate adapter package.
 
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; production runtimes should implement

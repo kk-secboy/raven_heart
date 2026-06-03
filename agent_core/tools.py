@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import inspect
 import json
+import re
+import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -740,6 +744,138 @@ class InMemoryToolReplayStore(ToolReplayStorePort):
         }
 
 
+class SQLiteToolReplayStore(ToolReplayStorePort):
+    """SQLite-backed replay store for durable local SDK runs."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init()
+
+    async def load(self, replay_key: str) -> ToolReplayRecord | None:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                """
+                SELECT record_json
+                FROM tool_replay_records
+                WHERE replay_key = ?
+                """,
+                (replay_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _tool_replay_record_from_json(str(row[0] or "{}"))
+
+    async def save(self, record: ToolReplayRecord) -> None:
+        raw = json.dumps(
+            _tool_replay_record_payload(record),
+            default=str,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                INSERT INTO tool_replay_records(replay_key, record_json, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(replay_key) DO UPDATE SET
+                    record_json = excluded.record_json,
+                    created_at = excluded.created_at
+                """,
+                (record.replay_key, raw, record.created_at),
+            )
+            conn.commit()
+
+    async def records(self) -> tuple[ToolReplayRecord, ...]:
+        with sqlite3.connect(self.path) as conn:
+            rows = conn.execute(
+                """
+                SELECT record_json
+                FROM tool_replay_records
+                ORDER BY created_at ASC, replay_key ASC
+                """
+            ).fetchall()
+        return tuple(_tool_replay_record_from_json(str(row[0] or "{}")) for row in rows)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-sqlite-tool-replay-store/v1",
+            "path": str(self.path),
+        }
+
+    def _init(self) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tool_replay_records (
+                    replay_key TEXT PRIMARY KEY,
+                    record_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+
+class MarkdownToolReplayStore(ToolReplayStorePort):
+    """Markdown-backed replay store for inspectable local SDK runs."""
+
+    _START = "<!-- tool-replay-record "
+    _END = " -->"
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    async def load(self, replay_key: str) -> ToolReplayRecord | None:
+        for record in await self.records():
+            if record.replay_key == replay_key:
+                return record
+        return None
+
+    async def save(self, record: ToolReplayRecord) -> None:
+        records = {
+            item.replay_key: item
+            for item in await self.records()
+        }
+        records[record.replay_key] = record
+        self._write(tuple(sorted(records.values(), key=lambda item: (item.created_at, item.replay_key))))
+
+    async def records(self) -> tuple[ToolReplayRecord, ...]:
+        if not self.path.exists():
+            return ()
+        text = self.path.read_text(encoding="utf-8")
+        records: list[ToolReplayRecord] = []
+        for match in _TOOL_REPLAY_MARKDOWN_RE.finditer(text):
+            try:
+                records.append(_tool_replay_record_from_json(_decode_tool_replay_payload(match.group(1))))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+        return tuple(sorted(records, key=lambda item: (item.created_at, item.replay_key)))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-markdown-tool-replay-store/v1",
+            "path": str(self.path),
+        }
+
+    def _write(self, records: tuple[ToolReplayRecord, ...]) -> None:
+        lines = [
+            "# Tool Replay Records",
+            "",
+            "This file is managed by raven_heart. Replay payloads are stored in comments.",
+            "",
+        ]
+        for record in records:
+            raw = _encode_tool_replay_payload(record)
+            lines.append(f"{self._START}{raw}{self._END}")
+            lines.append(f"- replay_key: `{record.replay_key}`")
+            lines.append(f"- tool: `{record.invocation.tool_name}`")
+            lines.append(f"- status: `{record.result.status}`")
+            lines.append("")
+        self.path.write_text("\n".join(lines), encoding="utf-8")
+
+
 class PersistentToolReplay(ToolReplayPort):
     def __init__(self, store: ToolReplayStorePort) -> None:
         self.store = store
@@ -770,6 +906,83 @@ class PersistentToolReplay(ToolReplayPort):
             "record_count": len(records),
             "records": [record.manifest() for record in records],
         }
+
+
+_TOOL_REPLAY_MARKDOWN_RE = re.compile(
+    r"<!--\s*tool-replay-record\s+([A-Za-z0-9+/=]+)\s*-->",
+    re.DOTALL,
+)
+
+
+def _encode_tool_replay_payload(record: ToolReplayRecord) -> str:
+    raw = json.dumps(
+        _tool_replay_record_payload(record),
+        default=str,
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _decode_tool_replay_payload(encoded: str) -> str:
+    return base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+
+
+def _tool_replay_record_payload(record: ToolReplayRecord) -> dict[str, Any]:
+    return {
+        "schema_version": "agent-core-tool-replay-payload/v1",
+        "replay_key": record.replay_key,
+        "created_at": record.created_at,
+        "invocation": {
+            "tool_name": record.invocation.tool_name,
+            "arguments": dict(record.invocation.arguments),
+            "call_id": record.invocation.call_id,
+            "metadata": dict(record.invocation.metadata),
+        },
+        "result": {
+            "call_id": record.result.call_id,
+            "tool_name": record.result.tool_name,
+            "status": record.result.status,
+            "content": record.result.content,
+            "data": dict(record.result.data),
+            "error": record.result.error,
+            "metadata": dict(record.result.metadata),
+        },
+        "metadata": dict(record.metadata),
+    }
+
+
+def _tool_replay_record_from_json(raw: str) -> ToolReplayRecord:
+    payload = json.loads(raw or "{}")
+    if not isinstance(payload, dict):
+        raise ValueError("invalid tool replay payload")
+    invocation_payload = payload.get("invocation")
+    result_payload = payload.get("result")
+    if not isinstance(invocation_payload, dict) or not isinstance(result_payload, dict):
+        raise ValueError("invalid tool replay payload")
+    invocation = ToolInvocation(
+        tool_name=str(invocation_payload.get("tool_name") or ""),
+        arguments=dict(invocation_payload.get("arguments") or {}),
+        call_id=str(invocation_payload.get("call_id") or ""),
+        metadata=dict(invocation_payload.get("metadata") or {}),
+    )
+    result = ToolResult(
+        call_id=str(result_payload.get("call_id") or invocation.call_id),
+        tool_name=str(result_payload.get("tool_name") or invocation.tool_name),
+        status=str(result_payload.get("status") or "completed"),
+        content=str(result_payload.get("content") or ""),
+        data=dict(result_payload.get("data") or {}),
+        error=str(result_payload.get("error") or ""),
+        metadata=dict(result_payload.get("metadata") or {}),
+    )
+    replay_key = str(payload.get("replay_key") or invocation.replay_key())
+    return ToolReplayRecord(
+        replay_key=replay_key,
+        invocation=invocation,
+        result=result,
+        created_at=str(payload.get("created_at") or utc_now_iso()),
+        metadata=dict(payload.get("metadata") or {}),
+    )
 
 
 def _format_tool_inventory_line(spec: ToolSpec) -> str:

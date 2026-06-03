@@ -23,7 +23,9 @@ from agent_core.timeline import TimelineStore
 from agent_core.tools import (
     InMemoryToolReplay,
     InMemoryToolReplayStore,
+    MarkdownToolReplayStore,
     PersistentToolReplay,
+    SQLiteToolReplayStore,
     ToolInvocation,
     ToolRegistry,
     ToolResult,
@@ -383,6 +385,53 @@ async def test_persistent_tool_replay_uses_store_port_and_manifests_records() ->
     assert replayed == result
     assert manifest["schema_version"] == "agent-core-persistent-tool-replay/v1"
     assert manifest["store"]["schema_version"] == "agent-core-in-memory-tool-replay-store/v1"
+    assert manifest["records"][0]["result"]["content_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_tool_replay_store_persists_records_across_instances(tmp_path) -> None:
+    path = tmp_path / "tool_replay.sqlite"
+    invocation = ToolInvocation(tool_name="lookup", arguments={"query": "target"})
+    result = ToolResult(
+        call_id=invocation.call_id,
+        tool_name="lookup",
+        content="found",
+        data={"ok": True},
+    )
+    first = PersistentToolReplay(SQLiteToolReplayStore(path))
+
+    await first.put(invocation, result)
+    second = PersistentToolReplay(SQLiteToolReplayStore(path))
+    replayed = await second.get(invocation)
+    manifest = await second.manifest()
+
+    assert replayed == result
+    assert manifest["store"]["schema_version"] == "agent-core-sqlite-tool-replay-store/v1"
+    assert manifest["record_count"] == 1
+    assert manifest["records"][0]["invocation"]["argument_keys"] == ["query"]
+
+
+@pytest.mark.asyncio
+async def test_markdown_tool_replay_store_persists_records_and_survives_comment_markers(tmp_path) -> None:
+    path = tmp_path / "tool_replay.md"
+    invocation = ToolInvocation(tool_name="lookup", arguments={"query": "target"})
+    result = ToolResult(
+        call_id=invocation.call_id,
+        tool_name="lookup",
+        content="found --> still stored",
+        metadata={"source": "test"},
+    )
+    first = PersistentToolReplay(MarkdownToolReplayStore(path))
+
+    await first.put(invocation, result)
+    second = PersistentToolReplay(MarkdownToolReplayStore(path))
+    replayed = await second.get(invocation)
+    manifest = await second.manifest()
+
+    assert replayed == result
+    assert "found --> still stored" not in path.read_text(encoding="utf-8")
+    assert manifest["store"]["schema_version"] == "agent-core-markdown-tool-replay-store/v1"
+    assert manifest["record_count"] == 1
     assert manifest["records"][0]["result"]["content_sha256"]
 
 

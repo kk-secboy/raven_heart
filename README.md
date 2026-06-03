@@ -167,6 +167,7 @@ reducer while keeping the same core contract.
 - In-memory replay.
 - `ToolReplayRecord` manifests for deterministic replay audit.
 - `ToolReplayStorePort` and `PersistentToolReplay` for pluggable replay storage.
+- In-memory, SQLite, and Markdown replay stores for lightweight SDK use.
 - Invocation manifests hash arguments instead of exposing full argument values.
 
 ### Skills
@@ -203,7 +204,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product knowledge stores |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
-| Tool replay | `ToolReplayStorePort` | In-memory replay store | SQLite, Postgres, object storage, workflow replay DB |
+| Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, workflow replay DB |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, build artifacts |
 | Approvals | `ApprovalStorePort` | Null store, in-memory approval queue | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
