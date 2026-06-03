@@ -153,8 +153,10 @@ from agent_core.planner import (
 from agent_core.prompt import PromptBucket, PromptBucketRole, PromptIR
 from agent_core.prompt import DEFAULT_PROMPT_TRIM_ORDER
 from agent_core.providers import (
+    DefaultLLMProviderCodec,
     LLMCallRecord,
     LLMProviderCenter,
+    LLMProviderCodecPort,
     LLMBudgetExceededError,
     LLMMessage,
     LLMProviderError,
@@ -167,7 +169,9 @@ from agent_core.providers import (
     LLMRetryPolicy,
     LLMStreamEvent,
     LLMUsageLimits,
+    LLMTransportPort,
     RetryHint,
+    TransportLLMProvider,
     UsageInfo,
 )
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
@@ -309,6 +313,7 @@ __all__ = [
     "MarkdownRunTraceStore",
     "NullRunTraceStore",
     "DefaultContextReducer",
+    "DefaultLLMProviderCodec",
     "DefaultTraceEvaluator",
     "EventSinkPort",
     "EventLogPort",
@@ -324,6 +329,7 @@ __all__ = [
     "NullEventSink",
     "DEFAULT_PROMPT_TRIM_ORDER",
     "LLMProviderPort",
+    "LLMProviderCodecPort",
     "LLMCallRecord",
     "LLMProviderCenter",
     "LLMBudgetExceededError",
@@ -337,6 +343,7 @@ __all__ = [
     "LLMRetryPolicy",
     "LLMStreamEvent",
     "LLMUsageLimits",
+    "LLMTransportPort",
     "LoopGuard",
     "LoopGuardConfig",
     "LoopGuardDecision",
@@ -474,6 +481,7 @@ __all__ = [
     "TraceReplayHarness",
     "TraceReplayResult",
     "TraceReplayStep",
+    "TransportLLMProvider",
     "ToolRegistry",
     "ToolResult",
     "ToolRuntimeMount",

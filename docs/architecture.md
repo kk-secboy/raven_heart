@@ -128,6 +128,10 @@ runtime responsibilities.
 failed attempts. The core records provider name, model, attempt, streamed flag,
 usage, retryability, and request shape. Concrete provider clients, credentials,
 rate limits, and vendor-specific response payloads remain runtime-owned.
+`TransportLLMProvider`, `LLMTransportPort`, and `LLMProviderCodecPort` form the
+dependency-free adapter boundary: runtimes can provide a transport and optional
+vendor codec while the SDK keeps provider-neutral request, response, stream, and
+error/retry semantics.
 `LLMRetryPolicy` and `LLMUsageLimits` give the SDK a provider-neutral way to
 describe retry/fallback behavior, call-attempt ceilings, token ceilings, and
 cost ceilings. Runtime code can derive these policies from tenants, tasks, or

@@ -7,6 +7,7 @@ from agent_core.config import RuntimeBudget
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.prompt import PromptIR
 from agent_core.providers import (
+    DefaultLLMProviderCodec,
     LLMCallRecord,
     LLMBudgetExceededError,
     LLMMessage,
@@ -19,6 +20,7 @@ from agent_core.providers import (
     LLMStreamEvent,
     LLMUsageLimits,
     RetryHint,
+    TransportLLMProvider,
     UsageInfo,
 )
 from agent_core.react import ReActConfig, ReActExecutor
@@ -89,6 +91,37 @@ class _StreamingCostProvider:
         yield LLMStreamEvent(type="message_end")
 
 
+class _DictTransport:
+    def __init__(
+        self,
+        *,
+        response: dict | None = None,
+        events: tuple[dict, ...] = (),
+        error: Exception | None = None,
+    ) -> None:
+        self.response = response or {}
+        self.events = events
+        self.error = error
+        self.complete_payloads: list[dict] = []
+        self.stream_payloads: list[dict] = []
+
+    async def complete(self, payload: dict) -> dict:
+        self.complete_payloads.append(payload)
+        if self.error is not None:
+            raise self.error
+        return dict(self.response)
+
+    async def stream(self, payload: dict):
+        self.stream_payloads.append(payload)
+        if self.error is not None:
+            raise self.error
+        for event in self.events:
+            yield dict(event)
+
+    def manifest(self) -> dict:
+        return {"schema_version": "test-dict-transport/v1"}
+
+
 @pytest.mark.asyncio
 async def test_provider_center_routes_by_default_provider_and_model() -> None:
     fast = MockLLMProvider([{"action": "finish", "arguments": {"output": "fast"}}])
@@ -154,6 +187,89 @@ def test_provider_center_search_manifest_and_missing_provider() -> None:
 
     with pytest.raises(LLMProviderNotFoundError):
         center.select(LLMRequest(messages=[], metadata={"provider": "missing"}))
+
+
+@pytest.mark.asyncio
+async def test_transport_llm_provider_encodes_request_and_decodes_response() -> None:
+    transport = _DictTransport(
+        response={
+            "content": "ok",
+            "action": {"action": "finish", "arguments": {"output": "ok"}},
+            "usage": {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5, "cost_usd": 0.01},
+            "finish_reason": "stop",
+            "metadata": {"raw_id": "resp-1"},
+        }
+    )
+    provider = TransportLLMProvider(transport, name="dict")
+
+    response = await provider.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="task", name="u")],
+            model="dict-mini",
+            temperature=0.1,
+            metadata={"request_id": "r1"},
+        )
+    )
+    manifest = provider.manifest()
+
+    assert transport.complete_payloads[0]["schema_version"] == "agent-core-llm-transport-request/v1"
+    assert transport.complete_payloads[0]["messages"][0]["content"] == "task"
+    assert transport.complete_payloads[0]["metadata"]["request_id"] == "r1"
+    assert response.content == "ok"
+    assert response.action == {"action": "finish", "arguments": {"output": "ok"}}
+    assert response.usage.total_tokens == 5
+    assert response.metadata["transport_provider"] == "dict"
+    assert manifest["codec"]["schema_version"] == "agent-core-default-llm-provider-codec/v1"
+    assert manifest["transport"]["schema_version"] == "test-dict-transport/v1"
+
+
+@pytest.mark.asyncio
+async def test_transport_llm_provider_streams_and_maps_payload_errors() -> None:
+    transport = _DictTransport(
+        events=(
+            {"type": "delta", "delta": "hello"},
+            {"type": "usage", "usage": {"total_tokens": 4}},
+            {"type": "message_end"},
+        )
+    )
+    provider = TransportLLMProvider(transport, name="dict")
+
+    events = [event async for event in provider.stream(LLMRequest(messages=[]))]
+
+    assert [event.type for event in events] == ["delta", "usage", "message_end"]
+    assert events[0].metadata["transport_provider"] == "dict"
+    assert events[1].usage is not None
+    assert events[1].usage.total_tokens == 4
+
+    failing = TransportLLMProvider(
+        _DictTransport(response={"error": {"message": "rate limited", "retryable": True, "after_seconds": 1}})
+    )
+    with pytest.raises(LLMProviderError) as exc_info:
+        await failing.complete(LLMRequest(messages=[]))
+
+    assert exc_info.value.retry_hint.retryable is True
+    assert exc_info.value.retry_hint.after_seconds == 1.0
+
+
+@pytest.mark.asyncio
+async def test_transport_llm_provider_works_with_provider_center_retries() -> None:
+    primary = TransportLLMProvider(
+        _DictTransport(response={"error": {"message": "temporary", "retryable": True}}),
+        name="primary",
+    )
+    fallback_transport = _DictTransport(response={"content": "fallback"})
+    fallback = TransportLLMProvider(fallback_transport, name="fallback")
+    center = LLMProviderCenter(default_provider="primary", max_retries=1)
+    center.register("primary", primary, priority=10)
+    center.register("fallback", fallback, default_model="fallback-mini", priority=1)
+
+    response = await center.complete(LLMRequest(messages=[]))
+
+    assert response.content == "fallback"
+    assert [call.status for call in center.calls] == ["failed", "failed", "completed"]
+    assert center.calls[0].retryable is True
+    assert fallback_transport.complete_payloads[0]["model"] == "fallback-mini"
+    assert DefaultLLMProviderCodec().manifest()["schema_version"] == "agent-core-default-llm-provider-codec/v1"
 
 
 @pytest.mark.asyncio

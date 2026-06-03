@@ -239,6 +239,8 @@ reducer while keeping the same core contract.
 ### LLM Providers
 
 - `LLMProviderPort` protocol.
+- `LLMTransportPort`, `LLMProviderCodecPort`, `DefaultLLMProviderCodec`, and
+  `TransportLLMProvider` for dependency-free provider adapter contracts.
 - Provider registry and routing.
 - `LLMRetryPolicy` for retry/fallback behavior.
 - `LLMUsageLimits` for cost, call-attempt, and token budgets.
@@ -248,6 +250,10 @@ reducer while keeping the same core contract.
 - Provider call audit records for completed and failed attempts.
 - Stream error events are treated as failed attempts for retry/fallback audit.
 - Streaming attempts are budget-checked before events are emitted by the center.
+
+Concrete clients for OpenAI, Anthropic, local models, gateways, credentials, and
+vendor rate limits live in runtimes or adapter packages. `agent_core` owns the
+provider-neutral request/response/stream shapes and error/retry mapping.
 
 ### Tools
 
@@ -445,6 +451,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Harness/ReAct core | MVP implemented |
 | Provider center | MVP implemented |
 | Provider call audit | MVP implemented |
+| Provider transport contract | MVP implemented |
 | Trace correlation | MVP implemented |
 | Tool center | MVP implemented |
 | Tool replay store | MVP implemented |

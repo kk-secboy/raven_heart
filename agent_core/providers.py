@@ -190,6 +190,148 @@ class LLMProviderPort(Protocol):
         raise NotImplementedError
 
 
+class LLMProviderCodecPort(Protocol):
+    """Convert provider-neutral requests/responses to transport payloads."""
+
+    def encode_request(self, request: LLMRequest) -> dict[str, Any]:
+        """Return a transport-safe request payload."""
+
+    def decode_response(self, payload: dict[str, Any]) -> LLMResponse:
+        """Return a provider-neutral response."""
+
+    def decode_stream_event(self, payload: dict[str, Any]) -> LLMStreamEvent:
+        """Return a provider-neutral stream event."""
+
+
+class LLMTransportPort(Protocol):
+    """Transport boundary implemented by runtime/provider adapter packages."""
+
+    async def complete(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return one response payload."""
+
+    async def stream(self, payload: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        """Yield stream event payloads."""
+        raise NotImplementedError
+
+
+class DefaultLLMProviderCodec:
+    """Dependency-free codec for simple dict-based provider transports."""
+
+    def encode_request(self, request: LLMRequest) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-transport-request/v1",
+            "model": request.model,
+            "temperature": request.temperature,
+            "max_output_tokens": request.max_output_tokens,
+            "messages": [
+                {
+                    "role": message.role,
+                    "content": message.content,
+                    "name": message.name,
+                    "metadata": dict(message.metadata),
+                }
+                for message in request.messages
+            ],
+            "metadata": dict(request.metadata),
+        }
+
+    def decode_response(self, payload: dict[str, Any]) -> LLMResponse:
+        error = _provider_error_from_payload(payload)
+        if error is not None:
+            raise error
+        usage = _usage_from_payload(payload.get("usage"))
+        action = payload.get("action")
+        return LLMResponse(
+            content=str(payload.get("content") or ""),
+            action=dict(action) if isinstance(action, dict) else None,
+            usage=usage,
+            finish_reason=str(payload.get("finish_reason") or ""),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+    def decode_stream_event(self, payload: dict[str, Any]) -> LLMStreamEvent:
+        usage_payload = payload.get("usage")
+        action = payload.get("action")
+        return LLMStreamEvent(
+            type=_stream_event_type(str(payload.get("type") or "delta")),
+            delta=str(payload.get("delta") or ""),
+            action=dict(action) if isinstance(action, dict) else None,
+            usage=_usage_from_payload(usage_payload) if usage_payload is not None else None,
+            error=str(payload.get("error") or ""),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {"schema_version": "agent-core-default-llm-provider-codec/v1"}
+
+
+class TransportLLMProvider(LLMProviderPort):
+    """LLM provider backed by a runtime-supplied transport and codec."""
+
+    def __init__(
+        self,
+        transport: LLMTransportPort,
+        *,
+        codec: LLMProviderCodecPort | None = None,
+        name: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.transport = transport
+        self.codec = codec or DefaultLLMProviderCodec()
+        self.name = name
+        self.metadata = dict(metadata or {})
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        payload = self.codec.encode_request(request)
+        try:
+            raw = await self.transport.complete(payload)
+            response = self.codec.decode_response(raw)
+        except LLMProviderError:
+            raise
+        except Exception as exc:
+            raise LLMProviderError(str(exc), retry_hint=_retry_hint_from_exception(exc)) from exc
+        return replace(
+            response,
+            metadata={
+                **response.metadata,
+                "transport_provider": self.name,
+            },
+        )
+
+    async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
+        payload = self.codec.encode_request(request)
+        try:
+            async for raw in self.transport.stream(payload):
+                event = self.codec.decode_stream_event(raw)
+                if event.type == "error":
+                    raise LLMProviderError(
+                        event.error or "provider stream error",
+                        retry_hint=_retry_hint_from_stream_event(event),
+                    )
+                yield replace(
+                    event,
+                    metadata={
+                        **event.metadata,
+                        "transport_provider": self.name,
+                    },
+                )
+        except LLMProviderError:
+            raise
+        except Exception as exc:
+            raise LLMProviderError(str(exc), retry_hint=_retry_hint_from_exception(exc)) from exc
+
+    def manifest(self) -> dict[str, Any]:
+        codec_manifest = getattr(self.codec, "manifest", None)
+        transport_manifest = getattr(self.transport, "manifest", None)
+        return {
+            "schema_version": "agent-core-transport-llm-provider/v1",
+            "name": self.name,
+            "codec": codec_manifest() if callable(codec_manifest) else {},
+            "transport": transport_manifest() if callable(transport_manifest) else {},
+            "metadata": dict(self.metadata),
+        }
+
+
 @dataclass(frozen=True)
 class LLMProviderSpec:
     name: str
@@ -728,6 +870,57 @@ def _retry_hint_from_stream_event(event: LLMStreamEvent) -> RetryHint:
         after_seconds=_optional_float(event.metadata.get("after_seconds")),
         reason=str(event.metadata.get("reason") or event.error or ""),
     )
+
+
+def _retry_hint_from_exception(exc: Exception) -> RetryHint:
+    retry_hint = getattr(exc, "retry_hint", None)
+    if isinstance(retry_hint, RetryHint):
+        return retry_hint
+    retryable = bool(getattr(exc, "retryable", False))
+    after_seconds = _optional_float(getattr(exc, "after_seconds", None))
+    return RetryHint(retryable=retryable, after_seconds=after_seconds, reason=str(exc))
+
+
+def _provider_error_from_payload(payload: dict[str, Any]) -> LLMProviderError | None:
+    error = payload.get("error")
+    if not error:
+        return None
+    if isinstance(error, dict):
+        message = str(error.get("message") or error.get("error") or "provider error")
+        retryable = bool(error.get("retryable", False))
+        after_seconds = _optional_float(error.get("after_seconds"))
+        reason = str(error.get("reason") or message)
+    else:
+        message = str(error)
+        retryable = bool(payload.get("retryable", False))
+        after_seconds = _optional_float(payload.get("after_seconds"))
+        reason = str(payload.get("reason") or message)
+    return LLMProviderError(
+        message,
+        retry_hint=RetryHint(
+            retryable=retryable,
+            after_seconds=after_seconds,
+            reason=reason,
+        ),
+    )
+
+
+def _usage_from_payload(payload: Any) -> UsageInfo:
+    if not isinstance(payload, dict):
+        return UsageInfo()
+    return UsageInfo(
+        input_tokens=_metadata_int(payload, "input_tokens"),
+        output_tokens=_metadata_int(payload, "output_tokens"),
+        total_tokens=_metadata_int(payload, "total_tokens"),
+        cost_usd=float(payload.get("cost_usd") or 0.0),
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _stream_event_type(value: str) -> Literal["message_start", "delta", "action", "usage", "error", "message_end"]:
+    if value not in {"message_start", "delta", "action", "usage", "error", "message_end"}:
+        raise LLMProviderError(f"invalid stream event type: {value}")
+    return value  # type: ignore[return-value]
 
 
 def _optional_float(value: Any) -> float | None:
