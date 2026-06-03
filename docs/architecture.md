@@ -140,9 +140,11 @@ prompt metadata.
 
 `PlannerPort` is a core contract because plan state, dependency readiness,
 updates, and manifests are reusable across agent domains. The core only ships a
-lightweight `InMemoryPlanner`; Raven-specific decomposition, code repair plans,
-approval flows, and durable planner storage should live in a runtime or adapter
-package that implements the same port.
+lightweight `InMemoryPlanner` plus `PlanExecutor` for sequential ready-step
+execution through `AgentSessionManager`. Raven-specific decomposition, code
+repair plans, approval flows, concurrent/distributed scheduling, and durable
+planner storage should live in a runtime or adapter package that implements the
+same ports.
 
 `ApprovalStorePort` is a core contract for human-in-loop pauses. Policies can
 produce `ApprovalRequest` manifests; ReAct execution records them as

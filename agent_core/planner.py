@@ -6,9 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from agent_core.runner import AgentRunOutcome, AgentRunRequest, AgentSessionManager
+
 
 PlanStepStatus = Literal["pending", "running", "completed", "failed", "skipped"]
 TERMINAL_PLAN_STEP_STATUSES = frozenset({"completed", "failed", "skipped"})
+PlanExecutionStatus = Literal["completed", "failed", "blocked", "max_steps"]
 
 
 @dataclass(frozen=True)
@@ -87,6 +90,163 @@ class PlannerPort(Protocol):
 
     async def update_plan(self, update: PlanUpdate) -> Plan:
         """Apply a plan update and return the latest plan."""
+
+
+@dataclass(frozen=True)
+class PlanExecutionStep:
+    plan_id: str
+    step_id: str
+    session_name: str
+    status: PlanStepStatus
+    run_id: str = ""
+    output: str = ""
+    error: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-plan-execution-step/v1",
+            "plan_id": self.plan_id,
+            "step_id": self.step_id,
+            "session_name": self.session_name,
+            "status": self.status,
+            "run_id": self.run_id,
+            "output_bytes": len(self.output.encode("utf-8")),
+            "error": self.error,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class PlanExecutionReport:
+    plan: Plan
+    status: PlanExecutionStatus
+    steps: tuple[PlanExecutionStep, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-plan-execution-report/v1",
+            "status": self.status,
+            "plan": self.plan.manifest(),
+            "steps": [step.manifest() for step in self.steps],
+            "metadata": dict(self.metadata),
+        }
+
+
+class PlanExecutor:
+    """Execute ready plan steps through `AgentSessionManager` sessions."""
+
+    def __init__(
+        self,
+        *,
+        planner: PlannerPort,
+        manager: AgentSessionManager,
+        default_session: str,
+        max_steps: int = 32,
+    ) -> None:
+        if not default_session.strip():
+            raise ValueError("default_session is required")
+        self.planner = planner
+        self.manager = manager
+        self.default_session = default_session
+        self.max_steps = max(1, max_steps)
+        self.reports: list[PlanExecutionReport] = []
+
+    async def execute(
+        self,
+        goal: str,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> PlanExecutionReport:
+        plan = await self.planner.create_plan(goal, context)
+        records: list[PlanExecutionStep] = []
+        executed = 0
+        while not plan.terminal():
+            if executed >= self.max_steps:
+                report = PlanExecutionReport(
+                    plan=plan,
+                    status="max_steps",
+                    steps=tuple(records),
+                    metadata={"max_steps": self.max_steps},
+                )
+                self.reports.append(report)
+                return report
+            ready = plan.ready_steps()
+            if not ready:
+                report = PlanExecutionReport(
+                    plan=plan,
+                    status="blocked",
+                    steps=tuple(records),
+                    metadata={"reason": "no ready pending steps"},
+                )
+                self.reports.append(report)
+                return report
+            for step in ready:
+                if executed >= self.max_steps:
+                    break
+                plan = await self.planner.update_plan(PlanUpdate(plan.plan_id, step.step_id, status="running"))
+                record = await self._execute_step(plan, step)
+                records.append(record)
+                executed += 1
+                plan = await self.planner.update_plan(
+                    PlanUpdate(
+                        plan.plan_id,
+                        step.step_id,
+                        status=record.status,
+                        note=record.error,
+                        metadata={
+                            "session_name": record.session_name,
+                            "run_id": record.run_id,
+                            **dict(record.metadata),
+                        },
+                    )
+                )
+                if record.status == "failed":
+                    report = PlanExecutionReport(
+                        plan=plan,
+                        status="failed",
+                        steps=tuple(records),
+                        metadata={"failed_step_id": step.step_id},
+                    )
+                    self.reports.append(report)
+                    return report
+        report = PlanExecutionReport(plan=plan, status="completed", steps=tuple(records))
+        self.reports.append(report)
+        return report
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-plan-executor/v1",
+            "default_session": self.default_session,
+            "max_steps": self.max_steps,
+            "reports": [report.manifest() for report in self.reports],
+        }
+
+    async def _execute_step(self, plan: Plan, step: PlanStep) -> PlanExecutionStep:
+        session_name = str(step.metadata.get("session_name") or self.default_session)
+        try:
+            outcome = await self.manager.run(
+                session_name,
+                AgentRunRequest(
+                    task=step.goal,
+                    metadata={
+                        "plan_id": plan.plan_id,
+                        "plan_goal": plan.goal,
+                        "step_id": step.step_id,
+                        **dict(step.metadata),
+                    },
+                ),
+            )
+        except Exception as exc:
+            return PlanExecutionStep(
+                plan_id=plan.plan_id,
+                step_id=step.step_id,
+                session_name=session_name,
+                status="failed",
+                error=str(exc),
+            )
+        return _execution_step_from_outcome(plan, step, session_name, outcome)
 
 
 class InMemoryPlanner(PlannerPort):
@@ -205,4 +365,28 @@ def _step_status(value: str) -> PlanStepStatus:
     if value not in {"pending", "running", *TERMINAL_PLAN_STEP_STATUSES}:
         raise ValueError(f"invalid plan step status: {value}")
     return value  # type: ignore[return-value]
+
+
+def _execution_step_from_outcome(
+    plan: Plan,
+    step: PlanStep,
+    session_name: str,
+    outcome: AgentRunOutcome,
+) -> PlanExecutionStep:
+    result = outcome.result
+    status: PlanStepStatus = "completed" if result.status == "completed" else "failed"
+    return PlanExecutionStep(
+        plan_id=plan.plan_id,
+        step_id=step.step_id,
+        session_name=session_name,
+        status=status,
+        run_id=result.run_id,
+        output=result.output,
+        error="" if status == "completed" else result.output,
+        metadata={
+            "result_status": result.status,
+            "iterations": result.iterations,
+            "trace_run_id": outcome.trace_manifest.get("run", {}).get("run_id", ""),
+        },
+    )
 

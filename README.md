@@ -293,12 +293,16 @@ PG, graph memory, multi-tenant isolation, retention policy, or product audit.
 - `Plan`, `PlanStep`, and `PlanUpdate` state contracts.
 - `InMemoryPlanner` for tests, examples, and lightweight embeddings.
 - Dependency-aware ready-step selection.
+- `PlanExecutor` for sequential ready-step execution through `AgentSessionManager`.
+- `PlanExecutionReport` and `PlanExecutionStep` manifests for audit.
 - Manifest export with terminal state, ready steps, and status counts.
 
-The SDK owns generic plan state and update semantics. Runtimes own the actual
-planning strategy: Raven can produce pentest plans, a code agent can produce
-repair plans, and an ops agent can produce incident response plans while all of
-them reuse the same core contract.
+The SDK owns generic plan state, update semantics, and sequential step execution.
+Runtimes own the actual planning strategy: Raven can produce pentest plans, a
+code agent can produce repair plans, and an ops agent can produce incident
+response plans while all of them reuse the same core contract. Runtime code also
+owns distributed scheduling, concurrent execution, retry policy, and business
+workflow rules.
 
 ### Prompt Buckets
 

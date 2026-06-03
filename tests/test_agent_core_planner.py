@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from agent_core import InMemoryPlanner, PlanUpdate
+from agent_core import InMemoryPlanner, PlanExecutor, PlanUpdate
+from agent_core.config import AgentProfile
+from agent_core.runner import AgentSession, AgentSessionManager
+from agent_core.testing import MockLLMProvider, MockToolRuntime
 
 
 @pytest.mark.asyncio
@@ -83,3 +86,138 @@ async def test_in_memory_planner_rejects_invalid_inputs() -> None:
 
     with pytest.raises(KeyError, match="unknown plan"):
         planner.get("missing")
+
+
+@pytest.mark.asyncio
+async def test_plan_executor_runs_ready_steps_and_updates_dependencies() -> None:
+    planner = InMemoryPlanner()
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="worker"),
+            provider=MockLLMProvider(
+                [
+                    {"action": "finish", "arguments": {"output": "audit done"}},
+                    {"action": "finish", "arguments": {"output": "implement done"}},
+                ]
+            ),
+            tools=MockToolRuntime(),
+        )
+    )
+    executor = PlanExecutor(planner=planner, manager=manager, default_session="worker")
+
+    report = await executor.execute(
+        "ship sdk",
+        context={
+            "plan_id": "plan-1",
+            "steps": [
+                {"step_id": "audit", "goal": "Audit core"},
+                {"step_id": "implement", "goal": "Implement core", "depends_on": ["audit"]},
+            ],
+        },
+    )
+
+    assert report.status == "completed"
+    assert [step.step_id for step in report.steps] == ["audit", "implement"]
+    assert report.plan.status_counts() == {"completed": 2}
+    assert {run.metadata["step_id"] for run in manager.runs()} == {"audit", "implement"}
+    assert executor.manifest()["reports"][0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_plan_executor_uses_step_session_metadata() -> None:
+    planner = InMemoryPlanner()
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="default"),
+            provider=MockLLMProvider([{"action": "finish", "arguments": {"output": "default"}}]),
+            tools=MockToolRuntime(),
+        )
+    )
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="specialist"),
+            provider=MockLLMProvider([{"action": "finish", "arguments": {"output": "specialist"}}]),
+            tools=MockToolRuntime(),
+        )
+    )
+
+    report = await PlanExecutor(
+        planner=planner,
+        manager=manager,
+        default_session="default",
+    ).execute(
+        "delegate",
+        context={
+            "steps": [
+                {
+                    "step_id": "special",
+                    "goal": "Use specialist",
+                    "metadata": {"session_name": "specialist"},
+                }
+            ]
+        },
+    )
+
+    assert report.status == "completed"
+    assert report.steps[0].session_name == "specialist"
+    assert report.steps[0].output == "specialist"
+
+
+@pytest.mark.asyncio
+async def test_plan_executor_marks_failed_step_when_agent_run_fails() -> None:
+    planner = InMemoryPlanner()
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="worker"),
+            provider=MockLLMProvider([{"action": "finish", "arguments": {"output": "ok"}}]),
+            tools=MockToolRuntime(),
+        )
+    )
+
+    failed = await PlanExecutor(
+        planner=planner,
+        manager=manager,
+        default_session="missing",
+    ).execute("fail plan", context={"steps": ["single"], "plan_id": "p"})
+
+    assert failed.status == "failed"
+    assert failed.steps[0].status == "failed"
+    assert "unknown session" in failed.steps[0].error
+    assert failed.plan.status_counts() == {"failed": 1}
+
+
+@pytest.mark.asyncio
+async def test_plan_executor_reports_blocked_plan_without_ready_steps() -> None:
+    planner = InMemoryPlanner()
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="worker"),
+            provider=MockLLMProvider([]),
+            tools=MockToolRuntime(),
+        )
+    )
+
+    report = await PlanExecutor(
+        planner=planner,
+        manager=manager,
+        default_session="worker",
+    ).execute(
+        "blocked",
+        context={
+            "plan_id": "blocked",
+            "steps": [
+                {
+                    "step_id": "pending",
+                    "goal": "Wait for missing dependency",
+                    "depends_on": ["missing"],
+                }
+            ],
+        },
+    )
+
+    assert report.status == "blocked"
+    assert report.metadata["reason"] == "no ready pending steps"
