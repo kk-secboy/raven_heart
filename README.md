@@ -139,6 +139,8 @@ agent_core never imports runtime
 - Request-level timeout handling through `AgentRunRequest.timeout_seconds`.
 - Timeout checkpoints, `run_timeout` events, and traceable interrupt manifests
   for provider/tool await boundaries.
+- Provider-native tool calling can be enabled per session or per request through
+  `AgentSession.native_tool_calls` and `AgentRunRequest.native_tool_calls`.
 
 ### Multi-Agent Handoff
 

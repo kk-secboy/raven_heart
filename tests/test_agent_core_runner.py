@@ -11,7 +11,7 @@ from agent_core.harness import InMemoryAgentJournal
 from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
 from agent_core.mcp import MCPCenter, MCPServerSpec
 from agent_core.providers import LLMProviderCenter
-from agent_core.providers import LLMRequest, LLMResponse
+from agent_core.providers import LLMRequest, LLMResponse, LLMToolCall
 from agent_core.prompt import PromptBucketBudgetPolicy, PromptBucketBudgetRule, PromptBucketRole
 from agent_core.reducer import DefaultContextReducer
 from agent_core.runner import (
@@ -120,6 +120,69 @@ async def test_agent_runner_executes_react_with_profile_context_and_manifest() -
     assert outcome.trace_manifest["summary"]["memory_search_hit_count"] == 1
     assert outcome.trace_manifest["memory_search"]["hits"][0]["content_sha256"]
     assert journal.finished[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_can_enable_provider_native_tool_calls_per_request() -> None:
+    provider = MockLLMProvider(
+        [
+            LLMResponse(
+                content="checking",
+                tool_calls=(
+                    LLMToolCall(
+                        tool_name="lookup",
+                        arguments={"query": "target"},
+                        call_id="call-1",
+                    ),
+                ),
+            ),
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    center = LLMProviderCenter(default_provider="mock")
+    center.register("mock", provider, default_model="mock-mini")
+    tools = MockToolRuntime({"lookup": "found"})
+    session = AgentSession(
+        profile=AgentProfile(name="native-tools", model="mock-mini"),
+        provider=center,
+        tools=tools,
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(task="inspect", native_tool_calls=True)
+    )
+
+    assert outcome.result.status == "completed"
+    assert provider.requests[0].tools[0].name == "lookup"
+    assert provider.requests[0].tool_choice is not None
+    assert provider.requests[1].messages[-1].role == "tool"
+    assert provider.requests[1].messages[-1].content == "found"
+    assert tools.invocations[0].call_id == "call-1"
+    assert tools.invocations[0].arguments == {"query": "target"}
+    assert outcome.trace_manifest["metadata"]["native_tool_calls"] is True
+    assert center.calls[0].metadata["response"]["tool_call_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_native_tool_call_session_default_can_be_overridden() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="native-default"),
+        provider=provider,
+        tools=MockToolRuntime({"lookup": "found"}),
+        native_tool_calls=True,
+    )
+
+    default_outcome = await AgentRunner(session).run("default native")
+    override_outcome = await AgentRunner(session).run(
+        AgentRunRequest(task="override native", native_tool_calls=False)
+    )
+
+    assert default_outcome.session_manifest["native_tool_calls"] is True
+    assert default_outcome.trace_manifest["metadata"]["native_tool_calls"] is True
+    assert provider.requests[0].tools[0].name == "lookup"
+    assert override_outcome.trace_manifest["metadata"]["native_tool_calls"] is False
+    assert provider.requests[1].tools == ()
 
 
 @pytest.mark.asyncio

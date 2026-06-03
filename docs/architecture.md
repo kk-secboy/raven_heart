@@ -208,6 +208,9 @@ calls through the same policy, approval, replay, retry, and tool-result
 compaction boundaries used by JSON ReAct actions, then appends provider-neutral
 `role=tool` messages for the next turn. This keeps OpenAI-compatible tool calls,
 Anthropic tool use, and local model function calling behind the same core loop.
+`AgentSession.native_tool_calls` and `AgentRunRequest.native_tool_calls` expose
+that mode at the runner boundary so consuming runtimes can enable it by default
+or roll it out per request without bypassing `AgentRunner`.
 `LLMContentPart` extends `LLMMessage` beyond a single text field while keeping
 the same boundary. The core can represent text, JSON, image, audio, file, and
 binary parts and route them through declared `modalities`; runtimes still own

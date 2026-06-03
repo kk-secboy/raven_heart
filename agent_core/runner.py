@@ -80,6 +80,7 @@ class AgentSession:
     loop_guard: LoopGuard | None = None
     artifact_store: ArtifactStorePort | None = None
     cancel_token: CancelToken = field(default_factory=CancelToken)
+    native_tool_calls: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def reset_cancel_token(self) -> None:
@@ -120,6 +121,7 @@ class AgentSession:
             "event_log": _component_manifest_sync(self.event_sink),
             "trace_store": _component_manifest_sync(self.trace_store),
             "artifact_store": _component_manifest_sync(self.artifact_store),
+            "native_tool_calls": self.native_tool_calls,
             "context_reducer": _context_reducer_manifest(self.context_reducer),
             "context_injection_policy": self.context_injection_policy.manifest(),
             "prompt_bucket_budget_policy": _prompt_bucket_budget_policy_manifest(
@@ -140,6 +142,7 @@ class AgentRunRequest:
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
     timeout_seconds: float | None = None
+    native_tool_calls: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,7 @@ class AgentResumeRequest:
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
     timeout_seconds: float | None = None
+    native_tool_calls: bool | None = None
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -166,6 +170,7 @@ class AgentResumeRequest:
             "has_approval_resume": self.approval_resume is not None,
             "has_structured_output": self.structured_output is not None,
             "timeout_seconds": self.timeout_seconds,
+            "native_tool_calls": self.native_tool_calls,
         }
 
 
@@ -562,6 +567,7 @@ class AgentRunner:
             run_request.approval_resume,
             run_request.structured_output,
             run_request.timeout_seconds,
+            run_request.native_tool_calls,
         )
         result = await executor.run(run_request.task, prompt)
         session_manifest = self.session.manifest()
@@ -800,8 +806,14 @@ class AgentRunner:
         approval_resume: ApprovalResumeContext | None = None,
         structured_output: StructuredOutputSpec | None = None,
         timeout_seconds: float | None = None,
+        native_tool_calls: bool | None = None,
     ) -> ReActExecutor:
         budget = self.session.profile.budget
+        effective_native_tool_calls = (
+            self.session.native_tool_calls
+            if native_tool_calls is None
+            else bool(native_tool_calls)
+        )
         return ReActExecutor(
             provider=self.session.provider,
             tool_runtime=self.session.tools,
@@ -827,6 +839,7 @@ class AgentRunner:
                 budget=budget,
                 structured_output=structured_output,
                 timeout_seconds=timeout_seconds,
+                native_tool_calls=effective_native_tool_calls,
             ),
         )
 
@@ -865,9 +878,15 @@ class AgentRunner:
                 "profile": self.session.profile.name,
                 "request_metadata": dict(request.metadata),
                 "prompt_trim": dict(prompt_manifest.get("metadata", {}).get("trim") or {}),
+                "native_tool_calls": self._native_tool_calls_for_request(request),
             },
         )
         return bundle.manifest()
+
+    def _native_tool_calls_for_request(self, request: AgentRunRequest) -> bool:
+        if request.native_tool_calls is None:
+            return self.session.native_tool_calls
+        return bool(request.native_tool_calls)
 
     def _journal_replay_manifest(self, run_id: str) -> dict[str, Any]:
         snapshot = getattr(self.session.harness, "snapshot", None)
@@ -1408,6 +1427,7 @@ def _run_request_from_resume(
         approval_resume=request.approval_resume,
         structured_output=request.structured_output,
         timeout_seconds=request.timeout_seconds,
+        native_tool_calls=request.native_tool_calls,
     )
 
 
