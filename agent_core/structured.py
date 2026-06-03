@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from agent_core.schema import validate_json_schema_subset
+
 
 @dataclass(frozen=True)
 class StructuredOutputSpec:
@@ -94,14 +96,23 @@ class JsonStructuredOutputValidator:
                     error=f"output is not valid JSON: {exc.msg}",
                 )
             value = extracted
-        error = _validate_schema(value, spec.schema, path="$")
-        if error:
-            return StructuredOutputResult(ok=False, raw_output=output, value=value, error=error)
+        validation = validate_json_schema_subset(value, spec.schema, schema_name=spec.name)
+        if not validation.ok:
+            return StructuredOutputResult(
+                ok=False,
+                raw_output=output,
+                value=value,
+                error=validation.error,
+                metadata={"schema_validation": validation.manifest()},
+            )
         return StructuredOutputResult(
             ok=True,
             raw_output=output,
             value=value,
-            metadata={"schema_name": spec.name},
+            metadata={
+                "schema_name": spec.name,
+                "schema_validation": validation.manifest(),
+            },
         )
 
     def manifest(self) -> dict[str, Any]:
@@ -131,52 +142,3 @@ def _extract_json_value(text: str) -> Any | None:
             continue
         return value
     return None
-
-
-def _validate_schema(value: Any, schema: dict[str, Any], *, path: str) -> str:
-    expected = schema.get("type")
-    if expected:
-        type_error = _validate_type(value, str(expected), path)
-        if type_error:
-            return type_error
-    if isinstance(value, dict):
-        required = schema.get("required") or ()
-        for key in required:
-            if key not in value:
-                return f"{path}.{key} is required"
-        properties = schema.get("properties") or {}
-        for key, prop_schema in properties.items():
-            if key in value and isinstance(prop_schema, dict):
-                error = _validate_schema(value[key], prop_schema, path=f"{path}.{key}")
-                if error:
-                    return error
-    if isinstance(value, list):
-        item_schema = schema.get("items")
-        if isinstance(item_schema, dict):
-            for index, item in enumerate(value):
-                error = _validate_schema(item, item_schema, path=f"{path}[{index}]")
-                if error:
-                    return error
-    return ""
-
-
-def _validate_type(value: Any, expected: str, path: str) -> str:
-    type_map = {
-        "string": str,
-        "integer": int,
-        "number": (int, float),
-        "boolean": bool,
-        "object": dict,
-        "array": list,
-        "null": type(None),
-    }
-    py_type = type_map.get(expected)
-    if py_type is None:
-        return ""
-    if expected == "integer" and isinstance(value, bool):
-        return f"{path} must be integer, got boolean"
-    if expected == "number" and isinstance(value, bool):
-        return f"{path} must be number, got boolean"
-    if not isinstance(value, py_type):
-        return f"{path} must be {expected}, got {type(value).__name__}"
-    return ""

@@ -60,6 +60,22 @@ async def test_react_repairs_invalid_structured_finish_output() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_output_result_contains_schema_validation_manifest() -> None:
+    validator = JsonStructuredOutputValidator()
+    spec = StructuredOutputSpec(name="risk_summary", schema=_answer_schema())
+
+    result = await validator.validate('{"summary":"done","risk":2}', spec)
+    failed = await validator.validate('{"summary":"done"}', spec)
+
+    assert result.ok
+    assert result.metadata["schema_validation"]["schema_name"] == "risk_summary"
+    assert result.metadata["schema_validation"]["ok"] is True
+    assert not failed.ok
+    assert failed.error == "$.risk is required"
+    assert failed.metadata["schema_validation"]["issues"][0]["code"] == "required_missing"
+
+
+@pytest.mark.asyncio
 async def test_react_fails_when_structured_output_repairs_are_exhausted() -> None:
     provider = MockLLMProvider(
         [

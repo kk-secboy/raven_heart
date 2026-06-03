@@ -64,6 +64,10 @@ Structured output is intentionally contract-based rather than provider-specific.
 the schema into prompt context, and `ReActExecutor` validates `finish.output`.
 Invalid output becomes repair feedback inside the ReAct loop. Runtime code owns
 the domain schema, typed object mapping, and downstream storage.
+The shared `validate_json_schema_subset()` contract returns prompt-safe
+`SchemaValidationResult` manifests and is also used by action argument
+validation, so runtime UIs and trace/eval tooling can inspect schema failures
+without catching SDK exceptions or depending on a vendor tool-call format.
 
 The SDK must not require a production database driver. Production backends should
 be added by the host runtime or by separate adapter packages that implement the

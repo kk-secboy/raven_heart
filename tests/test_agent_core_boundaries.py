@@ -174,6 +174,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "RunTraceStorePort",
         "RunInterrupt",
         "RunInterruptKind",
+        "SchemaValidationIssue",
+        "SchemaValidationResult",
         "StructuredOutputResult",
         "StructuredOutputSpec",
         "StructuredOutputValidatorPort",
@@ -198,6 +200,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "apply_reduction_to_timeline",
         "handoff_spec_from_session",
         "storage_backend_manifest",
+        "validate_json_schema_subset",
     }
 
     assert expected <= set(agent_core.__all__)

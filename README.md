@@ -149,6 +149,9 @@ domain-specific delegation strategy.
 
 ### Structured Output
 
+- `SchemaValidationIssue`, `SchemaValidationResult`, and
+  `validate_json_schema_subset()` define a provider-neutral schema validation
+  contract for structured output, action arguments, and tool-call parameters.
 - `StructuredOutputSpec` defines a request-level final answer contract.
 - `JsonStructuredOutputValidator` validates a deterministic JSON schema subset.
 - `StructuredOutputValidatorPort` lets runtimes replace validation without
@@ -156,6 +159,9 @@ domain-specific delegation strategy.
 - `AgentRunRequest.structured_output` injects the schema into prompt context.
 - `ReActExecutor` validates `finish.output`; if invalid, it feeds a repair
   message back into the loop before failing the run.
+- `ActionRegistry.validate_result()` exposes the same schema validation result
+  shape for parsed actions while preserving the existing throwing `validate()`
+  API.
 
 The SDK owns schema injection, validation lifecycle, repair feedback, and
 manifests. Runtimes own domain schemas, typed business objects, UI rendering,
@@ -539,6 +545,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider call audit | MVP implemented |
 | Provider transport contract | MVP implemented |
 | Provider model capabilities | MVP implemented |
+| Schema validation contracts | MVP implemented |
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |
 | Interrupt/cancel/timeout semantics | MVP implemented |

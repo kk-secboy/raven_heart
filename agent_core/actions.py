@@ -7,6 +7,11 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from agent_core.errors import ActionError
+from agent_core.schema import (
+    SchemaValidationIssue,
+    SchemaValidationResult,
+    validate_json_schema_subset,
+)
 
 
 @dataclass(frozen=True)
@@ -16,12 +21,29 @@ class ActionSpec:
     parameters_schema: dict[str, Any] = field(default_factory=dict)
     terminal: bool = False
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-action-spec/v1",
+            "name": self.name,
+            "description": self.description,
+            "parameters_schema": dict(self.parameters_schema),
+            "terminal": self.terminal,
+        }
+
 
 @dataclass(frozen=True)
 class ParsedAction:
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
     raw: Any = None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-parsed-action/v1",
+            "name": self.name,
+            "argument_keys": sorted(str(key) for key in self.arguments),
+            "raw_type": type(self.raw).__name__ if self.raw is not None else "",
+        }
 
 
 @dataclass(frozen=True)
@@ -69,12 +91,7 @@ class ActionRegistry:
         return {
             "schema_version": "agent-core-action-registry/v1",
             "actions": [
-                {
-                    "name": spec.name,
-                    "description": spec.description,
-                    "parameters_schema": spec.parameters_schema,
-                    "terminal": spec.terminal,
-                }
+                spec.manifest()
                 for spec in sorted(self._actions.values(), key=lambda item: item.name)
             ],
         }
@@ -119,38 +136,46 @@ class ActionRegistry:
         return parsed
 
     def validate(self, action: ParsedAction) -> None:
+        result = self.validate_result(action)
+        if result.ok:
+            return
+        raise ActionError(result.error)
+
+    def validate_result(self, action: ParsedAction) -> SchemaValidationResult:
         spec = self.get(action.name)
         if spec is None:
-            raise ActionError(f"unknown action: {action.name}")
-        schema = spec.parameters_schema or {}
-        required = schema.get("required") or []
-        for key in required:
-            if key not in action.arguments:
-                raise ActionError(f"action {action.name} missing required argument: {key}")
-        properties = schema.get("properties") or {}
-        for key, prop_schema in properties.items():
-            if key in action.arguments:
-                self._validate_type(action.name, key, action.arguments[key], prop_schema)
-
-    @staticmethod
-    def _validate_type(action_name: str, key: str, value: Any, prop_schema: dict[str, Any]) -> None:
-        expected = prop_schema.get("type")
-        if not expected:
-            return
-        type_map = {
-            "string": str,
-            "integer": int,
-            "number": (int, float),
-            "boolean": bool,
-            "object": dict,
-            "array": list,
-        }
-        py_type = type_map.get(str(expected))
-        if py_type and not isinstance(value, py_type):
-            raise ActionError(
-                f"action {action_name} argument {key} must be {expected}, "
-                f"got {type(value).__name__}"
+            return SchemaValidationResult(
+                ok=False,
+                schema_name=f"action:{action.name}",
+                issues=(
+                    _schema_issue(
+                        path="$",
+                        code="unknown_action",
+                        message=f"unknown action: {action.name}",
+                    ),
+                ),
+                metadata={"action": action.manifest()},
             )
+        schema = spec.parameters_schema or {}
+        validation = validate_json_schema_subset(
+            action.arguments,
+            schema,
+            schema_name=f"action:{action.name}",
+            metadata={
+                "action": action.manifest(),
+                "action_spec": spec.manifest(),
+            },
+        )
+        return validation
+
+
+def _schema_issue(
+    *,
+    path: str,
+    code: str,
+    message: str,
+) -> SchemaValidationIssue:
+    return SchemaValidationIssue(path=path, code=code, message=message)
 
 
 def _extract_first_json_object(text: str) -> dict[str, Any] | None:

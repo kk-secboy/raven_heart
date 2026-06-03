@@ -242,6 +242,11 @@ from agent_core.runner import (
     ManagedAgentRun,
     SQLiteAgentRunStore,
 )
+from agent_core.schema import (
+    SchemaValidationIssue,
+    SchemaValidationResult,
+    validate_json_schema_subset,
+)
 from agent_core.handoff import (
     HandoffDecision,
     HandoffDecisionStatus,
@@ -542,11 +547,14 @@ __all__ = [
     "SQLiteMemoryStore",
     "SQLitePlannerStore",
     "SQLitePolicyDecisionStore",
+    "SchemaValidationIssue",
+    "SchemaValidationResult",
     "StructuredOutputResult",
     "StructuredOutputSpec",
     "StructuredOutputValidatorPort",
     "structured_output_feedback",
     "storage_backend_manifest",
+    "validate_json_schema_subset",
     "TERMINAL_RUN_STATUSES",
     "TERMINAL_PLAN_STEP_STATUSES",
     "TERMINAL_TURN_STATUSES",
