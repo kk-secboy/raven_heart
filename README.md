@@ -92,6 +92,7 @@ agent_core never imports runtime
 - Built-in in-memory, SQLite, and Markdown journal stores.
 - Postgres or other durable stores can implement the same port outside core.
 - Checkpoints and resume tokens.
+- `ResumeCandidate` and `ResumeIndex` for manifest-friendly resumable run discovery.
 - `AgentRunRequest.resume_token` for injecting checkpoint state into the next run.
 - Run manifest and error recording.
 - Terminal status checks.

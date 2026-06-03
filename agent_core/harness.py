@@ -77,6 +77,150 @@ class ResumeToken:
     checkpoint_id: str
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-resume-token/v1",
+            "run_id": self.run_id,
+            "checkpoint_id": self.checkpoint_id,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ResumeCandidate:
+    """Latest checkpoint material for one resumable run."""
+
+    run_id: str
+    status: RunStatus
+    task: str
+    checkpoint_id: str
+    checkpoint_sequence: int
+    turn_id: str = ""
+    checkpoint_state: dict[str, Any] = field(default_factory=dict)
+    run_metadata: dict[str, Any] = field(default_factory=dict)
+    token: ResumeToken | None = None
+    run_created_at: str = ""
+    checkpoint_created_at: str = ""
+
+    @classmethod
+    def from_parts(cls, run: RunState, checkpoint: Checkpoint) -> "ResumeCandidate":
+        token = ResumeToken(
+            run_id=checkpoint.run_id,
+            checkpoint_id=checkpoint.checkpoint_id,
+            metadata={"turn_id": checkpoint.turn_id, "sequence": checkpoint.sequence},
+        )
+        return cls(
+            run_id=run.run_id,
+            status=run.status,
+            task=run.task,
+            checkpoint_id=checkpoint.checkpoint_id,
+            checkpoint_sequence=checkpoint.sequence,
+            turn_id=checkpoint.turn_id,
+            checkpoint_state=dict(checkpoint.state),
+            run_metadata=dict(run.metadata),
+            token=token,
+            run_created_at=run.created_at,
+            checkpoint_created_at=checkpoint.created_at,
+        )
+
+    @property
+    def terminal(self) -> bool:
+        return _is_terminal_run(self.status)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-resume-candidate/v1",
+            "run_id": self.run_id,
+            "status": self.status,
+            "terminal": self.terminal,
+            "task": self.task,
+            "checkpoint_id": self.checkpoint_id,
+            "checkpoint_sequence": self.checkpoint_sequence,
+            "turn_id": self.turn_id,
+            "checkpoint_state": dict(self.checkpoint_state),
+            "run_metadata": dict(self.run_metadata),
+            "token": self.token.manifest() if self.token is not None else None,
+            "run_created_at": self.run_created_at,
+            "checkpoint_created_at": self.checkpoint_created_at,
+        }
+
+
+@dataclass(frozen=True)
+class ResumeIndex:
+    """Manifest-friendly index of latest checkpoints by run."""
+
+    candidates: tuple[ResumeCandidate, ...] = ()
+    include_terminal: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: "AgentJournalSnapshot",
+        *,
+        include_terminal: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> "ResumeIndex":
+        runs = {
+            str(item.get("run_id") or ""): RunState(
+                run_id=str(item.get("run_id") or ""),
+                status=_run_status(str(item.get("status") or "running")),
+                task=str(item.get("task") or ""),
+                created_at=str(item.get("created_at") or utc_now_iso()),
+                metadata=dict(item.get("metadata") or {}),
+            )
+            for item in snapshot.runs
+            if str(item.get("run_id") or "")
+        }
+        latest_by_run: dict[str, Checkpoint] = {}
+        for item in snapshot.checkpoints:
+            checkpoint = Checkpoint(
+                run_id=str(item.get("run_id") or ""),
+                checkpoint_id=str(item.get("checkpoint_id") or ""),
+                turn_id=str(item.get("turn_id") or ""),
+                sequence=int(item.get("sequence") or 0),
+                state=dict(item.get("state") or {}),
+                created_at=str(item.get("created_at") or utc_now_iso()),
+            )
+            if not checkpoint.run_id or checkpoint.run_id not in runs:
+                continue
+            previous = latest_by_run.get(checkpoint.run_id)
+            if previous is None or checkpoint.sequence >= previous.sequence:
+                latest_by_run[checkpoint.run_id] = checkpoint
+        candidates = []
+        for run_id, checkpoint in latest_by_run.items():
+            run = runs[run_id]
+            if not include_terminal and _is_terminal_run(run.status):
+                continue
+            candidates.append(ResumeCandidate.from_parts(run, checkpoint))
+        return cls(
+            candidates=tuple(
+                sorted(candidates, key=lambda item: (item.checkpoint_created_at, item.run_id))
+            ),
+            include_terminal=include_terminal,
+            metadata=dict(metadata or {}),
+        )
+
+    def latest(self) -> ResumeCandidate | None:
+        if not self.candidates:
+            return None
+        return self.candidates[-1]
+
+    def for_run(self, run_id: str) -> ResumeCandidate | None:
+        for candidate in self.candidates:
+            if candidate.run_id == run_id:
+                return candidate
+        return None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-resume-index/v1",
+            "candidate_count": len(self.candidates),
+            "include_terminal": self.include_terminal,
+            "candidates": [candidate.manifest() for candidate in self.candidates],
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass
 class CancelToken:
@@ -280,24 +424,26 @@ class InMemoryAgentJournal(AgentHarness):
             metadata={"turn_id": checkpoint.turn_id, "sequence": checkpoint.sequence},
         )
 
+    def resume_index(self, *, include_terminal: bool = True) -> ResumeIndex:
+        return ResumeIndex.from_snapshot(
+            self.snapshot(),
+            include_terminal=include_terminal,
+            metadata={"source": type(self).__name__},
+        )
+
     def resumable_runs(self) -> tuple[dict[str, Any], ...]:
-        rows: list[dict[str, Any]] = []
-        for run in sorted(self.runs.values(), key=lambda item: item.created_at):
-            checkpoint = self.latest_checkpoint(run.run_id)
-            if checkpoint is None:
-                continue
-            rows.append(
-                {
-                    "run_id": run.run_id,
-                    "status": run.status,
-                    "task": run.task,
-                    "checkpoint_id": checkpoint.checkpoint_id,
-                    "checkpoint_sequence": checkpoint.sequence,
-                    "turn_id": checkpoint.turn_id,
-                    "created_at": checkpoint.created_at,
-                }
-            )
-        return tuple(rows)
+        return tuple(
+            {
+                "run_id": candidate.run_id,
+                "status": candidate.status,
+                "task": candidate.task,
+                "checkpoint_id": candidate.checkpoint_id,
+                "checkpoint_sequence": candidate.checkpoint_sequence,
+                "turn_id": candidate.turn_id,
+                "created_at": candidate.checkpoint_created_at,
+            }
+            for candidate in self.resume_index().candidates
+        )
 
     def run_manifest(self, run_id: str) -> dict[str, Any]:
         run = self._require_run(run_id)

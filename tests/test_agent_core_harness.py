@@ -9,6 +9,7 @@ from agent_core.harness import (
     InMemoryJournalStore,
     MarkdownJournalStore,
     PersistentAgentJournal,
+    ResumeIndex,
     SQLiteAgentJournal,
     SQLiteJournalStore,
 )
@@ -65,6 +66,39 @@ async def test_persistent_agent_journal_uses_store_port_for_resume() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_journal_resume_index_exports_latest_checkpoint_candidates() -> None:
+    journal = InMemoryAgentJournal()
+    active = await journal.start_run("active task", metadata={"profile": "active"})
+    active_turn = await journal.start_turn(active, 0)
+    await journal.checkpoint(active_turn, {"step": 1})
+    latest = await journal.checkpoint(active_turn, {"step": 2})
+    completed = await journal.start_run("completed task")
+    completed_turn = await journal.start_turn(completed, 0)
+    completed_checkpoint = await journal.checkpoint(completed_turn, {"done": True})
+    await journal.finish_run(completed, "completed", {"output": "done"})
+
+    index = journal.resume_index()
+    active_only = journal.resume_index(include_terminal=False)
+    restored = ResumeIndex.from_snapshot(journal.snapshot())
+
+    candidate = index.for_run(active.run_id)
+    completed_candidate = index.for_run(completed.run_id)
+
+    assert index.manifest()["schema_version"] == "agent-core-resume-index/v1"
+    assert index.manifest()["candidate_count"] == 2
+    assert candidate is not None
+    assert candidate.checkpoint_id == latest.checkpoint_id
+    assert candidate.checkpoint_state == {"step": 2}
+    assert candidate.token is not None
+    assert candidate.token.metadata["sequence"] == 2
+    assert completed_candidate is not None
+    assert completed_candidate.terminal is True
+    assert completed_candidate.checkpoint_id == completed_checkpoint.checkpoint_id
+    assert active_only.for_run(completed.run_id) is None
+    assert restored.for_run(active.run_id).checkpoint_id == latest.checkpoint_id  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_sqlite_journal_store_persists_checkpoint_resume_and_manifest(tmp_path) -> None:
     path = tmp_path / "journal.sqlite"
     journal = PersistentAgentJournal(SQLiteJournalStore(path))
@@ -93,6 +127,7 @@ async def test_sqlite_journal_store_persists_checkpoint_resume_and_manifest(tmp_
     assert resumable[0]["checkpoint_id"] == checkpoint.checkpoint_id
     assert restored.manifest()["schema_version"] == "agent-core-persistent-journal/v1"
     assert restored.manifest()["store"]["schema_version"] == "agent-core-sqlite-journal-store/v1"
+    assert restored.resume_index().for_run(run.run_id).token is not None  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
@@ -114,6 +149,7 @@ async def test_markdown_journal_store_persists_checkpoint_resume_and_manifest(tm
     assert restored.finished[0]["result"]["output"] == "done"
     assert "<!-- agent-journal-snapshot" in text
     assert restored.manifest()["store"]["schema_version"] == "agent-core-markdown-journal-store/v1"
+    assert restored.resume_index().for_run(run.run_id).checkpoint_state["value"] == 3  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio

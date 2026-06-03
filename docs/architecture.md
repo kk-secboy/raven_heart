@@ -71,6 +71,12 @@ same ports.
 and reports consistency issues before a runtime depends on that state for UI,
 debugging, audit, or resume decisions.
 
+`ResumeCandidate` and `ResumeIndex` turn the latest checkpoint per run into a
+standard manifest with a `ResumeToken`, checkpoint state, terminal status, and
+run metadata. The SDK owns discovery and serialization of resumable state;
+runtime code owns worker selection, user-facing recovery flows, and distributed
+resume scheduling.
+
 `AgentRunTraceBundle` aggregates per-run session, prompt, journal replay,
 provider audit, tool replay, approvals, event log, resume, and timeline reduction
 manifests. The SDK owns the shape and summary counters. Runtime code owns where
