@@ -11,6 +11,15 @@ from agent_core.actions import (
     ActionVerifierPort,
     ParsedAction,
 )
+from agent_core.approvals import (
+    ApprovalDecisionRecord,
+    ApprovalDecisionStatus,
+    ApprovalRecord,
+    ApprovalStatus,
+    ApprovalStorePort,
+    InMemoryApprovalStore,
+    NullApprovalStore,
+)
 from agent_core.artifacts import ArtifactRecord, ArtifactStorePort, InMemoryArtifactStore
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
@@ -150,6 +159,9 @@ __all__ = [
     "ActionSpec",
     "ActionVerification",
     "ActionVerifierPort",
+    "ApprovalDecisionRecord",
+    "ApprovalDecisionStatus",
+    "ApprovalRecord",
     "AllowAllPolicy",
     "AllowAllMemoryGovernance",
     "AgentContextPack",
@@ -169,6 +181,8 @@ __all__ = [
     "ArtifactRecord",
     "ArtifactStorePort",
     "ApprovalRequest",
+    "ApprovalStatus",
+    "ApprovalStorePort",
     "CapabilitySet",
     "CapabilityCatalog",
     "CancelToken",
@@ -244,6 +258,7 @@ __all__ = [
     "InMemoryToolReplay",
     "InMemoryAgentJournal",
     "InMemoryArtifactStore",
+    "InMemoryApprovalStore",
     "InMemoryJournalStore",
     "InMemoryMemoryStore",
     "InMemoryPlanner",
@@ -261,6 +276,7 @@ __all__ = [
     "MemoryStoreSpec",
     "MemoryWrite",
     "ManagedAgentRun",
+    "NullApprovalStore",
     "PersistentAgentJournal",
     "RuleBasedMemoryGovernance",
     "SQLiteMemoryStore",

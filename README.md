@@ -25,6 +25,7 @@ ops agents, research agents, and future automation systems.
 - Journal replay manifests and snapshot consistency audit.
 - Sequenced event stream and event log manifests.
 - Planner protocol and lightweight in-memory plan state.
+- Human-in-loop approval request and decision queue primitives.
 - Policy gates, budget metadata, loop guards, and capability manifests.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
@@ -55,6 +56,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Memory and journal ports | Graphiti, RAG, durable product stores |
 | Planner protocol and plan state | Domain-specific planning strategy and product workflow |
 | Context reducer protocol | Domain summarizers, archive storage, and retrieval strategy |
+| Approval request and decision queue | Approval UI, identity, permissions, and workflow routing |
 | Harness state contracts | API routes, UI events, production persistence backend |
 
 The dependency direction must always be:
@@ -96,6 +98,19 @@ agent_core never imports runtime
 - `AgentEvent` and `EventSinkPort`.
 - Monotonic event sequencing inside `ReActExecutor`.
 - `ListEventSink` for lightweight event capture and manifest export.
+- `approval_requested` events when policy requires human approval.
+
+### Human-In-Loop Approvals
+
+- `ApprovalRequest` manifests produced by policy decisions.
+- `ApprovalStorePort` for approval queues.
+- `InMemoryApprovalStore` for tests and lightweight runtimes.
+- `NullApprovalStore` for runtimes that only need per-run approval metadata.
+- `ApprovalRecord` and `ApprovalDecisionRecord` manifests for audit/replay.
+
+The SDK owns approval state contracts and event emission. Runtimes own the
+operator UI, identity, authorization, notification routing, SLA policy, and
+durable workflow storage.
 
 ### Context Reduction
 
@@ -160,6 +175,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product knowledge stores |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, build artifacts |
+| Approvals | `ApprovalStorePort` | Null store, in-memory approval queue | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
 
 This keeps `agent_core` small and importable while still leaving a clean path to
@@ -290,6 +306,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | MCP center | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
 | Planner core | MVP implemented |
+| Approval core | MVP implemented |
 | Prompt buckets/trimming | MVP implemented |
 | Context reducer | MVP implemented |
 | Runtime adapter code | intentionally excluded |

@@ -14,6 +14,7 @@ EventType = Literal[
     "model_response",
     "model_stream",
     "action_parsed",
+    "approval_requested",
     "tool_started",
     "tool_finished",
     "timeline_updated",

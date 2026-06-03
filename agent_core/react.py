@@ -13,6 +13,7 @@ from agent_core.actions import (
     NullActionVerifier,
     ParsedAction,
 )
+from agent_core.approvals import ApprovalRecord, ApprovalStorePort, NullApprovalStore
 from agent_core.artifacts import ArtifactStorePort
 from agent_core.config import RuntimeBudget
 from agent_core.errors import ActionError, ProviderError
@@ -20,7 +21,7 @@ from agent_core.events import AgentEvent, EventSinkPort, NullEventSink
 from agent_core.harness import AgentHarness, CancelToken, RunState
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig
 from agent_core.memory import MemoryPort, MemoryQuery, NullMemory
-from agent_core.policy import AllowAllPolicy, PolicyPort
+from agent_core.policy import AllowAllPolicy, ApprovalRequest, PolicyPort
 from agent_core.prompt import PromptIR
 from agent_core.providers import LLMMessage, LLMProviderPort, LLMRequest, LLMResponse, UsageInfo
 from agent_core.skills import SkillsContext
@@ -72,6 +73,7 @@ class ReActExecutor:
         harness: AgentHarness,
         event_sink: EventSinkPort | None = None,
         policy: PolicyPort | None = None,
+        approval_store: ApprovalStorePort | None = None,
         memory: MemoryPort | None = None,
         skills: SkillsContext | None = None,
         timeline: TimelineStore | None = None,
@@ -88,6 +90,7 @@ class ReActExecutor:
         self.harness = harness
         self.event_sink = event_sink or NullEventSink()
         self.policy = policy or AllowAllPolicy()
+        self.approval_store = approval_store or NullApprovalStore()
         self.memory = memory or NullMemory()
         self.skills = skills
         self.timeline = timeline
@@ -203,12 +206,19 @@ class ReActExecutor:
             if not decision.allowed:
                 result_output = decision.reason or f"action denied: {action.name}"
                 status = "approval_required" if decision.status == "approval_required" else "denied"
+                approval_record = await self._submit_approval(
+                    decision.approval,
+                    run,
+                    turn.turn_id,
+                    metadata={"kind": "action", "action": action.name},
+                )
                 await self.harness.checkpoint(
                     turn,
                     {
                         "status": status,
                         "reason": result_output,
-                        "approval": decision.approval.__dict__ if decision.approval else None,
+                        "approval": _approval_request_manifest(decision.approval),
+                        "approval_record": approval_record.manifest() if approval_record else None,
                         "iteration": index,
                     },
                 )
@@ -217,7 +227,8 @@ class ReActExecutor:
                     status,
                     {
                         "output": result_output,
-                        "approval": decision.approval.__dict__ if decision.approval else None,
+                        "approval": _approval_request_manifest(decision.approval),
+                        "approval_record": approval_record.manifest() if approval_record else None,
                     },
                 )
                 await self._emit(
@@ -232,7 +243,7 @@ class ReActExecutor:
                     output=result_output,
                     iterations=index + 1,
                     final_action=action,
-                    metadata={"approval": decision.approval.__dict__} if decision.approval else {},
+                    metadata=_approval_metadata(decision.approval, approval_record),
                 )
 
             verification = await self.action_verifier.verify(action)
@@ -595,12 +606,18 @@ class ReActExecutor:
         decision = await self.policy.check_tool(invocation)
         if not decision.allowed:
             status = "approval_required" if decision.status == "approval_required" else "denied"
+            approval_record = await self._submit_approval(
+                decision.approval,
+                run,
+                turn_id,
+                metadata={"kind": "tool", "tool_name": invocation.tool_name},
+            )
             return ToolResult(
                 call_id=invocation.call_id,
                 tool_name=invocation.tool_name,
                 status=status,
                 error=decision.reason or f"tool denied: {invocation.tool_name}",
-                metadata={"approval": decision.approval.__dict__} if decision.approval else {},
+                metadata=_approval_metadata(decision.approval, approval_record),
             )
         replayed = await self.tool_replay.get(invocation)
         if replayed is not None:
@@ -797,6 +814,30 @@ class ReActExecutor:
             )
         )
 
+    async def _submit_approval(
+        self,
+        approval: ApprovalRequest | None,
+        run: RunState,
+        turn_id: str,
+        *,
+        metadata: dict[str, Any],
+    ) -> ApprovalRecord | None:
+        if approval is None:
+            return None
+        record = await self.approval_store.submit(
+            approval,
+            run_id=run.run_id,
+            turn_id=turn_id,
+            metadata=metadata,
+        )
+        await self._emit(
+            "approval_requested",
+            run,
+            turn_id=turn_id,
+            payload=record.manifest(),
+        )
+        return record
+
     @staticmethod
     def _feedback(kind: str, message: str) -> LLMMessage:
         return LLMMessage(
@@ -831,5 +872,23 @@ def _provider_request_metadata(budget: RuntimeBudget) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     if budget.max_cost_usd is not None:
         metadata["max_cost_usd"] = budget.max_cost_usd
+    return metadata
+
+
+def _approval_request_manifest(approval: ApprovalRequest | None) -> dict[str, Any] | None:
+    if approval is None:
+        return None
+    return approval.manifest()
+
+
+def _approval_metadata(
+    approval: ApprovalRequest | None,
+    record: ApprovalRecord | None,
+) -> dict[str, Any]:
+    if approval is None:
+        return {}
+    metadata: dict[str, Any] = {"approval": _approval_request_manifest(approval)}
+    if record is not None:
+        metadata["approval_record"] = record.manifest()
     return metadata
 

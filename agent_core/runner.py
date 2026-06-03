@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent_core.actions import ActionRegistry, ActionVerifierPort
+from agent_core.approvals import ApprovalStorePort, NullApprovalStore
 from agent_core.artifacts import ArtifactStorePort
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.config import AgentProfile, RuntimeBudget
@@ -41,6 +42,7 @@ class AgentSession:
     timeline: TimelineStore = field(default_factory=TimelineStore)
     event_sink: EventSinkPort | None = None
     policy: PolicyPort | None = None
+    approval_store: ApprovalStorePort = field(default_factory=NullApprovalStore)
     tool_replay: ToolReplayPort = field(default_factory=NullToolReplay)
     action_verifier: ActionVerifierPort | None = None
     loop_guard: LoopGuard | None = None
@@ -63,6 +65,7 @@ class AgentSession:
     def manifest(self) -> dict[str, Any]:
         provider_manifest = getattr(self.provider, "manifest", None)
         memory_manifest = getattr(self.memory, "manifest", None)
+        approval_manifest = getattr(self.approval_store, "manifest", None)
         return {
             "schema_version": "agent-core-session/v1",
             "profile": {
@@ -81,6 +84,7 @@ class AgentSession:
             "provider": provider_manifest() if callable(provider_manifest) else {},
             "capabilities": self.capability_catalog().manifest(),
             "memory": memory_manifest() if callable(memory_manifest) else {},
+            "approvals": approval_manifest() if callable(approval_manifest) else {},
             "timeline_items": len(self.timeline.items),
             "metadata": dict(self.metadata),
         }
@@ -276,6 +280,7 @@ class AgentRunner:
             harness=self.session.harness,
             event_sink=self.session.event_sink,
             policy=self.session.policy,
+            approval_store=self.session.approval_store,
             memory=NullMemory(),
             skills=self.session.skills,
             timeline=self.session.timeline,

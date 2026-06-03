@@ -32,6 +32,7 @@ agent_core
 | Harness/ReAct runner | UI events, API routes, production persistence backend |
 | Sequenced event stream | UI rendering, logs, metrics, audit pipeline |
 | Policy ports | Operator approval UX and organization policy |
+| Approval store and approval manifests | Identity, approval UI, workflow routing, escalation policy |
 
 ## Data Backend Boundary
 
@@ -42,6 +43,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | PG, vector DB, graph/RAG, product knowledge |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, CI/build artifacts |
+| Approvals | `ApprovalStorePort` | Null store, in-memory approval queue | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
 
 The SDK must not require a production database driver. Production backends should
@@ -67,6 +69,11 @@ updates, and manifests are reusable across agent domains. The core only ships a
 lightweight `InMemoryPlanner`; Raven-specific decomposition, code repair plans,
 approval flows, and durable planner storage should live in a runtime or adapter
 package that implements the same port.
+
+`ApprovalStorePort` is a core contract for human-in-loop pauses. Policies can
+produce `ApprovalRequest` manifests; ReAct execution records them as
+`ApprovalRecord` entries and emits `approval_requested` events. Runtime code owns
+the approval UI, identity checks, notifications, and durable workflow backend.
 
 ## Adapter Policy
 

@@ -20,6 +20,14 @@ class ApprovalRequest:
     subject: str
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-approval-request/v1",
+            "reason": self.reason,
+            "subject": self.subject,
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass(frozen=True)
 class PolicyDecision:
