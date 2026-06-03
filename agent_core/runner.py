@@ -285,6 +285,7 @@ class AgentManagerScheduleSnapshot:
     sessions: tuple[str, ...] = ()
     runs: tuple[ManagedAgentRun, ...] = ()
     active_by_session: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    queued_by_session: dict[str, tuple[str, ...]] = field(default_factory=dict)
     capacity_by_session: tuple[AgentManagerCapacityStatus, ...] = ()
     concurrency_policy: AgentManagerConcurrencyPolicy = field(default_factory=AgentManagerConcurrencyPolicy)
     run_store: dict[str, Any] = field(default_factory=dict)
@@ -305,6 +306,11 @@ class AgentManagerScheduleSnapshot:
                 for name, keys in sorted(self.active_by_session.items(), key=lambda item: item[0])
             },
             "active_run_count": sum(len(keys) for keys in self.active_by_session.values()),
+            "queued_by_session": {
+                name: list(keys)
+                for name, keys in sorted(self.queued_by_session.items(), key=lambda item: item[0])
+            },
+            "queued_run_count": sum(len(keys) for keys in self.queued_by_session.values()),
             "capacity_by_session": [
                 status.manifest() for status in self.capacity_by_session
             ],
@@ -944,7 +950,26 @@ class AgentSessionManager:
     def start(self, session_name: str, request: AgentRunRequest | str) -> str:
         run_request = self._normalize_request(request)
         run_key = self._new_run_key(session_name)
-        self._ensure_capacity(session_name)
+        capacity = self._capacity_status(session_name)
+        if not capacity.available:
+            if self.concurrency_policy.reject_when_full:
+                self._raise_capacity_error(session_name, capacity)
+            self._save_run(
+                ManagedAgentRun(
+                    run_key=run_key,
+                    session_name=session_name,
+                    task=run_request.task,
+                    status="queued",
+                    metadata={
+                        **dict(run_request.metadata),
+                        "queued_for_capacity": True,
+                        "capacity_status": capacity.manifest(),
+                    },
+                )
+            )
+            task = asyncio.create_task(self._run_when_capacity(run_key, session_name, run_request))
+            self._tasks[run_key] = task
+            return run_key
         self._save_run(ManagedAgentRun(
             run_key=run_key,
             session_name=session_name,
@@ -998,7 +1023,12 @@ class AgentSessionManager:
         return tuple(sorted(self._runs.values(), key=lambda item: item.run_key))
 
     def active_runs(self) -> tuple[ManagedAgentRun, ...]:
-        return tuple(run for run in self.runs() if run.status in {"queued", "running", "cancelling"})
+        active_keys = {
+            run_key
+            for keys in self._active_by_session.values()
+            for run_key in keys
+        }
+        return tuple(run for run in self.runs() if run.run_key in active_keys)
 
     def capacity_status(self, session_name: str) -> AgentManagerCapacityStatus:
         if session_name not in self._sessions:
@@ -1013,6 +1043,7 @@ class AgentSessionManager:
                 name: tuple(keys)
                 for name, keys in sorted(self._active_by_session.items(), key=lambda item: item[0])
             },
+            queued_by_session=self._queued_by_session(),
             capacity_by_session=tuple(
                 self._capacity_status(name) for name in self.sessions()
             ),
@@ -1031,6 +1062,11 @@ class AgentSessionManager:
             "runs": [run.manifest() for run in self.runs()],
             "active_by_session": {name: list(keys) for name, keys in sorted(self._active_by_session.items())},
             "active_run_count": len(self.active_runs()),
+            "queued_by_session": {
+                name: list(keys)
+                for name, keys in sorted(self._queued_by_session().items(), key=lambda item: item[0])
+            },
+            "queued_run_count": sum(len(keys) for keys in self._queued_by_session().values()),
             "schedule": self.schedule_snapshot().manifest(),
             "concurrency_policy": self.concurrency_policy.manifest(),
             "run_store": self.run_store.manifest(),
@@ -1092,8 +1128,46 @@ class AgentSessionManager:
         self._outcomes[run_key] = outcome
         return outcome
 
+    async def _run_when_capacity(
+        self,
+        run_key: str,
+        session_name: str,
+        request: AgentRunRequest,
+    ) -> AgentRunOutcome:
+        while True:
+            if run_key not in self._runs:
+                raise KeyError(run_key)
+            capacity = self._capacity_status(session_name)
+            if capacity.available:
+                self._claim_run(session_name, run_key)
+                self._save_run(
+                    _replace_run(
+                        self._runs[run_key],
+                        metadata={
+                            **dict(self._runs[run_key].metadata),
+                            "queued_for_capacity": False,
+                            "dequeued_capacity_status": capacity.manifest(),
+                        },
+                    )
+                )
+                return await self._run_once(
+                    run_key,
+                    session_name,
+                    request,
+                    preclaimed=True,
+                )
+            await asyncio.sleep(0.01)
+
     def _ensure_capacity(self, session_name: str) -> None:
         status = self._capacity_status(session_name)
+        if not status.available:
+            self._raise_capacity_error(session_name, status)
+
+    def _raise_capacity_error(
+        self,
+        session_name: str,
+        status: AgentManagerCapacityStatus,
+    ) -> None:
         if not status.session_available:
             raise AgentManagerCapacityError(
                 f"session active run capacity exceeded: {session_name}",
@@ -1150,6 +1224,19 @@ class AgentSessionManager:
         self._active_by_session[session_name] = [key for key in active if key != run_key]
         if not self._active_by_session[session_name]:
             self._active_by_session.pop(session_name, None)
+
+    def _queued_by_session(self) -> dict[str, tuple[str, ...]]:
+        queued: dict[str, list[str]] = {}
+        active_keys = {
+            run_key
+            for keys in self._active_by_session.values()
+            for run_key in keys
+        }
+        for run in self.runs():
+            if run.status != "queued" or run.run_key in active_keys:
+                continue
+            queued.setdefault(run.session_name, []).append(run.run_key)
+        return {name: tuple(keys) for name, keys in sorted(queued.items())}
 
     @staticmethod
     def _normalize_request(request: AgentRunRequest | str) -> AgentRunRequest:
@@ -1444,6 +1531,7 @@ def _replace_run(
     status: str | None = None,
     result_run_id: str | None = None,
     error: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> ManagedAgentRun:
     return ManagedAgentRun(
         run_key=run.run_key,
@@ -1452,6 +1540,6 @@ def _replace_run(
         status=status if status is not None else run.status,
         result_run_id=result_run_id if result_run_id is not None else run.result_run_id,
         error=error if error is not None else run.error,
-        metadata=dict(run.metadata),
+        metadata=dict(metadata) if metadata is not None else dict(run.metadata),
     )
 

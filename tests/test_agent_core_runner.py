@@ -737,6 +737,53 @@ async def test_agent_session_manager_background_run_rejects_same_session_concurr
 
 
 @pytest.mark.asyncio
+async def test_agent_session_manager_queues_when_capacity_full_and_rejection_disabled() -> None:
+    first_provider = _BlockingProvider()
+    second_provider = MockLLMProvider(
+        [{"action": "finish", "arguments": {"output": "queued done"}}]
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="queued"),
+        provider=first_provider,
+        tools=MockToolRuntime(),
+    )
+    manager = AgentSessionManager(
+        concurrency_policy=AgentManagerConcurrencyPolicy(reject_when_full=False)
+    )
+    manager.register(session)
+
+    first_key = manager.start("queued", "first task")
+    await asyncio.sleep(0)
+    session.provider = second_provider
+    second_key = manager.start("queued", "second task")
+    await asyncio.sleep(0.02)
+    snapshot = manager.schedule_snapshot().manifest()
+    manifest = manager.manifest()
+
+    assert manager.run_state(first_key).status == "running"
+    assert manager.run_state(second_key).status == "queued"
+    assert manager.run_state(second_key).metadata["queued_for_capacity"] is True
+    assert snapshot["queued_by_session"]["queued"] == [second_key]
+    assert snapshot["queued_run_count"] == 1
+    assert snapshot["active_run_count"] == 1
+    assert manifest["queued_by_session"]["queued"] == [second_key]
+    assert manager.capacity_status("queued").available is False
+    assert not second_provider.requests
+
+    first_provider.release.set()
+    first = await manager.wait(first_key)
+    second = await manager.wait(second_key)
+
+    assert first.result.status == "completed"
+    assert second.result.status == "completed"
+    assert second.result.output == "queued done"
+    assert manager.run_state(second_key).metadata["queued_for_capacity"] is False
+    assert "dequeued_capacity_status" in manager.run_state(second_key).metadata
+    assert not manager.active_runs()
+    assert manager.schedule_snapshot().manifest()["queued_run_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_agent_session_manager_allows_configured_session_concurrency() -> None:
     first_provider = _BlockingProvider()
     second_provider = _BlockingProvider()
