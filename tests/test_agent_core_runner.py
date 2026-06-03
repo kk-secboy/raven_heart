@@ -14,6 +14,8 @@ from agent_core.providers import LLMProviderCenter
 from agent_core.providers import LLMRequest, LLMResponse
 from agent_core.reducer import DefaultContextReducer
 from agent_core.runner import (
+    AgentManagerCapacityError,
+    AgentManagerConcurrencyPolicy,
     AgentRunner,
     AgentRunRequest,
     AgentSession,
@@ -467,15 +469,89 @@ async def test_agent_session_manager_background_run_rejects_same_session_concurr
     run_key = manager.start("slow", "task")
     await asyncio.sleep(0)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(AgentManagerCapacityError) as exc_info:
         manager.start("slow", "second task")
 
+    assert exc_info.value.metadata["max_active_runs_per_session"] == 1
     assert manager.run_state(run_key).status == "running"
     provider.release.set()
     outcome = await manager.wait(run_key)
 
     assert outcome.result.status == "completed"
     assert not manager.active_runs()
+
+
+@pytest.mark.asyncio
+async def test_agent_session_manager_allows_configured_session_concurrency() -> None:
+    first_provider = _BlockingProvider()
+    second_provider = _BlockingProvider()
+    session = AgentSession(
+        profile=AgentProfile(name="parallel"),
+        provider=first_provider,
+        tools=MockToolRuntime(),
+    )
+    manager = AgentSessionManager(
+        concurrency_policy=AgentManagerConcurrencyPolicy(max_active_runs_per_session=2)
+    )
+    manager.register(session)
+
+    first_key = manager.start("parallel", "first task")
+    await asyncio.sleep(0)
+    session.provider = second_provider
+    second_key = manager.start("parallel", "second task")
+    await asyncio.sleep(0)
+
+    manifest = manager.manifest()
+
+    assert set(manifest["active_by_session"]["parallel"]) == {first_key, second_key}
+    assert manifest["concurrency_policy"]["max_active_runs_per_session"] == 2
+
+    first_provider.release.set()
+    second_provider.release.set()
+    first = await manager.wait(first_key)
+    second = await manager.wait(second_key)
+
+    assert first.result.status == "completed"
+    assert second.result.status == "completed"
+    assert not manager.active_runs()
+
+
+@pytest.mark.asyncio
+async def test_agent_session_manager_enforces_global_active_capacity() -> None:
+    first_provider = _BlockingProvider()
+    second_provider = _BlockingProvider()
+    manager = AgentSessionManager(
+        concurrency_policy=AgentManagerConcurrencyPolicy(max_active_runs=1)
+    )
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="first"),
+            provider=first_provider,
+            tools=MockToolRuntime(),
+        )
+    )
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="second"),
+            provider=second_provider,
+            tools=MockToolRuntime(),
+        )
+    )
+
+    run_key = manager.start("first", "task")
+    await asyncio.sleep(0)
+
+    with pytest.raises(AgentManagerCapacityError) as exc_info:
+        manager.start("second", "blocked")
+
+    assert exc_info.value.metadata["max_active_runs"] == 1
+    assert manager.manifest()["active_run_count"] == 1
+
+    first_provider.release.set()
+    outcome = await manager.wait(run_key)
+
+    assert outcome.result.status == "completed"
+    assert not second_provider.requests
 
 
 @pytest.mark.asyncio

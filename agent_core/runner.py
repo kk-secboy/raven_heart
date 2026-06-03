@@ -152,6 +152,38 @@ class ManagedAgentRun:
         }
 
 
+@dataclass(frozen=True)
+class AgentManagerConcurrencyPolicy:
+    max_active_runs: int | None = None
+    max_active_runs_per_session: int = 1
+    reject_when_full: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.max_active_runs is not None:
+            object.__setattr__(self, "max_active_runs", max(0, int(self.max_active_runs)))
+        object.__setattr__(
+            self,
+            "max_active_runs_per_session",
+            max(1, int(self.max_active_runs_per_session)),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-manager-concurrency-policy/v1",
+            "max_active_runs": self.max_active_runs,
+            "max_active_runs_per_session": self.max_active_runs_per_session,
+            "reject_when_full": self.reject_when_full,
+            "metadata": dict(self.metadata),
+        }
+
+
+class AgentManagerCapacityError(RuntimeError):
+    def __init__(self, message: str, *, metadata: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.metadata = dict(metadata or {})
+
+
 class AgentRunStorePort(Protocol):
     """Persistence boundary for manager-level run state."""
 
@@ -628,9 +660,11 @@ class AgentSessionManager:
         self,
         *,
         run_store: AgentRunStorePort | None = None,
+        concurrency_policy: AgentManagerConcurrencyPolicy | None = None,
         mark_restored_active_interrupted: bool = True,
     ) -> None:
         self.run_store = run_store or InMemoryAgentRunStore()
+        self.concurrency_policy = concurrency_policy or AgentManagerConcurrencyPolicy()
         self._sessions: dict[str, AgentSession] = {}
         self._runs: dict[str, ManagedAgentRun] = {
             run.run_key: _restored_run(run, mark_interrupted=mark_restored_active_interrupted)
@@ -638,7 +672,7 @@ class AgentSessionManager:
         }
         self._outcomes: dict[str, AgentRunOutcome] = {}
         self._tasks: dict[str, asyncio.Task[AgentRunOutcome]] = {}
-        self._active_by_session: dict[str, str] = {}
+        self._active_by_session: dict[str, list[str]] = {}
         for run in self._runs.values():
             self.run_store.save(run)
 
@@ -652,7 +686,7 @@ class AgentSessionManager:
         return session_name
 
     def unregister(self, name: str) -> bool:
-        if name in self._active_by_session:
+        if self._active_by_session.get(name):
             raise RuntimeError(f"session has active run: {name}")
         return self._sessions.pop(name, None) is not None
 
@@ -672,14 +706,14 @@ class AgentSessionManager:
     def start(self, session_name: str, request: AgentRunRequest | str) -> str:
         run_request = self._normalize_request(request)
         run_key = self._new_run_key(session_name)
-        self._ensure_session_available(session_name)
+        self._ensure_capacity(session_name)
         self._save_run(ManagedAgentRun(
             run_key=run_key,
             session_name=session_name,
             task=run_request.task,
             metadata=dict(run_request.metadata),
         ))
-        self._active_by_session[session_name] = run_key
+        self._claim_run(session_name, run_key)
         task = asyncio.create_task(self._run_once(run_key, session_name, run_request, preclaimed=True))
         self._tasks[run_key] = task
         return run_key
@@ -726,7 +760,9 @@ class AgentSessionManager:
                 for name, session in sorted(self._sessions.items(), key=lambda item: item[0])
             },
             "runs": [run.manifest() for run in self.runs()],
-            "active_by_session": dict(self._active_by_session),
+            "active_by_session": {name: list(keys) for name, keys in sorted(self._active_by_session.items())},
+            "active_run_count": len(self.active_runs()),
+            "concurrency_policy": self.concurrency_policy.manifest(),
             "run_store": self.run_store.manifest(),
         }
 
@@ -744,8 +780,8 @@ class AgentSessionManager:
         preclaimed: bool = False,
     ) -> AgentRunOutcome:
         if not preclaimed:
-            self._ensure_session_available(session_name)
-            self._active_by_session[session_name] = run_key
+            self._ensure_capacity(session_name)
+            self._claim_run(session_name, run_key)
             self._save_run(ManagedAgentRun(
                 run_key=run_key,
                 session_name=session_name,
@@ -768,8 +804,7 @@ class AgentSessionManager:
                 await record_error(error=exc, metadata={"run_key": run_key, "session_name": session_name})
             raise
         finally:
-            if self._active_by_session.get(session_name) == run_key:
-                self._active_by_session.pop(session_name, None)
+            self._release_run(session_name, run_key)
             self._tasks.pop(run_key, None)
 
         status = outcome.result.status
@@ -787,10 +822,38 @@ class AgentSessionManager:
         self._outcomes[run_key] = outcome
         return outcome
 
-    def _ensure_session_available(self, session_name: str) -> None:
+    def _ensure_capacity(self, session_name: str) -> None:
+        policy = self.concurrency_policy
+        active_for_session = tuple(self._active_by_session.get(session_name, ()))
+        if len(active_for_session) >= policy.max_active_runs_per_session:
+            raise AgentManagerCapacityError(
+                f"session active run capacity exceeded: {session_name}",
+                metadata={
+                    "session_name": session_name,
+                    "active_run_keys": list(active_for_session),
+                    "max_active_runs_per_session": policy.max_active_runs_per_session,
+                },
+            )
+        active_count = len(self.active_runs())
+        if policy.max_active_runs is not None and active_count >= policy.max_active_runs:
+            raise AgentManagerCapacityError(
+                "manager active run capacity exceeded",
+                metadata={
+                    "active_run_count": active_count,
+                    "max_active_runs": policy.max_active_runs,
+                },
+            )
+
+    def _claim_run(self, session_name: str, run_key: str) -> None:
+        self._active_by_session.setdefault(session_name, []).append(run_key)
+
+    def _release_run(self, session_name: str, run_key: str) -> None:
         active = self._active_by_session.get(session_name)
-        if active is not None:
-            raise RuntimeError(f"session already has active run: {session_name}:{active}")
+        if not active:
+            return
+        self._active_by_session[session_name] = [key for key in active if key != run_key]
+        if not self._active_by_session[session_name]:
+            self._active_by_session.pop(session_name, None)
 
     @staticmethod
     def _normalize_request(request: AgentRunRequest | str) -> AgentRunRequest:

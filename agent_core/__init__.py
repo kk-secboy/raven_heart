@@ -165,6 +165,8 @@ from agent_core.reducer import (
     apply_reduction_to_timeline,
 )
 from agent_core.runner import (
+    AgentManagerCapacityError,
+    AgentManagerConcurrencyPolicy,
     AgentRunner,
     AgentRunOutcome,
     AgentRunRequest,
@@ -256,6 +258,8 @@ __all__ = [
     "AgentJournalSnapshot",
     "AgentJournalStorePort",
     "AgentJournalReplay",
+    "AgentManagerCapacityError",
+    "AgentManagerConcurrencyPolicy",
     "AgentPromptBuilder",
     "AgentProfile",
     "AgentRunner",

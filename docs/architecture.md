@@ -88,8 +88,10 @@ and release gates.
 `AgentRunStorePort` persists manager-level run state such as queued, running,
 cancelling, completed, failed, and interrupted. The SDK ships in-memory, SQLite,
 and Markdown stores so lightweight managers can restart and inspect state without
-runtime infrastructure. Production schedulers, distributed workers, PG-backed
-workflow state, and tenant isolation remain runtime or adapter responsibilities.
+runtime infrastructure. `AgentManagerConcurrencyPolicy` gives the single-process
+manager explicit active-run and per-session capacity guards. Production
+schedulers, distributed workers, PG-backed workflow state, and tenant isolation
+remain runtime or adapter responsibilities.
 
 `HandoffSpec`, `HandoffRequest`, `HandoffRouter`, and `MultiAgentCoordinator`
 provide a provider-neutral multi-agent handoff contract. The core can advertise
@@ -150,9 +152,9 @@ updates, and manifests are reusable across agent domains. The core ships
 `InMemoryPlanner`, `PersistentPlanner`, lightweight in-memory/SQLite/Markdown
 planner stores, and `PlanExecutor` for sequential ready-step execution through
 `AgentSessionManager`. Raven-specific decomposition, code repair plans, approval
-flows, concurrent/distributed scheduling, PG-backed workflow state, and product
-planner audit policy should live in a runtime or adapter package that implements
-the same ports.
+flows, distributed scheduling, PG-backed workflow state, and product planner
+audit policy should live in a runtime or adapter package that implements the
+same ports.
 
 `ApprovalStorePort` is a core contract for human-in-loop pauses. Policies can
 produce `ApprovalRequest` manifests; ReAct execution records them as
