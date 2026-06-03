@@ -293,6 +293,11 @@ provider-neutral request/response/stream shapes and error/retry mapping.
 - Tool, resource, and prompt registration.
 - Server state refresh.
 - SDK-free stdio JSON-RPC connector.
+- `CapabilityQuery`, `CapabilityMatch`, and `CapabilityDiscoveryResult` for
+  unified discovery across actions, local tools, skills, MCP tools, MCP
+  resources, MCP prompts, and MCP servers.
+- Discovery manifests are prompt-safe and traceable; runtimes own concrete MCP
+  sessions, credentials, UI, and network/process lifecycle.
 
 ### Memory
 
@@ -471,6 +476,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Tool replay store | MVP implemented |
 | Skill center | MVP implemented |
 | MCP center | MVP implemented |
+| Capability discovery | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
 | Memory backend routing/specs | MVP implemented |
 | Planner core | MVP implemented |

@@ -3,9 +3,17 @@ from __future__ import annotations
 import pytest
 
 from agent_core.actions import ActionRegistry, ActionSpec
-from agent_core.capabilities import CapabilityCatalog
+from agent_core.capabilities import CapabilityCatalog, CapabilityQuery
 from agent_core.context import AgentContextPack, AgentPromptBuilder
-from agent_core.mcp import MCPCenter, MCPServerSpec, MCPToolReference, MCPToolSpec
+from agent_core.mcp import (
+    MCPCenter,
+    MCPPromptSpec,
+    MCPResourceContent,
+    MCPResourceSpec,
+    MCPServerSpec,
+    MCPToolReference,
+    MCPToolSpec,
+)
 from agent_core.prompt import PromptBucketRole
 from agent_core.skills import SkillRegistry, SkillsContext, SkillSpec
 from agent_core.tools import ToolCenter, ToolInvocation, ToolRegistry, ToolResult, ToolSpec
@@ -101,6 +109,31 @@ class FakeMCPConnector:
     async def invoke_tool(self, server: MCPServerSpec, tool_name: str, arguments: dict) -> ToolResult:
         return ToolResult(call_id="remote", tool_name=tool_name)
 
+    async def list_resources(self, server: MCPServerSpec) -> tuple[MCPResourceSpec, ...]:
+        return (
+            MCPResourceSpec(
+                server_name=server.name,
+                uri="file://README.md",
+                name="README",
+                description="Project readme",
+                mime_type="text/markdown",
+                tags=("docs",),
+            ),
+        )
+
+    async def read_resource(self, server: MCPServerSpec, uri: str) -> MCPResourceContent:
+        return MCPResourceContent(server_name=server.name, uri=uri, text="readme")
+
+    async def list_prompts(self, server: MCPServerSpec) -> tuple[MCPPromptSpec, ...]:
+        return (
+            MCPPromptSpec(
+                server_name=server.name,
+                name="summarize",
+                description="Summarize project context",
+                tags=("analysis", "docs"),
+            ),
+        )
+
 
 @pytest.mark.asyncio
 async def test_capability_catalog_manifests_actions_tools_skills_and_mcp() -> None:
@@ -166,4 +199,78 @@ async def test_prompt_builder_places_capability_catalog_in_frozen_bucket() -> No
     assert "[tool_inventory]" in frozen
     assert "[skills_context]" not in frozen
     assert "[skills_context]" in semi_dynamic
+
+
+@pytest.mark.asyncio
+async def test_capability_catalog_discovers_tools_skills_and_mcp_assets() -> None:
+    actions = ActionRegistry()
+    actions.register(ActionSpec(name="finish", description="Finish the run", terminal=True))
+    tools = ToolRegistry()
+
+    async def handler(invocation: ToolInvocation) -> ToolResult:
+        return ToolResult(call_id=invocation.call_id, tool_name=invocation.tool_name)
+
+    tools.register(
+        ToolSpec(name="lookup_project", description="Lookup project files", tags=("local", "docs")),
+        handler,
+    )
+    skills_registry = SkillRegistry()
+    skills_registry.register(
+        SkillSpec(name="project-review", description="Review project files", tags=("docs",))
+    )
+    skills = SkillsContext(skills_registry)
+    mcp = MCPCenter()
+    mcp.register_server(MCPServerSpec(name="fs", transport="stdio", tags=("docs",)))
+    mcp.register_connector("stdio", FakeMCPConnector())
+    await mcp.refresh()
+    await mcp.refresh_resources()
+    await mcp.refresh_prompts()
+
+    catalog = CapabilityCatalog(actions=actions, tools=tools, skills=skills, mcp=mcp)
+    result = catalog.discover(CapabilityQuery(query="docs", tags=("docs",), limit=20))
+    manifest = result.manifest()
+    rendered = result.render_prompt()
+
+    kinds = {match.kind for match in result.matches}
+    names = {match.name for match in result.matches}
+
+    assert {"tool", "skill", "mcp_tool", "mcp_resource", "mcp_prompt", "mcp_server"} <= kinds
+    assert "lookup_project" in names
+    assert "project-review" in names
+    assert "mcp__fs__read_file" in names
+    assert "file://README.md" in names
+    assert "fs:summarize" in names
+    assert manifest["schema_version"] == "agent-core-capability-discovery/v1"
+    assert manifest["counts"]["mcp_resource"] == 1
+    assert "[capability_discovery]" in rendered
+    assert "mcp_resource:file://README.md" in rendered
+
+
+@pytest.mark.asyncio
+async def test_capability_catalog_discovery_can_limit_and_disable_sections() -> None:
+    actions = ActionRegistry()
+    actions.register(ActionSpec(name="finish", description="Finish"))
+    tools = ToolRegistry()
+
+    async def handler(invocation: ToolInvocation) -> ToolResult:
+        return ToolResult(call_id=invocation.call_id, tool_name=invocation.tool_name)
+
+    tools.register(ToolSpec(name="alpha", description="Alpha tool"), handler)
+    tools.register(ToolSpec(name="beta", description="Beta tool"), handler)
+    catalog = CapabilityCatalog(actions=actions, tools=tools)
+
+    result = catalog.discover(
+        CapabilityQuery(
+            query="tool",
+            limit=1,
+            include_actions=False,
+            include_skills=False,
+            include_mcp=False,
+        )
+    )
+
+    assert len(result.matches) == 1
+    assert result.matches[0].kind == "tool"
+    assert result.omitted_count == 1
+    assert "action" not in result.manifest()["counts"]
 

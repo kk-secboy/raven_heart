@@ -35,7 +35,13 @@ from agent_core.artifacts import (
     MarkdownArtifactStore,
     SQLiteArtifactStore,
 )
-from agent_core.capabilities import CapabilityCatalog
+from agent_core.capabilities import (
+    CapabilityCatalog,
+    CapabilityDiscoveryResult,
+    CapabilityKind,
+    CapabilityMatch,
+    CapabilityQuery,
+)
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
 from agent_core.events import (
@@ -308,6 +314,10 @@ __all__ = [
     "ApprovalStatus",
     "CapabilitySet",
     "CapabilityCatalog",
+    "CapabilityDiscoveryResult",
+    "CapabilityKind",
+    "CapabilityMatch",
+    "CapabilityQuery",
     "CancelToken",
     "CapabilityTrace",
     "CompositePolicy",

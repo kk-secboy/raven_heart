@@ -114,6 +114,14 @@ selected session through `AgentSessionManager`, and record handoff manifests.
 Runtime code owns product queues, cross-process scheduling, retries, UI
 orchestration, and domain delegation strategy.
 
+`CapabilityCatalog.discover()` is the SDK-level discovery surface across
+actions, local tools, skills, MCP tools, MCP resources, MCP prompts, and MCP
+servers. It returns `CapabilityDiscoveryResult` manifests that can be injected
+into prompts, stored in traces, or shown by lightweight runtimes without knowing
+which subsystem supplied the match. Runtimes still own concrete MCP sessions,
+tool credentials, external search indexes, UI filtering, and distributed
+capability refresh.
+
 `RunTraceStorePort` gives the bundle a persistence boundary. The SDK ships
 in-memory, SQLite, and Markdown stores for lightweight use, while production
 PG/object-storage/observability integrations should live in runtime or adapter
