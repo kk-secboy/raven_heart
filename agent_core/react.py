@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, TypeVar
 
 from agent_core.actions import (
@@ -44,6 +44,7 @@ from agent_core.providers import (
     LLMProviderPort,
     LLMRequest,
     LLMResponse,
+    LLMResponseFormat,
     LLMStreamAccumulator,
 )
 from agent_core.skills import SkillsContext
@@ -196,6 +197,9 @@ class ReActExecutor:
                         LLMRequest(
                             messages=list(messages),
                             model=self.config.model,
+                            response_format=_structured_response_format(
+                                self.config.structured_output
+                            ),
                             metadata=_provider_request_metadata(self.config.budget),
                         ),
                         run=run,
@@ -662,9 +666,9 @@ class ReActExecutor:
         run: RunState,
         turn_id: str,
     ) -> LLMResponse:
-        request = LLMRequest(
+        request = replace(
+            request,
             messages=tuple(request.messages),
-            model=request.model,
             metadata={
                 **request.metadata,
                 "run_id": run.run_id,
@@ -1187,6 +1191,19 @@ def _provider_request_metadata(budget: RuntimeBudget) -> dict[str, Any]:
     if budget.max_cost_usd is not None:
         metadata["max_cost_usd"] = budget.max_cost_usd
     return metadata
+
+
+def _structured_response_format(spec: StructuredOutputSpec | None) -> LLMResponseFormat | None:
+    if spec is None:
+        return None
+    return LLMResponseFormat(
+        kind="json_schema",
+        name=spec.name,
+        description=spec.description,
+        schema=spec.schema,
+        strict=True,
+        metadata={"source": "structured_output"},
+    )
 
 
 def _deadline_after(timeout_seconds: float | None) -> float | None:

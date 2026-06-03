@@ -193,6 +193,13 @@ estimated token/output size. Routed call manifests retain the selected
 capability profile, and trace evals can require specific provider names, model
 names, or capabilities such as `structured_output`, `json_mode`, `tool_calls`,
 and `streaming`.
+`LLMToolContract`, `LLMToolChoice`, and `LLMResponseFormat` are request-level
+contracts for native model tools and constrained output. They deliberately stop
+at the provider-neutral shape: OpenAI-compatible tools/response formats,
+Anthropic tool use, Gemini function declarations, local-model JSON schemas, and
+gateway payload details remain adapter responsibilities. `LLMModelCapabilities`
+can reject routes that cannot satisfy these contracts before a provider call is
+attempted.
 `TransportLLMProvider`, `LLMTransportPort`, and `LLMProviderCodecPort` form the
 dependency-free adapter boundary: runtimes can provide a transport and optional
 vendor codec while the SDK keeps provider-neutral request, response, stream, and

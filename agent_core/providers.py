@@ -7,6 +7,8 @@ from typing import Any, AsyncIterator, Literal, Protocol
 
 
 MessageRole = Literal["system", "user", "assistant", "tool"]
+LLMToolChoiceMode = Literal["auto", "none", "required", "tool"]
+LLMResponseFormatKind = Literal["text", "json", "json_schema"]
 
 
 @dataclass(frozen=True)
@@ -120,12 +122,125 @@ class LLMUsageLimits:
 
 
 @dataclass(frozen=True)
+class LLMToolContract:
+    """Provider-neutral function/tool contract for native model tool calling."""
+
+    name: str
+    description: str = ""
+    parameters_schema: dict[str, Any] = field(default_factory=dict)
+    strict: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("tool contract name is required")
+        object.__setattr__(self, "parameters_schema", dict(self.parameters_schema))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    @classmethod
+    def from_tool_spec(
+        cls,
+        spec: Any,
+        *,
+        strict: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> "LLMToolContract":
+        """Build a provider-native tool contract from a ToolSpec-like object."""
+
+        return cls(
+            name=str(getattr(spec, "name", "") or ""),
+            description=str(getattr(spec, "description", "") or ""),
+            parameters_schema=dict(getattr(spec, "parameters_schema", {}) or {}),
+            strict=strict,
+            metadata={
+                "source": "tool_spec",
+                **dict(getattr(spec, "metadata", {}) or {}),
+                **dict(metadata or {}),
+            },
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-tool-contract/v1",
+            "name": self.name,
+            "description": self.description,
+            "parameters_schema": dict(self.parameters_schema),
+            "strict": self.strict,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class LLMToolChoice:
+    """Provider-neutral native tool selection policy."""
+
+    mode: LLMToolChoiceMode = "auto"
+    tool_name: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"auto", "none", "required", "tool"}:
+            raise ValueError(f"unsupported tool choice mode: {self.mode}")
+        if self.mode == "tool" and not self.tool_name:
+            raise ValueError("tool choice mode 'tool' requires tool_name")
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-tool-choice/v1",
+            "mode": self.mode,
+            "tool_name": self.tool_name,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class LLMResponseFormat:
+    """Provider-neutral response format contract."""
+
+    kind: LLMResponseFormatKind = "text"
+    name: str = ""
+    description: str = ""
+    schema: dict[str, Any] = field(default_factory=dict)
+    strict: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"text", "json", "json_schema"}:
+            raise ValueError(f"unsupported response format kind: {self.kind}")
+        if self.kind == "json_schema" and not self.schema:
+            raise ValueError("json_schema response format requires schema")
+        object.__setattr__(self, "schema", dict(self.schema))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-response-format/v1",
+            "kind": self.kind,
+            "name": self.name,
+            "description": self.description,
+            "schema": dict(self.schema),
+            "strict": self.strict,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class LLMRequest:
     messages: list[LLMMessage]
     model: str = ""
     temperature: float | None = None
     max_output_tokens: int | None = None
+    tools: tuple[LLMToolContract, ...] = ()
+    tool_choice: LLMToolChoice | None = None
+    response_format: LLMResponseFormat | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tools", tuple(self.tools))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+        if self.tool_choice is not None and self.tool_choice.mode != "none" and not self.tools:
+            raise ValueError("tool_choice requires at least one tool contract")
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -135,6 +250,10 @@ class LLMRequest:
             "max_output_tokens": self.max_output_tokens,
             "message_count": len(self.messages),
             "messages": [message.manifest() for message in self.messages],
+            "tool_count": len(self.tools),
+            "tools": [tool.manifest() for tool in self.tools],
+            "tool_choice": self.tool_choice.manifest() if self.tool_choice else None,
+            "response_format": self.response_format.manifest() if self.response_format else None,
             "metadata": dict(self.metadata),
         }
 
@@ -297,6 +416,11 @@ class DefaultLLMProviderCodec:
                 }
                 for message in request.messages
             ],
+            "tools": [tool.manifest() for tool in request.tools],
+            "tool_choice": request.tool_choice.manifest() if request.tool_choice else None,
+            "response_format": request.response_format.manifest()
+            if request.response_format
+            else None,
             "metadata": dict(request.metadata),
         }
 
@@ -426,6 +550,16 @@ class LLMModelCapabilities:
             return False
         if _metadata_bool(request.metadata, "requires_streaming") and not self.supports_streaming:
             return False
+        if request.tools and not self.supports_tool_calls:
+            return False
+        if request.response_format is not None:
+            if request.response_format.kind == "json" and not self.supports_json_mode:
+                return False
+            if (
+                request.response_format.kind == "json_schema"
+                and not self.supports_structured_output
+            ):
+                return False
         if _metadata_bool(request.metadata, "requires_tool_calls") and not self.supports_tool_calls:
             return False
         if (

@@ -136,5 +136,8 @@ async def test_agent_runner_injects_structured_output_schema_into_prompt() -> No
     assert "existing schema note" in prompt_text
     assert "== Structured Output ==" in prompt_text
     assert '"risk"' in prompt_text
+    assert provider.requests[0].response_format is not None
+    assert provider.requests[0].response_format.kind == "json_schema"
+    assert provider.requests[0].response_format.name == "risk_summary"
     assert outcome.prompt_manifest["metadata"]["structured_output"]["name"] == "risk_summary"
     assert outcome.result.metadata["structured_output"]["value"]["summary"] == "ready"

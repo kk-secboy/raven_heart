@@ -306,6 +306,11 @@ ranking contract used by lightweight core stores.
 - `LLMTransportPort`, `LLMProviderCodecPort`, `DefaultLLMProviderCodec`, and
   `TransportLLMProvider` for dependency-free provider adapter contracts.
 - Provider registry and routing.
+- `LLMToolContract`, `LLMToolChoice`, and `LLMResponseFormat` for
+  provider-neutral native tool/function calling and JSON/JSON-schema response
+  contracts.
+- `LLMToolContract.from_tool_spec()` for deriving native model tool contracts
+  from the same `ToolSpec` schema used by the SDK tool center.
 - `LLMModelCapabilities` for provider-neutral model context windows, output
   limits, streaming support, tool-call support, JSON mode, structured output,
   and modality declarations.
@@ -330,6 +335,10 @@ provider-neutral request/response/stream shapes, stream aggregation, and
 error/retry mapping. When runtimes declare `LLMModelCapabilities`,
 `LLMProviderCenter` can avoid routes that cannot satisfy requested model
 features or declared token/output limits.
+Native tool calling and response-format contracts are represented as SDK
+request fields, not vendor payloads. Adapter packages translate them to
+OpenAI-compatible `tools`/`response_format`, Anthropic tool use, Gemini function
+calling, local model schemas, or gateway-specific payloads.
 The routed request manifest records the selected provider, model priority, and
 model capabilities so trace/eval contracts can later prove which model ability
 was actually used for structured output, JSON mode, tool calls, streaming, or
@@ -582,6 +591,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider call audit | MVP implemented |
 | Provider transport contract | MVP implemented |
 | Provider model capabilities | MVP implemented |
+| Provider tool/response-format contracts | MVP implemented |
 | Embedding provider center | MVP implemented |
 | Semantic ranking contract | MVP implemented |
 | Embedding trace/eval contracts | MVP implemented |

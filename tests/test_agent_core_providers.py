@@ -17,9 +17,12 @@ from agent_core.providers import (
     LLMProviderNotFoundError,
     LLMRequest,
     LLMResponse,
+    LLMResponseFormat,
     LLMRetryPolicy,
     LLMStreamAccumulator,
     LLMStreamEvent,
+    LLMToolChoice,
+    LLMToolContract,
     LLMUsageLimits,
     RetryHint,
     TransportLLMProvider,
@@ -27,6 +30,7 @@ from agent_core.providers import (
 )
 from agent_core.react import ReActConfig, ReActExecutor
 from agent_core.testing import MockLLMProvider, MockToolRuntime
+from agent_core.tools import ToolSpec
 
 
 class _FailingProvider:
@@ -191,6 +195,74 @@ def test_provider_center_search_manifest_and_missing_provider() -> None:
         center.select(LLMRequest(messages=[], metadata={"provider": "missing"}))
 
 
+def test_llm_request_supports_provider_neutral_tool_and_response_contracts() -> None:
+    request = LLMRequest(
+        messages=[LLMMessage(role="user", content="look up target")],
+        tools=(
+            LLMToolContract(
+                name="lookup",
+                description="Look up one record",
+                parameters_schema={
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {"id": {"type": "string"}},
+                },
+                strict=True,
+            ),
+        ),
+        tool_choice=LLMToolChoice(mode="tool", tool_name="lookup"),
+        response_format=LLMResponseFormat(
+            kind="json_schema",
+            name="lookup_result",
+            schema={
+                "type": "object",
+                "required": ["summary"],
+                "properties": {"summary": {"type": "string"}},
+            },
+            strict=True,
+        ),
+    )
+    manifest = request.manifest()
+    encoded = DefaultLLMProviderCodec().encode_request(request)
+
+    assert manifest["tool_count"] == 1
+    assert manifest["tools"][0]["name"] == "lookup"
+    assert manifest["tool_choice"]["mode"] == "tool"
+    assert manifest["response_format"]["kind"] == "json_schema"
+    assert encoded["tools"][0]["parameters_schema"]["required"] == ["id"]
+    assert encoded["tool_choice"]["tool_name"] == "lookup"
+    assert encoded["response_format"]["name"] == "lookup_result"
+
+    with pytest.raises(ValueError):
+        LLMToolChoice(mode="tool")
+    with pytest.raises(ValueError):
+        LLMRequest(messages=[], tool_choice=LLMToolChoice(mode="required"))
+
+
+def test_llm_tool_contract_can_be_derived_from_tool_spec_like_objects() -> None:
+    contract = LLMToolContract.from_tool_spec(
+        ToolSpec(
+            name="scan",
+            description="Run scan",
+            parameters_schema={
+                "type": "object",
+                "properties": {"target": {"type": "string"}},
+            },
+            metadata={"risk": "read_only"},
+        ),
+        strict=True,
+        metadata={"surface": "native_tool_call"},
+    )
+
+    assert contract.name == "scan"
+    assert contract.description == "Run scan"
+    assert contract.parameters_schema["properties"]["target"]["type"] == "string"
+    assert contract.strict is True
+    assert contract.metadata["source"] == "tool_spec"
+    assert contract.metadata["risk"] == "read_only"
+    assert contract.metadata["surface"] == "native_tool_call"
+
+
 @pytest.mark.asyncio
 async def test_provider_center_routes_by_declared_model_capabilities() -> None:
     small = MockLLMProvider(["small"])
@@ -250,6 +322,85 @@ async def test_provider_center_routes_by_declared_model_capabilities() -> None:
     assert route.provider_name == "strong"
     assert route.metadata["model_capabilities"]["supports_json_mode"] is True
     assert manifest["providers"][0]["default_capabilities"]["context_window_tokens"] == 512
+
+
+@pytest.mark.asyncio
+async def test_provider_center_routes_by_native_tool_and_response_format_contracts() -> None:
+    small = MockLLMProvider(["small"])
+    capable = MockLLMProvider(["capable"])
+    center = LLMProviderCenter(default_provider="small")
+    center.register(
+        "small",
+        small,
+        default_model="small-mini",
+        priority=10,
+        default_capabilities=LLMModelCapabilities(
+            supports_tool_calls=False,
+            supports_structured_output=False,
+            supports_json_mode=False,
+        ),
+    )
+    center.register(
+        "capable",
+        capable,
+        default_model="capable-pro",
+        priority=1,
+        default_capabilities=LLMModelCapabilities(
+            supports_tool_calls=True,
+            supports_structured_output=True,
+            supports_json_mode=True,
+        ),
+    )
+
+    response = await center.complete(
+        LLMRequest(
+            messages=[],
+            tools=(LLMToolContract(name="lookup"),),
+            response_format=LLMResponseFormat(
+                kind="json_schema",
+                name="answer",
+                schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+            ),
+        )
+    )
+
+    assert response.content == "capable"
+    assert not small.requests
+    assert capable.requests[0].model == "capable-pro"
+    assert capable.requests[0].tools[0].name == "lookup"
+    assert capable.requests[0].response_format is not None
+    assert center.calls[0].metadata["original_request"]["tool_count"] == 1
+    assert (
+        center.calls[0].metadata["original_request"]["response_format"]["kind"]
+        == "json_schema"
+    )
+
+
+def test_model_capabilities_understand_response_format_kinds() -> None:
+    json_only = LLMModelCapabilities(supports_json_mode=True)
+    structured = LLMModelCapabilities(supports_structured_output=True)
+
+    assert json_only.supports_request(
+        LLMRequest(messages=[], response_format=LLMResponseFormat(kind="json"))
+    )
+    assert not json_only.supports_request(
+        LLMRequest(
+            messages=[],
+            response_format=LLMResponseFormat(
+                kind="json_schema",
+                schema={"type": "object"},
+            ),
+        )
+    )
+    assert structured.supports_request(
+        LLMRequest(
+            messages=[],
+            response_format=LLMResponseFormat(
+                kind="json_schema",
+                schema={"type": "object"},
+            ),
+        )
+    )
 
 
 @pytest.mark.asyncio
