@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
+from agent_core.backends import StorageBackendKind, storage_backend_manifest
 from agent_core.search import SearchDocument, rank_documents
 
 
@@ -172,6 +173,23 @@ class MemoryStoreSpec:
             "readable": self.readable,
             "writable": self.writable,
             "backend_kind": self.backend_kind,
+            "backend": storage_backend_manifest(
+                role="memory",
+                kind=cast(StorageBackendKind, self.backend_kind),
+                name=self.name,
+                namespace=",".join(self.namespaces),
+                capabilities=tuple(
+                    name
+                    for name, enabled in {
+                        "keyword": self.supports_keyword,
+                        "semantic": self.supports_semantic,
+                        "vector": self.supports_vector,
+                        "graph": self.supports_graph,
+                    }.items()
+                    if enabled
+                ),
+                metadata={"tags": list(self.tags)},
+            ),
             "namespaces": list(self.namespaces),
             "capabilities": {
                 "keyword": self.supports_keyword,
@@ -589,6 +607,7 @@ class InMemoryMemoryStore(MemoryPort):
         return {
             "schema_version": "agent-core-in-memory-memory-store/v1",
             "backend_kind": "in_memory",
+            "backend": storage_backend_manifest(role="memory", kind="in_memory"),
             "record_count": len(self.records),
         }
 
@@ -625,6 +644,12 @@ class SQLiteMemoryStore(MemoryPort):
         return {
             "schema_version": "agent-core-sqlite-memory-store/v1",
             "backend_kind": "sqlite",
+            "backend": storage_backend_manifest(
+                role="memory",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("keyword", "semantic"),
+            ),
             "path": str(self.path),
             "record_count": len(self._records()),
         }
@@ -705,6 +730,12 @@ class MarkdownMemoryStore(MemoryPort):
         return {
             "schema_version": "agent-core-markdown-memory-store/v1",
             "backend_kind": "markdown",
+            "backend": storage_backend_manifest(
+                role="memory",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("keyword", "semantic"),
+            ),
             "root": str(self.root),
             "path": str(self.path),
             "record_count": len(self._records()),

@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from agent_core.backends import storage_backend_manifest
+
 
 @dataclass(frozen=True)
 class ArtifactRecord:
@@ -85,6 +87,7 @@ class InMemoryArtifactStore:
     def manifest(self) -> dict[str, object]:
         return {
             "schema_version": "agent-core-artifact-store/v1",
+            "backend": storage_backend_manifest(role="artifact", kind="in_memory"),
             "artifacts": [record.manifest() for record in self.records.values()],
         }
 
@@ -159,6 +162,12 @@ class SQLiteArtifactStore:
         records = self.records()
         return {
             "schema_version": "agent-core-sqlite-artifact-store/v1",
+            "backend": storage_backend_manifest(
+                role="artifact",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("put_text", "get", "records"),
+            ),
             "path": str(self.path),
             "artifact_count": len(records),
             "artifacts": [record.manifest() for record in records],
@@ -231,6 +240,12 @@ class MarkdownArtifactStore:
         records = self.records()
         return {
             "schema_version": "agent-core-markdown-artifact-store/v1",
+            "backend": storage_backend_manifest(
+                role="artifact",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("put_text", "get", "records"),
+            ),
             "path": str(self.path),
             "artifact_count": len(records),
             "artifacts": [record.manifest() for record in records],

@@ -35,6 +35,12 @@ from agent_core.artifacts import (
     MarkdownArtifactStore,
     SQLiteArtifactStore,
 )
+from agent_core.backends import (
+    StorageBackendKind,
+    StorageBackendRole,
+    StorageBackendSpec,
+    storage_backend_manifest,
+)
 from agent_core.capabilities import (
     CapabilityCatalog,
     CapabilityDiscoveryResult,
@@ -450,6 +456,9 @@ __all__ = [
     "SkillSpec",
     "SkillsContext",
     "SkillViewWindow",
+    "StorageBackendKind",
+    "StorageBackendRole",
+    "StorageBackendSpec",
     "compute_skill_hash",
     "apply_reduction_to_timeline",
     "handoff_spec_from_session",
@@ -511,6 +520,7 @@ __all__ = [
     "StructuredOutputSpec",
     "StructuredOutputValidatorPort",
     "structured_output_feedback",
+    "storage_backend_manifest",
     "TERMINAL_RUN_STATUSES",
     "TERMINAL_PLAN_STEP_STATUSES",
     "TERMINAL_TURN_STATUSES",

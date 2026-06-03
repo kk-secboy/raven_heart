@@ -15,6 +15,7 @@ from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from agent_core.actions import ParsedAction
+from agent_core.backends import storage_backend_manifest
 from agent_core.tools import ToolInvocation
 
 
@@ -151,7 +152,11 @@ class NullPolicyDecisionStore(PolicyDecisionStorePort):
         return ()
 
     def manifest(self) -> dict[str, Any]:
-        return {"schema_version": "agent-core-null-policy-decision-store/v1", "record_count": 0}
+        return {
+            "schema_version": "agent-core-null-policy-decision-store/v1",
+            "backend": storage_backend_manifest(role="policy_decision", kind="none"),
+            "record_count": 0,
+        }
 
 
 class InMemoryPolicyDecisionStore(PolicyDecisionStorePort):
@@ -190,6 +195,7 @@ class InMemoryPolicyDecisionStore(PolicyDecisionStorePort):
         records = tuple(sorted(self._records.values(), key=_policy_decision_sort_key))
         return {
             "schema_version": "agent-core-in-memory-policy-decision-store/v1",
+            "backend": storage_backend_manifest(role="policy_decision", kind="in_memory"),
             "record_count": len(records),
             "records": [record.manifest() for record in records],
         }
@@ -256,6 +262,12 @@ class SQLitePolicyDecisionStore(PolicyDecisionStorePort):
         records = self._records()
         return {
             "schema_version": "agent-core-sqlite-policy-decision-store/v1",
+            "backend": storage_backend_manifest(
+                role="policy_decision",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("submit", "records"),
+            ),
             "path": str(self.path),
             "record_count": len(records),
             "records": [record.manifest() for record in records],
@@ -349,6 +361,12 @@ class MarkdownPolicyDecisionStore(PolicyDecisionStorePort):
         records = self._records()
         return {
             "schema_version": "agent-core-markdown-policy-decision-store/v1",
+            "backend": storage_backend_manifest(
+                role="policy_decision",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("submit", "records"),
+            ),
             "path": str(self.path),
             "record_count": len(records),
             "records": [record.manifest() for record in records],

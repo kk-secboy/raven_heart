@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from agent_core.backends import storage_backend_manifest
 from agent_core.harness import AgentJournalSnapshot, TERMINAL_RUN_STATUSES
 
 
@@ -266,7 +267,11 @@ class NullRunTraceStore(RunTraceStorePort):
         return ()
 
     def manifest(self) -> dict[str, Any]:
-        return {"schema_version": "agent-core-null-run-trace-store/v1", "record_count": 0}
+        return {
+            "schema_version": "agent-core-null-run-trace-store/v1",
+            "backend": storage_backend_manifest(role="run_trace", kind="none"),
+            "record_count": 0,
+        }
 
 
 class InMemoryRunTraceStore(RunTraceStorePort):
@@ -294,6 +299,7 @@ class InMemoryRunTraceStore(RunTraceStorePort):
         records = tuple(sorted(self._records.values(), key=_trace_sort_key))
         return {
             "schema_version": "agent-core-in-memory-run-trace-store/v1",
+            "backend": storage_backend_manifest(role="run_trace", kind="in_memory"),
             "record_count": len(records),
             "records": [_trace_record_summary(record) for record in records],
         }
@@ -359,6 +365,12 @@ class SQLiteRunTraceStore(RunTraceStorePort):
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-sqlite-run-trace-store/v1",
+            "backend": storage_backend_manifest(
+                role="run_trace",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("save", "load", "records"),
+            ),
             "path": str(self.path),
         }
 
@@ -417,6 +429,12 @@ class MarkdownRunTraceStore(RunTraceStorePort):
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-markdown-run-trace-store/v1",
+            "backend": storage_backend_manifest(
+                role="run_trace",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("save", "load", "records"),
+            ),
             "path": str(self.path),
         }
 

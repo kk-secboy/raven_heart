@@ -25,6 +25,7 @@ ops agents, research agents, and future automation systems.
 - Runner-level automatic timeline reduction before prompt assembly.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
+- Unified storage backend manifests for core stores and runtime-owned backends.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Journal replay manifests and snapshot consistency audit.
 - Run trace bundle for provider/tool/approval/journal/event audit aggregation.
@@ -352,6 +353,13 @@ PG, graph memory, vector indexing, multi-tenant isolation, retention policy, or
 product audit. The SDK still owns the portable route/query manifest so these
 backends can be swapped without changing ReAct or harness semantics.
 
+Every core store manifest includes a shared `backend` block using
+`agent-core-storage-backend/v1`. It records the data role, backend kind,
+durability, inspectability, queryability, transaction support, and whether the
+backend is a core builtin. Runtime-owned PG, vector, graph, object-store, or
+product backends should export the same shape while living outside this
+repository.
+
 ### Planner
 
 - `PlannerPort` for plan-and-execute agents.
@@ -502,6 +510,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Capability discovery | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
 | Memory backend routing/specs | MVP implemented |
+| Unified storage backend manifests | MVP implemented |
 | Planner core | MVP implemented |
 | Approval core | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |

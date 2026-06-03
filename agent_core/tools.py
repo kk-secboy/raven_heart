@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from agent_core.backends import storage_backend_manifest
 from agent_core.prompt import estimate_tokens
 from agent_core.search import SearchDocument, rank_documents
 
@@ -940,6 +941,7 @@ class InMemoryToolReplayStore(ToolReplayStorePort):
         records = tuple(sorted(self._records.values(), key=lambda item: item.created_at))
         return {
             "schema_version": "agent-core-in-memory-tool-replay-store/v1",
+            "backend": storage_backend_manifest(role="tool_replay", kind="in_memory"),
             "record_count": len(records),
             "records": [record.manifest() for record in records],
         }
@@ -1001,6 +1003,12 @@ class SQLiteToolReplayStore(ToolReplayStorePort):
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-sqlite-tool-replay-store/v1",
+            "backend": storage_backend_manifest(
+                role="tool_replay",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("load", "save", "records"),
+            ),
             "path": str(self.path),
         }
 
@@ -1057,6 +1065,12 @@ class MarkdownToolReplayStore(ToolReplayStorePort):
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-markdown-tool-replay-store/v1",
+            "backend": storage_backend_manifest(
+                role="tool_replay",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("load", "save", "records"),
+            ),
             "path": str(self.path),
         }
 

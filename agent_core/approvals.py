@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from agent_core.backends import storage_backend_manifest
+
 from agent_core.policy import ApprovalRequest
 
 
@@ -427,7 +429,11 @@ class NullApprovalStore(ApprovalStorePort):
         return ()
 
     def manifest(self) -> dict[str, Any]:
-        return {"schema_version": "agent-core-null-approval-store/v1", "pending_count": 0}
+        return {
+            "schema_version": "agent-core-null-approval-store/v1",
+            "backend": storage_backend_manifest(role="approval", kind="none"),
+            "pending_count": 0,
+        }
 
 
 class InMemoryApprovalStore(ApprovalStorePort):
@@ -477,6 +483,7 @@ class InMemoryApprovalStore(ApprovalStorePort):
         records = self.records()
         return {
             "schema_version": "agent-core-in-memory-approval-store/v1",
+            "backend": storage_backend_manifest(role="approval", kind="in_memory"),
             "record_count": len(records),
             "pending_count": sum(1 for record in records if record.pending),
             "records": [record.manifest() for record in records],
@@ -551,6 +558,12 @@ class SQLiteApprovalStore(ApprovalStorePort):
         records = self.records()
         return {
             "schema_version": "agent-core-sqlite-approval-store/v1",
+            "backend": storage_backend_manifest(
+                role="approval",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("submit", "decide", "get", "pending"),
+            ),
             "path": str(self.path),
             "record_count": len(records),
             "pending_count": sum(1 for record in records if record.pending),
@@ -651,6 +664,12 @@ class MarkdownApprovalStore(ApprovalStorePort):
         records = self.records()
         return {
             "schema_version": "agent-core-markdown-approval-store/v1",
+            "backend": storage_backend_manifest(
+                role="approval",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("submit", "decide", "get", "pending"),
+            ),
             "path": str(self.path),
             "record_count": len(records),
             "pending_count": sum(1 for record in records if record.pending),

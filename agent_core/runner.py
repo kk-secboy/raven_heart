@@ -18,6 +18,7 @@ from uuid import uuid4
 from agent_core.actions import ActionRegistry, ActionVerifierPort
 from agent_core.approvals import ApprovalResumeContext, ApprovalStorePort, NullApprovalStore
 from agent_core.artifacts import ArtifactStorePort
+from agent_core.backends import storage_backend_manifest
 from agent_core.capabilities import CapabilityCatalog, CapabilityQuery
 from agent_core.config import AgentProfile, RuntimeBudget
 from agent_core.context import AgentContextPack, AgentPromptBuilder, ContextInjection
@@ -341,6 +342,7 @@ class InMemoryAgentRunStore:
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-in-memory-run-store/v1",
+            "backend": storage_backend_manifest(role="run_state", kind="in_memory"),
             "run_count": len(self._runs),
         }
 
@@ -427,6 +429,12 @@ class SQLiteAgentRunStore:
             count = conn.execute("SELECT COUNT(*) FROM managed_runs").fetchone()[0]
         return {
             "schema_version": "agent-core-sqlite-run-store/v1",
+            "backend": storage_backend_manifest(
+                role="run_state",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("save", "get", "list", "delete"),
+            ),
             "path": str(self.path),
             "run_count": int(count),
         }
@@ -468,6 +476,12 @@ class MarkdownAgentRunStore:
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-markdown-run-store/v1",
+            "backend": storage_backend_manifest(
+                role="run_state",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("save", "get", "list", "delete"),
+            ),
             "path": str(self.path),
             "run_count": len(self.list()),
         }

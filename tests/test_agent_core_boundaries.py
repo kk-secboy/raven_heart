@@ -134,6 +134,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "SQLitePlannerStore",
         "MarkdownMemoryStore",
         "MarkdownToolReplayStore",
+        "StorageBackendKind",
+        "StorageBackendRole",
+        "StorageBackendSpec",
         "RuleBasedPolicy",
         "RuleBasedMemoryGovernance",
         "PersistentToolReplay",
@@ -183,6 +186,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "TransportLLMProvider",
         "apply_reduction_to_timeline",
         "handoff_spec_from_session",
+        "storage_backend_manifest",
     }
 
     assert expected <= set(agent_core.__all__)

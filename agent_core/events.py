@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from agent_core.backends import storage_backend_manifest
+
 
 EventType = Literal[
     "run_started",
@@ -116,6 +118,7 @@ class ListEventSink:
         events = self.records()
         return {
             "schema_version": "agent-core-event-log/v1",
+            "backend": storage_backend_manifest(role="event_log", kind="in_memory"),
             "event_count": len(events),
             "events": [event.manifest() for event in events],
         }
@@ -167,6 +170,12 @@ class SQLiteEventSink:
         events = self.records()
         return {
             "schema_version": "agent-core-sqlite-event-sink/v1",
+            "backend": storage_backend_manifest(
+                role="event_log",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("emit", "records"),
+            ),
             "path": str(self.path),
             "event_count": len(events),
             "events": [event.manifest() for event in events],
@@ -234,6 +243,12 @@ class MarkdownEventSink:
         events = self.records()
         return {
             "schema_version": "agent-core-markdown-event-sink/v1",
+            "backend": storage_backend_manifest(
+                role="event_log",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("emit", "records"),
+            ),
             "path": str(self.path),
             "event_count": len(events),
             "events": [event.manifest() for event in events],

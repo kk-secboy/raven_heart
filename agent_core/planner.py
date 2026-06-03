@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from agent_core.backends import storage_backend_manifest
 from agent_core.runner import AgentRunOutcome, AgentRunRequest, AgentSessionManager
 
 
@@ -135,6 +136,7 @@ class InMemoryPlannerStore:
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-in-memory-planner-store/v1",
+            "backend": storage_backend_manifest(role="planner_state", kind="in_memory"),
             "plan_count": len(self._plans),
         }
 
@@ -183,6 +185,12 @@ class SQLitePlannerStore:
             count = conn.execute("SELECT COUNT(*) FROM plans").fetchone()[0]
         return {
             "schema_version": "agent-core-sqlite-planner-store/v1",
+            "backend": storage_backend_manifest(
+                role="planner_state",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("save", "load", "list", "delete"),
+            ),
             "path": str(self.path),
             "plan_count": int(count),
         }
@@ -240,6 +248,12 @@ class MarkdownPlannerStore:
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-markdown-planner-store/v1",
+            "backend": storage_backend_manifest(
+                role="planner_state",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("save", "load", "list", "delete"),
+            ),
             "path": str(self.path),
             "plan_count": len(self.list()),
         }

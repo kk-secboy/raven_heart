@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from agent_core.backends import storage_backend_manifest
 from agent_core.errors import HarnessError, ResumeError
 
 
@@ -749,6 +750,7 @@ class InMemoryJournalStore(AgentJournalStorePort):
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-in-memory-journal-store/v1",
+            "backend": storage_backend_manifest(role="journal", kind="in_memory"),
             "has_snapshot": self._snapshot is not None,
         }
 
@@ -798,6 +800,12 @@ class SQLiteJournalStore(AgentJournalStorePort):
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-sqlite-journal-store/v1",
+            "backend": storage_backend_manifest(
+                role="journal",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("snapshot", "checkpoint", "resume"),
+            ),
             "path": str(self.path),
         }
 
@@ -859,6 +867,12 @@ class MarkdownJournalStore(AgentJournalStorePort):
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-markdown-journal-store/v1",
+            "backend": storage_backend_manifest(
+                role="journal",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("snapshot", "checkpoint", "resume"),
+            ),
             "path": str(self.path),
         }
 

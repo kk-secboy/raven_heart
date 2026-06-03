@@ -67,6 +67,15 @@ The SDK must not require a production database driver. Production backends shoul
 be added by the host runtime or by separate adapter packages that implement the
 same ports.
 
+`StorageBackendSpec` and `storage_backend_manifest()` give every SDK store and
+runtime-owned store one shared backend manifest shape. The manifest records the
+store role, backend kind, durability, inspectability, queryability,
+transactionality, location, capabilities, and whether the implementation is a
+core builtin. Built-in stores use `in_memory`, `sqlite`, `markdown`, or `none`;
+runtime adapters can use `postgres`, `vector`, `graph`, `object_storage`,
+`product`, `external`, or `custom` without changing ReAct, harness, replay, or
+manager code.
+
 `AgentJournalReplay` turns a journal snapshot into a replayable event manifest
 and reports consistency issues before a runtime depends on that state for UI,
 debugging, audit, or resume decisions.
