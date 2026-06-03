@@ -120,6 +120,8 @@ agent_core never imports runtime
 - `AgentManagerConcurrencyPolicy.reject_when_full=False` for SDK-managed
   pending queues when local capacity is full.
 - Unclaimed queued runs can be cancelled without consuming later capacity.
+- Restored queued/running/cancelling runs are marked `interrupted` with
+  `restored_from_status` metadata instead of being auto-executed.
 - `AgentManagerScheduleSnapshot` and `AgentManagerCapacityStatus` for
   provider-neutral queue/schedule/capacity audit before runtime scheduling.
 

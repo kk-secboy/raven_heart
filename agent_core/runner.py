@@ -1522,10 +1522,23 @@ _RUN_MARKDOWN_RE = re.compile(r"<!-- agent-core-run (?P<payload>[A-Za-z0-9+/=]+)
 def _restored_run(run: ManagedAgentRun, *, mark_interrupted: bool) -> ManagedAgentRun:
     if not mark_interrupted or run.status not in _ACTIVE_MANAGED_RUN_STATUSES:
         return run
+    reason = (
+        "queued run was restored without an executable request"
+        if run.status == "queued"
+        else "run was active when manager state was restored"
+    )
     return _replace_run(
         run,
         status="interrupted",
-        error=run.error or "run was active when manager state was restored",
+        error=run.error or reason,
+        metadata={
+            **dict(run.metadata),
+            "restored": True,
+            "restored_from_status": run.status,
+            "restore_action": "marked_interrupted",
+            "restore_reason": reason,
+            "restored_queued_for_capacity": bool(run.metadata.get("queued_for_capacity")),
+        },
     )
 
 

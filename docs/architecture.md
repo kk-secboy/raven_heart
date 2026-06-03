@@ -144,7 +144,10 @@ manager explicit active-run and per-session capacity guards. When
 `reject_when_full` is false, the core manager keeps overflow work as queued run
 state and starts it after local capacity is released. Unclaimed queued runs can
 be cancelled as terminal manager state without cancelling the active session
-token or consuming later capacity.
+token or consuming later capacity. Restored queued, running, and cancelling
+manager records are marked `interrupted` with `restored_from_status` metadata
+because the SDK run store intentionally persists state manifests, not executable
+request objects.
 `AgentManagerScheduleSnapshot` and `AgentManagerCapacityStatus` expose
 provider-neutral schedule/capacity audit manifests so runtimes can inspect
 availability, active claims, pending queues, interrupted restored runs, and

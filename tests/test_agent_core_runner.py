@@ -577,8 +577,37 @@ def test_markdown_agent_run_store_marks_restored_active_runs_interrupted(tmp_pat
 
     assert run.status == "interrupted"
     assert "active when manager state was restored" in run.error
+    assert run.metadata["restored"] is True
+    assert run.metadata["restored_from_status"] == "running"
+    assert run.metadata["restore_action"] == "marked_interrupted"
     assert "long task" not in text
     assert "<!-- agent-core-run " in text
+
+
+def test_agent_run_store_marks_restored_queued_capacity_run_interrupted_with_reason(tmp_path) -> None:
+    path = tmp_path / "runs.md"
+    store = MarkdownAgentRunStore(path)
+    store.save(
+        ManagedAgentRun(
+            run_key="queued-1",
+            session_name="session",
+            task="queued task",
+            status="queued",
+            metadata={"queued_for_capacity": True},
+        )
+    )
+
+    restored = AgentSessionManager(run_store=MarkdownAgentRunStore(path))
+    run = restored.run_state("queued-1")
+    snapshot = restored.schedule_snapshot().manifest()
+
+    assert run.status == "interrupted"
+    assert "queued run was restored without an executable request" in run.error
+    assert run.metadata["restored"] is True
+    assert run.metadata["restored_from_status"] == "queued"
+    assert run.metadata["restored_queued_for_capacity"] is True
+    assert snapshot["queued_run_count"] == 0
+    assert snapshot["status_counts"]["interrupted"] == 1
 
 
 def test_agent_session_manager_schedule_snapshot_restores_interrupted_runs_without_capacity_claim(
