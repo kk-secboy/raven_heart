@@ -8,6 +8,8 @@ from agent_core import (
     ApprovalResumeContext,
     InMemoryApprovalStore,
     ListEventSink,
+    MarkdownApprovalStore,
+    SQLiteApprovalStore,
 )
 from agent_core.actions import ActionRegistry
 from agent_core.policy import PolicyRule, RuleBasedPolicy
@@ -82,6 +84,71 @@ async def test_approval_resume_context_exports_approved_subject_grants() -> None
     assert manifest["approved_count"] == 1
     assert manifest["grants"][0]["decision_metadata"]["ticket"] == "APP-1"
     assert manifest["metadata"]["source"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_approval_store_persists_records_across_instances(tmp_path) -> None:
+    path = tmp_path / "approvals.sqlite"
+    first = SQLiteApprovalStore(path)
+    request = ApprovalRequest(
+        reason="release requires approval",
+        subject="tool:deploy",
+        metadata={"rule": "release"},
+    )
+
+    record = await first.submit(request, run_id="run-1", turn_id="turn-1")
+    await first.decide(
+        record.approval_id,
+        ApprovalDecisionRecord(
+            status="approved",
+            actor="operator",
+            reason="ok",
+            metadata={"ticket": "APP-1"},
+        ),
+    )
+    second = SQLiteApprovalStore(path)
+    restored = await second.get(record.approval_id)
+    manifest = second.manifest()
+
+    assert restored is not None
+    assert restored.status == "approved"
+    assert restored.request.subject == "tool:deploy"
+    assert restored.decision is not None
+    assert restored.decision.metadata["ticket"] == "APP-1"
+    assert await second.pending() == ()
+    assert manifest["schema_version"] == "agent-core-sqlite-approval-store/v1"
+    assert manifest["record_count"] == 1
+    assert manifest["pending_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_markdown_approval_store_persists_records_and_hides_payload_text(tmp_path) -> None:
+    path = tmp_path / "approvals.md"
+    first = MarkdownApprovalStore(path)
+    request = ApprovalRequest(
+        reason="comment marker --> should not break markdown",
+        subject="action:finish",
+        metadata={"rule": "finish-approval"},
+    )
+
+    record = await first.submit(request, run_id="run-1", turn_id="turn-1")
+    await first.decide(
+        record.approval_id,
+        ApprovalDecisionRecord(status="rejected", actor="operator", reason="not yet"),
+    )
+    second = MarkdownApprovalStore(path)
+    restored = await second.get(record.approval_id)
+    manifest = second.manifest()
+    text = path.read_text(encoding="utf-8")
+
+    assert restored is not None
+    assert restored.status == "rejected"
+    assert restored.decision is not None
+    assert restored.decision.actor == "operator"
+    assert "comment marker --> should not break markdown" not in text
+    assert manifest["schema_version"] == "agent-core-markdown-approval-store/v1"
+    assert manifest["record_count"] == 1
+    assert manifest["records"][0]["request"]["subject"] == "action:finish"
 
 
 @pytest.mark.asyncio

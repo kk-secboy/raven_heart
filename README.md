@@ -122,6 +122,8 @@ agent_core never imports runtime
 - `ApprovalRequest` manifests produced by policy decisions.
 - `ApprovalStorePort` for approval queues.
 - `InMemoryApprovalStore` for tests and lightweight runtimes.
+- `SQLiteApprovalStore` and `MarkdownApprovalStore` for durable local or
+  inspectable SDK runs.
 - `NullApprovalStore` for runtimes that only need per-run approval metadata.
 - `ApprovalRecord` and `ApprovalDecisionRecord` manifests for audit/replay.
 - `ApprovalResumeContext` for passing approved decisions into resumed runs.
@@ -206,7 +208,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, workflow replay DB |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, build artifacts |
-| Approvals | `ApprovalStorePort` | Null store, in-memory approval queue | Approval service, ticketing/workflow DB, operator UI |
+| Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
 
 This keeps `agent_core` small and importable while still leaving a clean path to

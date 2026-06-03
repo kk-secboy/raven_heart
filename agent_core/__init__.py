@@ -20,7 +20,9 @@ from agent_core.approvals import (
     ApprovalStatus,
     ApprovalStorePort,
     InMemoryApprovalStore,
+    MarkdownApprovalStore,
     NullApprovalStore,
+    SQLiteApprovalStore,
 )
 from agent_core.artifacts import ArtifactRecord, ArtifactStorePort, InMemoryArtifactStore
 from agent_core.capabilities import CapabilityCatalog
@@ -179,6 +181,7 @@ __all__ = [
     "ApprovalGrant",
     "ApprovalRecord",
     "ApprovalResumeContext",
+    "ApprovalStorePort",
     "AllowAllPolicy",
     "AllowAllMemoryGovernance",
     "AgentContextPack",
@@ -200,7 +203,6 @@ __all__ = [
     "ArtifactStorePort",
     "ApprovalRequest",
     "ApprovalStatus",
-    "ApprovalStorePort",
     "CapabilitySet",
     "CapabilityCatalog",
     "CancelToken",
@@ -288,6 +290,7 @@ __all__ = [
     "InMemoryPlanner",
     "MarkdownMemoryStore",
     "MarkdownJournalStore",
+    "MarkdownApprovalStore",
     "MemoryCenter",
     "MemoryGovernanceDecision",
     "MemoryGovernanceDeniedError",
@@ -305,6 +308,7 @@ __all__ = [
     "PersistentAgentJournal",
     "PersistentToolReplay",
     "RuleBasedMemoryGovernance",
+    "SQLiteApprovalStore",
     "SQLiteToolReplayStore",
     "SQLiteMemoryStore",
     "TERMINAL_RUN_STATUSES",

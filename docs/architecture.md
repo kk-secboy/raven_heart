@@ -46,7 +46,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | PG, object storage, workflow replay DB |
 | Artifacts | `ArtifactStorePort` | In-memory artifact store | Filesystem, object storage, CI/build artifacts |
-| Approvals | `ApprovalStorePort` | Null store, in-memory approval queue | Approval service, ticketing/workflow DB, operator UI |
+| Approvals | `ApprovalStorePort` | Null, in-memory, SQLite, Markdown | Approval service, ticketing/workflow DB, operator UI |
 | Events | `EventSinkPort` | Protocol only | UI stream, logs, metrics, audit pipeline |
 
 The SDK must not require a production database driver. Production backends should
@@ -103,6 +103,10 @@ package that implements the same port.
 produce `ApprovalRequest` manifests; ReAct execution records them as
 `ApprovalRecord` entries and emits `approval_requested` events. Runtime code owns
 the approval UI, identity checks, notifications, and durable workflow backend.
+The SDK ships Null, in-memory, SQLite, and Markdown stores so lightweight runs
+can persist approval state without adopting a product database. Production
+approval services, ticketing systems, and RBAC should live in the runtime or a
+separate adapter package.
 
 `ApprovalResumeContext` is the core continuation contract. A runtime can resolve
 an approval through any backend, convert the resulting `ApprovalRecord` into a
