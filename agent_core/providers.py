@@ -359,24 +359,12 @@ class LLMProviderCenter(LLMProviderPort):
             routed = self._route_request(request, entry)
             attempts = self.max_retries + 1
             for attempt in range(attempts):
-                usage = UsageInfo()
                 try:
-                    async for event in entry.provider.stream(routed):
-                        if event.usage is not None:
-                            usage = event.usage
-                        yield LLMStreamEvent(
-                            type=event.type,
-                            delta=event.delta,
-                            action=event.action,
-                            usage=event.usage,
-                            error=event.error,
-                            metadata={
-                                **event.metadata,
-                                "provider": entry.spec.name,
-                                "model": routed.model,
-                                "attempt": attempt + 1,
-                            },
-                        )
+                    events, usage = await self._collect_stream_attempt(
+                        entry,
+                        routed,
+                        attempt=attempt + 1,
+                    )
                     self._record_usage(usage, provider=entry.spec.name, request=request)
                     self._record_call(
                         provider=entry.spec.name,
@@ -385,8 +373,14 @@ class LLMProviderCenter(LLMProviderPort):
                         status="completed",
                         streamed=True,
                         usage=usage,
-                        metadata={"request": request.manifest()},
+                        metadata={
+                            "request": request.manifest(),
+                            "event_count": len(events),
+                            "delta_bytes": sum(len(event.delta.encode("utf-8")) for event in events),
+                        },
                     )
+                    for event in events:
+                        yield event
                     return
                 except LLMBudgetExceededError:
                     raise
@@ -405,6 +399,40 @@ class LLMProviderCenter(LLMProviderPort):
         if last_error is not None:
             raise last_error
         raise LLMProviderNotFoundError(request.model or "<default>")
+
+    async def _collect_stream_attempt(
+        self,
+        entry: _ProviderEntry,
+        request: LLMRequest,
+        *,
+        attempt: int,
+    ) -> tuple[tuple[LLMStreamEvent, ...], UsageInfo]:
+        events: list[LLMStreamEvent] = []
+        usage = UsageInfo()
+        async for event in entry.provider.stream(request):
+            if event.usage is not None:
+                usage = event.usage
+            if event.type == "error":
+                raise LLMProviderError(
+                    event.error or "provider stream error",
+                    retry_hint=_retry_hint_from_stream_event(event),
+                )
+            events.append(
+                LLMStreamEvent(
+                    type=event.type,
+                    delta=event.delta,
+                    action=event.action,
+                    usage=event.usage,
+                    error=event.error,
+                    metadata={
+                        **event.metadata,
+                        "provider": entry.spec.name,
+                        "model": request.model,
+                        "attempt": attempt,
+                    },
+                )
+            )
+        return tuple(events), usage
 
     def _select_entry(self, request: LLMRequest) -> _ProviderEntry:
         requested_provider = str(request.metadata.get("provider") or "")
@@ -557,4 +585,21 @@ class LLMProviderCenter(LLMProviderPort):
         if isinstance(exc, LLMProviderError):
             return exc.retry_hint.retryable
         return False
+
+
+def _retry_hint_from_stream_event(event: LLMStreamEvent) -> RetryHint:
+    return RetryHint(
+        retryable=bool(event.metadata.get("retryable", False)),
+        after_seconds=_optional_float(event.metadata.get("after_seconds")),
+        reason=str(event.metadata.get("reason") or event.error or ""),
+    )
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 

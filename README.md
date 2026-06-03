@@ -220,6 +220,8 @@ reducer while keeping the same core contract.
 - Budget checks.
 - Request, response, stream event, route, and call record manifests.
 - Provider call audit records for completed and failed attempts.
+- Stream error events are treated as failed attempts for retry/fallback audit.
+- Streaming attempts are budget-checked before events are emitted by the center.
 
 ### Tools
 

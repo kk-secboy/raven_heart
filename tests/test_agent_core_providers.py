@@ -50,6 +50,38 @@ class _StreamingProvider:
         yield LLMStreamEvent(type="message_end")
 
 
+class _StreamingErrorProvider:
+    def __init__(self, *, retryable: bool) -> None:
+        self.retryable = retryable
+        self.requests: list[LLMRequest] = []
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        raise AssertionError("streaming error test should not call complete")
+
+    async def stream(self, request: LLMRequest):
+        self.requests.append(request)
+        yield LLMStreamEvent(type="delta", delta="partial")
+        yield LLMStreamEvent(
+            type="error",
+            error="stream failed",
+            metadata={"retryable": self.retryable, "reason": "test"},
+        )
+
+
+class _StreamingCostProvider:
+    def __init__(self) -> None:
+        self.requests: list[LLMRequest] = []
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        raise AssertionError("streaming cost test should not call complete")
+
+    async def stream(self, request: LLMRequest):
+        self.requests.append(request)
+        yield LLMStreamEvent(type="delta", delta="expensive")
+        yield LLMStreamEvent(type="usage", usage=UsageInfo(total_tokens=10, cost_usd=0.02))
+        yield LLMStreamEvent(type="message_end")
+
+
 @pytest.mark.asyncio
 async def test_provider_center_routes_by_default_provider_and_model() -> None:
     fast = MockLLMProvider([{"action": "finish", "arguments": {"output": "fast"}}])
@@ -211,6 +243,39 @@ async def test_provider_center_records_streaming_call_manifests() -> None:
         attempt=1,
         status="completed",
     ).manifest()["provider_name"] == "local"
+
+
+@pytest.mark.asyncio
+async def test_provider_center_retries_stream_error_events_before_yielding_output() -> None:
+    failing = _StreamingErrorProvider(retryable=True)
+    fallback = _StreamingProvider()
+    center = LLMProviderCenter(default_provider="primary", max_retries=1)
+    center.register("primary", failing, priority=10)
+    center.register("fallback", fallback, default_model="fallback-mini", priority=1)
+
+    events = [event async for event in center.stream(LLMRequest(messages=[]))]
+
+    assert [event.delta for event in events if event.delta] == ["hello"]
+    assert len(failing.requests) == 2
+    assert len(fallback.requests) == 1
+    assert [call.status for call in center.calls] == ["failed", "failed", "completed"]
+    assert center.calls[0].streamed is True
+    assert center.calls[0].retryable is True
+    assert center.failures[0]["streamed"] is True
+    assert fallback.requests[0].metadata["provider"] == "fallback"
+
+
+@pytest.mark.asyncio
+async def test_provider_center_blocks_over_budget_stream_before_emitting_events() -> None:
+    provider = _StreamingCostProvider()
+    center = LLMProviderCenter(default_provider="local", max_cost_usd=0.01)
+    center.register("local", provider)
+
+    with pytest.raises(LLMBudgetExceededError):
+        _ = [event async for event in center.stream(LLMRequest(messages=[]))]
+
+    assert center.usage.cost_usd == 0.0
+    assert center.calls == []
 
 
 @pytest.mark.asyncio

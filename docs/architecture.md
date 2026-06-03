@@ -109,6 +109,9 @@ runtime responsibilities.
 failed attempts. The core records provider name, model, attempt, streamed flag,
 usage, retryability, and request shape. Concrete provider clients, credentials,
 rate limits, and vendor-specific response payloads remain runtime-owned.
+For streaming calls, core treats provider `error` events as failed attempts,
+records streamed failure metadata, and applies retry/fallback and budget checks
+before yielding a successful stream to callers.
 
 `ToolReplayStorePort` gives tool replay the same port-based shape as memory and
 journals. Core replay manifests include replay keys, invocation argument hashes,
