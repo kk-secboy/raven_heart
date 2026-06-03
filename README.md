@@ -217,11 +217,11 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
   iteration limits, provider call limits, required provider names/models,
-  required provider model capabilities, required events, required tools,
-  resume-plan presence, resume-plan readiness, expected checkpoint id, tool
-  execution presence, tool retry, tool schema validation, minimum tool attempt
-  counts, and storage backend, context injection, memory governance, and prompt
-  bucket budget constraints.
+  required provider model capabilities, provider stream event contracts,
+  required events, required tools, resume-plan presence, resume-plan readiness,
+  expected checkpoint id, tool execution presence, tool retry, tool schema
+  validation, minimum tool attempt counts, and storage backend, context
+  injection, memory governance, and prompt bucket budget constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
@@ -294,6 +294,8 @@ reducer while keeping the same core contract.
 - Stream error events are treated as failed attempts for retry/fallback audit.
 - Streaming attempts are budget-checked before events are emitted by the center,
   and completed streamed calls record a standard stream summary.
+- Stream summaries expose event types and error counts to trace/eval contracts
+  without storing raw streamed content.
 
 Concrete clients for OpenAI, Anthropic, local models, gateways, credentials, and
 vendor rate limits live in runtimes or adapter packages. `agent_core` owns the

@@ -197,7 +197,9 @@ model classes, while real rate limiters and vendor quotas stay outside core.
 For streaming calls, core treats provider `error` events as failed attempts,
 records streamed failure metadata, and applies retry/fallback and budget checks
 before yielding a successful stream to callers. Completed streamed calls include
-the standard stream summary in provider call metadata.
+the standard stream summary in provider call metadata. Trace evals can require
+streaming calls, required or forbidden stream event types, and maximum stream
+error counts while keeping streamed content out of the trace.
 
 `ToolReplayStorePort` gives tool replay the same port-based shape as memory and
 journals. Core replay manifests include replay keys, invocation argument hashes,

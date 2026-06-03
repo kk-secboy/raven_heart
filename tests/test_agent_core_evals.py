@@ -340,6 +340,112 @@ def test_trace_eval_reports_provider_capability_contract_failures() -> None:
     }
 
 
+def test_trace_eval_validates_provider_stream_contracts() -> None:
+    trace = {
+        **_trace_manifest(),
+        "provider": {
+            "call_count": 1,
+            "calls": [
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "status": "completed",
+                    "streamed": True,
+                    "usage": {"cost_usd": 0.01},
+                    "metadata": {
+                        "stream_summary": {
+                            "schema_version": "agent-core-llm-stream-summary/v1",
+                            "event_count": 4,
+                            "event_types": ["message_start", "delta", "usage", "message_end"],
+                            "delta_bytes": 5,
+                            "content_bytes": 5,
+                            "has_action": False,
+                            "has_usage": True,
+                            "finish_reason": "stop",
+                            "error": "",
+                        }
+                    },
+                }
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_provider_streaming=True,
+            required_provider_stream_event_types=("delta", "usage", "message_end"),
+            max_provider_stream_errors=0,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["provider_stream_call_count"] == 1
+    assert report.summary["provider_stream_summary_count"] == 1
+    assert report.summary["provider_stream_event_types"] == [
+        "delta",
+        "message_end",
+        "message_start",
+        "usage",
+    ]
+    assert report.summary["provider_stream_error_count"] == 0
+
+
+def test_trace_eval_reports_provider_stream_contract_failures() -> None:
+    trace = {
+        **_trace_manifest(),
+        "provider": {
+            "call_count": 2,
+            "calls": [
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "status": "failed",
+                    "streamed": True,
+                    "metadata": {},
+                },
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "status": "completed",
+                    "streamed": True,
+                    "metadata": {
+                        "stream_summary": {
+                            "schema_version": "agent-core-llm-stream-summary/v1",
+                            "event_types": ["delta", "error"],
+                            "error": "stream failed",
+                        }
+                    },
+                },
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_provider_stream_event_types=("usage",),
+            forbidden_provider_stream_event_types=("error",),
+            max_provider_stream_errors=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(require_provider_streaming=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_provider_stream_event_type",
+        "forbidden_provider_stream_event_type",
+        "provider_stream_error_limit_exceeded",
+    } <= codes
+    assert report.summary["provider_stream_error_count"] == 2
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"provider_streaming_missing"}
+
+
 def test_trace_replay_and_eval_understand_resume_manifests() -> None:
     trace = {
         **_trace_manifest(),

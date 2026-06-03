@@ -80,6 +80,10 @@ class TraceEvalSpec:
     require_provider_model_capabilities: bool = False
     required_provider_model_capabilities: tuple[str, ...] = ()
     forbidden_provider_model_capabilities: tuple[str, ...] = ()
+    require_provider_streaming: bool = False
+    required_provider_stream_event_types: tuple[str, ...] = ()
+    forbidden_provider_stream_event_types: tuple[str, ...] = ()
+    max_provider_stream_errors: int | None = None
     require_journal_ok: bool = True
     require_resume: bool = False
     require_resume_plan: bool = False
@@ -143,6 +147,14 @@ class TraceEvalSpec:
             "forbidden_provider_model_capabilities": list(
                 self.forbidden_provider_model_capabilities
             ),
+            "require_provider_streaming": self.require_provider_streaming,
+            "required_provider_stream_event_types": list(
+                self.required_provider_stream_event_types
+            ),
+            "forbidden_provider_stream_event_types": list(
+                self.forbidden_provider_stream_event_types
+            ),
+            "max_provider_stream_errors": self.max_provider_stream_errors,
             "require_journal_ok": self.require_journal_ok,
             "require_resume": self.require_resume,
             "require_resume_plan": self.require_resume_plan,
@@ -387,6 +399,12 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         provider_model_capabilities = _provider_model_capability_names(
             provider_model_capability_manifests
         )
+        provider_stream_summaries = _provider_stream_summaries(provider_call_records)
+        provider_stream_event_types = _provider_stream_event_types(provider_stream_summaries)
+        provider_stream_error_count = _provider_stream_error_count(
+            provider_call_records,
+            provider_stream_summaries,
+        )
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
         storage_backends = _storage_backends(trace)
@@ -519,6 +537,47 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         f"forbidden provider model capability present: {capability}",
                     )
                 )
+        if spec.require_provider_streaming and not _provider_stream_call_count(provider_call_records):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_streaming_missing",
+                    "provider streaming call is required",
+                )
+            )
+        for event_type in spec.required_provider_stream_event_types:
+            if event_type not in provider_stream_event_types:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_stream_event_type",
+                        f"required provider stream event type missing: {event_type}",
+                    )
+                )
+        for event_type in spec.forbidden_provider_stream_event_types:
+            if event_type in provider_stream_event_types:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_provider_stream_event_type",
+                        f"forbidden provider stream event type present: {event_type}",
+                    )
+                )
+        if (
+            spec.max_provider_stream_errors is not None
+            and provider_stream_error_count > spec.max_provider_stream_errors
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_stream_error_limit_exceeded",
+                    "provider stream error count exceeded limit",
+                    metadata={
+                        "actual": provider_stream_error_count,
+                        "limit": spec.max_provider_stream_errors,
+                    },
+                )
+            )
         if spec.require_journal_ok and summary.get("journal_ok") is False:
             issues.append(TraceEvalIssue("error", "journal_not_ok", "journal replay reported issues"))
         if spec.require_resume and not resume:
@@ -994,6 +1053,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "provider_models": sorted(provider_models),
                 "provider_model_capability_count": len(provider_model_capability_manifests),
                 "provider_model_capabilities": sorted(provider_model_capabilities),
+                "provider_stream_call_count": _provider_stream_call_count(provider_call_records),
+                "provider_stream_summary_count": len(provider_stream_summaries),
+                "provider_stream_event_types": sorted(provider_stream_event_types),
+                "provider_stream_error_count": provider_stream_error_count,
                 "cost_usd": cost,
                 "event_types": sorted(event_types),
                 "tool_names": sorted(tool_names),
@@ -1399,6 +1462,55 @@ def _provider_model_capability_names(manifests: tuple[dict[str, Any], ...]) -> s
         if isinstance(modalities, (list, tuple)):
             names.update(f"modality:{item}" for item in modalities if item)
     return names
+
+
+def _provider_stream_call_count(calls: tuple[dict[str, Any], ...]) -> int:
+    return sum(1 for call in calls if call.get("streamed") is True)
+
+
+def _provider_stream_summaries(calls: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    summaries = []
+    for call in calls:
+        metadata = call.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        summary = metadata.get("stream_summary")
+        if isinstance(summary, dict):
+            summaries.append(
+                {
+                    **dict(summary),
+                    "provider_name": str(call.get("provider_name") or ""),
+                    "model": str(call.get("model") or ""),
+                    "status": str(call.get("status") or ""),
+                }
+            )
+    return tuple(summaries)
+
+
+def _provider_stream_event_types(summaries: tuple[dict[str, Any], ...]) -> set[str]:
+    event_types: set[str] = set()
+    for summary in summaries:
+        raw = summary.get("event_types")
+        if isinstance(raw, (list, tuple)):
+            event_types.update(str(item) for item in raw if item)
+    return event_types
+
+
+def _provider_stream_error_count(
+    calls: tuple[dict[str, Any], ...],
+    summaries: tuple[dict[str, Any], ...],
+) -> int:
+    failed_streamed_calls = sum(
+        1
+        for call in calls
+        if call.get("streamed") is True and str(call.get("status") or "") == "failed"
+    )
+    summary_errors = sum(
+        1
+        for summary in summaries
+        if summary.get("error") or "error" in set(summary.get("event_types") or ())
+    )
+    return failed_streamed_calls + summary_errors
 
 
 def _provider_cost(provider: dict[str, Any]) -> float:
