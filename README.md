@@ -241,8 +241,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   required events, required tools, resume-plan presence, resume-plan readiness,
   expected checkpoint id, tool execution presence, tool retry, tool schema
   validation, minimum tool attempt counts, storage backend constraints,
-  event-log presence, event-log types, terminal events, event sequence
-  monotonicity, duplicate sequence limits,
+  lifecycle hook constraints, event-log presence, event-log types, terminal
+  events, event sequence monotonicity, duplicate sequence limits,
   context injection name/source/target/status constraints, included/trimmed/
   excluded injection source constraints, memory governance constraints, prompt
   bucket budget constraints, and global prompt trim constraints.
@@ -642,6 +642,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |
 | Lifecycle hook contracts | MVP implemented |
+| Lifecycle hook trace/eval contracts | MVP implemented |
 | Interrupt/cancel/timeout semantics | MVP implemented |
 | Tool center | MVP implemented |
 | Tool replay store | MVP implemented |

@@ -92,6 +92,11 @@ class TraceEvalSpec:
     required_provider_route_candidate_names: tuple[str, ...] = ()
     required_provider_route_selected_names: tuple[str, ...] = ()
     forbidden_provider_route_reasons: tuple[str, ...] = ()
+    require_lifecycle_hooks: bool = False
+    required_lifecycle_event_types: tuple[str, ...] = ()
+    forbidden_lifecycle_event_types: tuple[str, ...] = ()
+    required_lifecycle_hook_statuses: tuple[str, ...] = ()
+    max_lifecycle_hook_failures: int | None = None
     required_embedding_provider_names: tuple[str, ...] = ()
     required_embedding_models: tuple[str, ...] = ()
     required_embedding_dimensions: tuple[int, ...] = ()
@@ -199,6 +204,11 @@ class TraceEvalSpec:
                 self.required_provider_route_selected_names
             ),
             "forbidden_provider_route_reasons": list(self.forbidden_provider_route_reasons),
+            "require_lifecycle_hooks": self.require_lifecycle_hooks,
+            "required_lifecycle_event_types": list(self.required_lifecycle_event_types),
+            "forbidden_lifecycle_event_types": list(self.forbidden_lifecycle_event_types),
+            "required_lifecycle_hook_statuses": list(self.required_lifecycle_hook_statuses),
+            "max_lifecycle_hook_failures": self.max_lifecycle_hook_failures,
             "required_embedding_provider_names": list(self.required_embedding_provider_names),
             "required_embedding_models": list(self.required_embedding_models),
             "required_embedding_dimensions": list(self.required_embedding_dimensions),
@@ -514,6 +524,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         provider_route_candidate_names = _provider_route_candidate_names(provider_route_candidates)
         provider_route_selected_names = _provider_route_selected_names(provider_route_candidates)
         provider_route_reasons = _provider_route_reasons(provider_route_candidates)
+        lifecycle_hooks = _lifecycle_hooks(trace)
+        lifecycle_hook_records = _lifecycle_hook_records(lifecycle_hooks)
+        lifecycle_event_types = _lifecycle_event_types(lifecycle_hook_records)
+        lifecycle_hook_statuses = _lifecycle_hook_statuses(lifecycle_hook_records)
+        lifecycle_hook_failure_count = _lifecycle_hook_failure_count(lifecycle_hook_records)
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
         storage_backends = _storage_backends(trace)
@@ -828,6 +843,56 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         f"forbidden provider route reason present: {reason}",
                     )
                 )
+        if spec.require_lifecycle_hooks and not lifecycle_hook_records:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "lifecycle_hooks_missing",
+                    "lifecycle hook trace is required",
+                )
+            )
+        for event_type in spec.required_lifecycle_event_types:
+            if event_type not in lifecycle_event_types:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_lifecycle_event_type",
+                        f"required lifecycle event type missing: {event_type}",
+                    )
+                )
+        for event_type in spec.forbidden_lifecycle_event_types:
+            if event_type in lifecycle_event_types:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_lifecycle_event_type",
+                        f"forbidden lifecycle event type present: {event_type}",
+                    )
+                )
+        for status_value in spec.required_lifecycle_hook_statuses:
+            if status_value not in lifecycle_hook_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_lifecycle_hook_status",
+                        f"required lifecycle hook status missing: {status_value}",
+                    )
+                )
+        if (
+            spec.max_lifecycle_hook_failures is not None
+            and lifecycle_hook_failure_count > spec.max_lifecycle_hook_failures
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "lifecycle_hook_failure_limit_exceeded",
+                    "lifecycle hook failure count exceeded limit",
+                    metadata={
+                        "actual": lifecycle_hook_failure_count,
+                        "limit": spec.max_lifecycle_hook_failures,
+                    },
+                )
+            )
         if spec.require_journal_ok and summary.get("journal_ok") is False:
             issues.append(TraceEvalIssue("error", "journal_not_ok", "journal replay reported issues"))
         if spec.require_resume and not resume:
@@ -1509,6 +1574,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "provider_route_candidate_names": sorted(provider_route_candidate_names),
                 "provider_route_selected_names": sorted(provider_route_selected_names),
                 "provider_route_reasons": sorted(provider_route_reasons),
+                "lifecycle_hook_record_count": len(lifecycle_hook_records),
+                "lifecycle_event_types": sorted(lifecycle_event_types),
+                "lifecycle_hook_statuses": sorted(lifecycle_hook_statuses),
+                "lifecycle_hook_failure_count": lifecycle_hook_failure_count,
                 "cost_usd": cost,
                 "event_types": sorted(event_types),
                 "tool_names": sorted(tool_names),
@@ -2141,6 +2210,33 @@ def _provider_route_selected_names(candidates: tuple[dict[str, Any], ...]) -> se
 
 def _provider_route_reasons(candidates: tuple[dict[str, Any], ...]) -> set[str]:
     return {str(item.get("reason") or "") for item in candidates if item.get("reason")}
+
+
+def _lifecycle_hooks(trace: dict[str, Any]) -> dict[str, Any]:
+    session = trace.get("session")
+    if not isinstance(session, dict):
+        return {}
+    lifecycle = session.get("lifecycle_hooks")
+    return dict(lifecycle) if isinstance(lifecycle, dict) else {}
+
+
+def _lifecycle_hook_records(lifecycle_hooks: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    records = lifecycle_hooks.get("records")
+    if not isinstance(records, (list, tuple)):
+        return ()
+    return tuple(dict(item) for item in records if isinstance(item, dict))
+
+
+def _lifecycle_event_types(records: tuple[dict[str, Any], ...]) -> set[str]:
+    return {str(item.get("event_type") or "") for item in records if item.get("event_type")}
+
+
+def _lifecycle_hook_statuses(records: tuple[dict[str, Any], ...]) -> set[str]:
+    return {str(item.get("status") or "") for item in records if item.get("status")}
+
+
+def _lifecycle_hook_failure_count(records: tuple[dict[str, Any], ...]) -> int:
+    return sum(1 for item in records if str(item.get("status") or "") == "failed")
 
 
 def _provider_cost(provider: dict[str, Any]) -> float:

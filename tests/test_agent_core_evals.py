@@ -671,6 +671,96 @@ def test_trace_eval_reports_provider_route_plan_contract_failures() -> None:
     } <= {issue.code for issue in report.issues}
 
 
+def test_trace_eval_validates_lifecycle_hook_contracts() -> None:
+    trace = _trace_manifest()
+    trace["session"] = {
+        "lifecycle_hooks": {
+            "schema_version": "agent-core-lifecycle-hook-center/v1",
+            "record_count": 2,
+            "records": [
+                {
+                    "schema_version": "agent-core-lifecycle-hook-record/v1",
+                    "hook_name": "audit",
+                    "event_type": "run_starting",
+                    "status": "completed",
+                    "event": {
+                        "schema_version": "agent-core-lifecycle-event/v1",
+                        "type": "run_starting",
+                        "task_bytes": 12,
+                        "task_sha256": "hash",
+                    },
+                },
+                {
+                    "schema_version": "agent-core-lifecycle-hook-record/v1",
+                    "hook_name": "audit",
+                    "event_type": "run_completed",
+                    "status": "completed",
+                    "event": {
+                        "schema_version": "agent-core-lifecycle-event/v1",
+                        "type": "run_completed",
+                        "task_bytes": 12,
+                        "task_sha256": "hash",
+                    },
+                },
+            ],
+        }
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_lifecycle_hooks=True,
+            required_lifecycle_event_types=("run_starting", "run_completed"),
+            required_lifecycle_hook_statuses=("completed",),
+            max_lifecycle_hook_failures=0,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["lifecycle_hook_record_count"] == 2
+    assert report.summary["lifecycle_event_types"] == ["run_completed", "run_starting"]
+    assert report.summary["lifecycle_hook_statuses"] == ["completed"]
+    assert report.summary["lifecycle_hook_failure_count"] == 0
+    assert report.metadata["spec"]["require_lifecycle_hooks"] is True
+
+
+def test_trace_eval_reports_lifecycle_hook_contract_failures() -> None:
+    missing = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(require_lifecycle_hooks=True),
+    )
+    trace = _trace_manifest()
+    trace["session"] = {
+        "lifecycle_hooks": {
+            "records": [
+                {
+                    "event_type": "run_failed",
+                    "status": "failed",
+                    "error": "hook failed",
+                }
+            ],
+        }
+    }
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_lifecycle_event_types=("run_completed",),
+            forbidden_lifecycle_event_types=("run_failed",),
+            required_lifecycle_hook_statuses=("completed",),
+            max_lifecycle_hook_failures=0,
+        ),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert missing.issues[0].code == "lifecycle_hooks_missing"
+    assert {
+        "missing_lifecycle_event_type",
+        "forbidden_lifecycle_event_type",
+        "missing_lifecycle_hook_status",
+        "lifecycle_hook_failure_limit_exceeded",
+    } <= codes
+
+
 def test_trace_replay_harness_includes_provider_stream_steps() -> None:
     trace = {
         **_trace_manifest(),
