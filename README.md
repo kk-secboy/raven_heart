@@ -25,6 +25,7 @@ ops agents, research agents, and future automation systems.
 - Prompt bucket budget policy for per-bucket caps and audit manifests.
 - Context reducer port and deterministic timeline reduction.
 - Runner-level automatic timeline reduction before prompt assembly.
+- Context material store center for SDK/runtime-owned candidate context backends.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - Context injection policy for bucket allow-lists, per-injection trimming, total injection budget, and audit manifests.
 - Provider-neutral embedding request/response, provider routing, and semantic ranking contracts.
@@ -506,6 +507,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Data area | Core port | Built-in lightweight implementations | External/runtime implementations |
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product knowledge stores |
+| Context material | `ContextMaterialStorePort` | In-memory | SQLite, Markdown, Postgres, vector DB, graph/RAG, product APIs |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, workflow replay DB |
 | Run traces | `RunTraceStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, observability pipeline |
@@ -619,6 +621,12 @@ hashes.
 `AgentSession.context_material_selector` lets `AgentRunner` apply that selector
 automatically when `AgentRunRequest.context_materials` or
 `AgentRunRequest.context_material_selection` is provided.
+`ContextMaterialCenter` and `ContextMaterialStorePort` add a backend-neutral
+candidate context layer. The SDK ships an in-memory store and an external-store
+wrapper with prompt-safe call audit; runtimes can mount SQLite, Markdown, PG,
+vector, graph, or product stores without changing runner/ReAct code.
+`AgentRunRequest.context_material_query` makes runner collection explicit and
+feeds store results into the same selector before prompt assembly.
 `AgentRunRequest.mcp_context_materials` uses the same path for MCP
 resources/prompts: runner collection is opt-in, selector/budget policy remains
 SDK-owned, and concrete MCP process/auth/network lifecycle remains runtime-owned.
@@ -755,6 +763,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Runtime semantic prompt reducer | MVP implemented |
 | Runtime semantic prompt trace/eval | MVP implemented |
 | Context material selector | runner-integrated MVP |
+| Context material store center | MVP implemented |
 | Context material selection trace/eval | MVP implemented |
 | Context injection policy | MVP implemented |
 | Context reducer | runner-integrated MVP |

@@ -10,8 +10,11 @@ from agent_core.context import (
     AgentContextPack,
     ContextInjectionPolicy,
     ContextMaterial,
+    ContextMaterialCenter,
+    ContextMaterialQuery,
     ContextMaterialSelectionRequest,
     DefaultContextMaterialSelector,
+    InMemoryContextMaterialStore,
 )
 from agent_core.errors import ResumeError
 from agent_core.harness import InMemoryAgentJournal
@@ -467,6 +470,81 @@ async def test_agent_runner_selects_context_materials_before_prompt_build() -> N
     assert outcome.trace_manifest["context_injections"]["sources"] == {
         "runtime": 1,
         "trace": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_selects_stored_context_materials_before_prompt_build() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    context_store = ContextMaterialCenter(default_store="workspace")
+    context_store.register(
+        "workspace",
+        InMemoryContextMaterialStore(
+            (
+                ContextMaterial(
+                    name="irrelevant_dns",
+                    content="dns propagation completed",
+                    role="memory",
+                    priority=1,
+                    metadata={"tags": ("dns",)},
+                ),
+                ContextMaterial(
+                    name="auth_trace",
+                    content="payment auth callback failed csrf token validation",
+                    role="timeline",
+                    priority=4,
+                    metadata={"tags": ("auth",)},
+                ),
+                ContextMaterial(
+                    name="schema_hint",
+                    content='{"required":["risk"]}',
+                    role="schema",
+                    priority=3,
+                    metadata={"tags": ("auth",)},
+                ),
+            )
+        ),
+        backend_kind="markdown",
+        priority=5,
+        tags=("auth", "local"),
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="stored-material-selector"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        context_material_store=context_store,
+        context_material_selector=DefaultContextMaterialSelector(),
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="investigate payment auth csrf risk",
+            context_material_query=ContextMaterialQuery(
+                query="payment auth csrf risk",
+                filters={"store": "workspace", "tags": ("auth",)},
+                limit=4,
+            ),
+            context_material_selection=ContextMaterialSelectionRequest(
+                task="",
+                max_materials=2,
+                max_bytes=512,
+            ),
+        )
+    )
+    prompt_text = provider.requests[0].messages[0].content
+    selection = outcome.prompt_manifest["metadata"]["context_material_selection"]
+    store_metadata = selection["request"]["metadata"]["context_material_store"]
+
+    assert outcome.result.status == "completed"
+    assert "payment auth callback failed csrf token validation" in prompt_text
+    assert '"required":["risk"]' in prompt_text
+    assert "dns propagation completed" not in prompt_text
+    assert selection["selected_count"] == 2
+    assert store_metadata["material_count"] == 2
+    assert store_metadata["plan"]["selected_stores"][0]["backend_kind"] == "markdown"
+    assert outcome.trace_manifest["context_injections"]["sources"] == {
+        "schema": 1,
+        "timeline": 1,
     }
 
 

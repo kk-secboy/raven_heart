@@ -5,6 +5,7 @@ from agent_core import (
     InMemoryAgentRunStore,
     InMemoryApprovalStore,
     InMemoryArtifactStore,
+    InMemoryContextMaterialStore,
     InMemoryJournalStore,
     InMemoryMemoryStore,
     InMemoryPlannerStore,
@@ -73,6 +74,7 @@ def test_storage_backend_contract_exports_runtime_backend_shape() -> None:
 def test_core_store_manifests_include_unified_backend_metadata(tmp_path) -> None:
     stores = (
         (InMemoryMemoryStore(), "memory", "in_memory"),
+        (InMemoryContextMaterialStore(), "context_material", "in_memory"),
         (SQLiteMemoryStore(tmp_path / "memory.sqlite"), "memory", "sqlite"),
         (MarkdownMemoryStore(tmp_path / "memory-md"), "memory", "markdown"),
         (InMemoryJournalStore(), "journal", "in_memory"),

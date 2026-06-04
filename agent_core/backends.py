@@ -27,6 +27,7 @@ StorageBackendRole = Literal[
     "run_state",
     "planner_state",
     "artifact",
+    "context_material",
     "approval",
     "policy_decision",
     "event_log",

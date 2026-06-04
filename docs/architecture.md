@@ -371,6 +371,16 @@ search and write calls. These records capture backend kind, status, errors,
 hit counts, query manifests, and write content hashes/byte counts without
 requiring a Postgres, vector DB, or graph driver inside `agent_core`.
 
+`ContextMaterialStorePort` is the matching candidate-context boundary for
+semantic prompt shaping. `ContextMaterialCenter` can route queries across SDK
+stores and runtime-owned SQLite, Markdown, PG, vector, graph, or product API
+stores through `ContextMaterialStoreSpec`, `ContextMaterialQuery`,
+`ContextMaterialRoute`, and `ContextMaterialSearchPlan`. The SDK ships an
+in-memory store and `ExternalContextMaterialStore` for prompt-safe call audit;
+concrete durable drivers remain outside core. `AgentRunRequest.context_material_query`
+lets `AgentRunner` collect those candidates explicitly and pass them through
+the existing selector/trimming/injection pipeline.
+
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; inspectable or local durable runs can use
 `SQLiteEventSink` or `MarkdownEventSink`. Production runtimes should implement

@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol
 
+from agent_core.backends import StorageBackendKind, storage_backend_manifest
 from agent_core.capabilities import CapabilityCatalog
 from agent_core.prompt import PromptAssembler, PromptBucketRole, PromptIR
 from agent_core.skills import SkillsContext
@@ -48,6 +49,566 @@ class ContextMaterial:
             "sha256": self.sha256,
             "metadata": dict(self.metadata),
         }
+
+
+ContextMaterialQueryMode = Literal["keyword", "semantic", "vector", "hybrid"]
+
+
+@dataclass(frozen=True)
+class ContextMaterialQuery:
+    """Query candidate context material from SDK or runtime-owned stores."""
+
+    query: str
+    limit: int = 8
+    roles: tuple[str, ...] = ()
+    filters: dict[str, Any] = field(default_factory=dict)
+    mode: ContextMaterialQueryMode = "hybrid"
+    namespace: str = ""
+    tags: tuple[str, ...] = ()
+    min_priority: int | None = None
+
+    def normalized(self) -> "ContextMaterialQuery":
+        return ContextMaterialQuery(
+            query=str(self.query or ""),
+            limit=max(1, int(self.limit)),
+            roles=tuple(dict.fromkeys(str(item) for item in self.roles if str(item))),
+            filters=dict(self.filters),
+            mode=self.mode,
+            namespace=str(self.namespace or self.filters.get("namespace") or ""),
+            tags=tuple(dict.fromkeys(str(item) for item in self.tags if str(item))),
+            min_priority=None if self.min_priority is None else int(self.min_priority),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        query = str(self.query or "")
+        return {
+            "schema_version": "agent-core-context-material-query/v1",
+            "query_bytes": len(query.encode("utf-8")),
+            "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest()
+            if query
+            else "",
+            "limit": self.limit,
+            "roles": list(self.roles),
+            "mode": self.mode,
+            "namespace": self.namespace,
+            "tags": list(self.tags),
+            "min_priority": self.min_priority,
+            "filters": dict(self.filters),
+        }
+
+
+@dataclass(frozen=True)
+class ContextMaterialRoute:
+    store: str = ""
+    stores: tuple[str, ...] = ()
+    namespace: str = ""
+    tags: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+    mode: ContextMaterialQueryMode = "hybrid"
+
+    @classmethod
+    def from_query(cls, query: ContextMaterialQuery) -> "ContextMaterialRoute":
+        filters = query.filters
+        store = str(filters.get("store") or "")
+        stores_filter = filters.get("stores") or ()
+        if isinstance(stores_filter, str):
+            stores = (stores_filter,)
+        else:
+            stores = tuple(str(item) for item in stores_filter)
+        tags_filter = filters.get("tags") or filters.get("tag") or query.tags
+        if isinstance(tags_filter, str):
+            tags = (tags_filter,)
+        else:
+            tags = tuple(str(item) for item in tags_filter)
+        roles_filter = filters.get("roles") or filters.get("role") or query.roles
+        if isinstance(roles_filter, str):
+            roles = (roles_filter,)
+        else:
+            roles = tuple(str(item) for item in roles_filter)
+        return cls(
+            store=store,
+            stores=tuple(dict.fromkeys(stores)),
+            namespace=str(query.namespace or filters.get("namespace") or ""),
+            tags=tuple(dict.fromkeys(tags)),
+            roles=tuple(dict.fromkeys(roles)),
+            mode=query.mode,
+        )
+
+    def requested_store_names(self) -> tuple[str, ...]:
+        names = []
+        if self.store:
+            names.append(self.store)
+        names.extend(self.stores)
+        return tuple(dict.fromkeys(names))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-context-material-route/v1",
+            "store": self.store,
+            "stores": list(self.stores),
+            "namespace": self.namespace,
+            "tags": list(self.tags),
+            "roles": list(self.roles),
+            "mode": self.mode,
+        }
+
+
+@dataclass(frozen=True)
+class ContextMaterialStoreSpec:
+    name: str
+    priority: int = 0
+    readable: bool = True
+    writable: bool = True
+    backend_kind: StorageBackendKind = "custom"
+    core_builtin: bool = True
+    location: str = ""
+    namespace: str = ""
+    supports_keyword: bool = True
+    supports_semantic: bool = True
+    supports_vector: bool = False
+    supports_graph: bool = False
+    tags: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        capabilities = []
+        if self.supports_keyword:
+            capabilities.append("keyword")
+        if self.supports_semantic:
+            capabilities.append("semantic")
+        if self.supports_vector:
+            capabilities.append("vector")
+        if self.supports_graph:
+            capabilities.append("graph")
+        return {
+            "schema_version": "agent-core-context-material-store/v1",
+            "name": self.name,
+            "priority": self.priority,
+            "readable": self.readable,
+            "writable": self.writable,
+            "backend_kind": self.backend_kind,
+            "core_builtin": self.core_builtin,
+            "location": self.location,
+            "namespace": self.namespace,
+            "supports_keyword": self.supports_keyword,
+            "supports_semantic": self.supports_semantic,
+            "supports_vector": self.supports_vector,
+            "supports_graph": self.supports_graph,
+            "tags": list(self.tags),
+            "metadata": dict(self.metadata),
+            "backend": storage_backend_manifest(
+                role="context_material",
+                kind=self.backend_kind,
+                name=self.name,
+                namespace=self.namespace,
+                durable=self.backend_kind not in {"none", "in_memory"},
+                inspectable=self.backend_kind in {"in_memory", "sqlite", "markdown"},
+                queryable=self.readable,
+                transactional=self.backend_kind in {"sqlite", "postgres"},
+                core_builtin=self.core_builtin,
+                capabilities=tuple(capabilities),
+                location=self.location,
+                metadata=dict(self.metadata),
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class ContextMaterialSearchPlan:
+    query: ContextMaterialQuery
+    route: ContextMaterialRoute
+    selected_stores: tuple[ContextMaterialStoreSpec, ...] = ()
+    backend_filters: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-context-material-search-plan/v1",
+            "query": self.query.manifest(),
+            "route": self.route.manifest(),
+            "selected_store_count": len(self.selected_stores),
+            "selected_stores": [store.manifest() for store in self.selected_stores],
+            "backend_filters": dict(self.backend_filters),
+        }
+
+
+@dataclass(frozen=True)
+class ContextMaterialCallRecord:
+    operation: str
+    store: str
+    backend_kind: StorageBackendKind
+    status: str
+    query: ContextMaterialQuery | None = None
+    material: ContextMaterial | None = None
+    material_count: int = 0
+    error: str = ""
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-context-material-call/v1",
+            "operation": self.operation,
+            "store": self.store,
+            "backend_kind": self.backend_kind,
+            "status": self.status,
+            "query": self.query.manifest() if self.query is not None else {},
+            "material": self.material.manifest() if self.material is not None else {},
+            "material_count": self.material_count,
+            "error": self.error,
+        }
+
+
+class ContextMaterialStorePort(Protocol):
+    async def search(self, query: ContextMaterialQuery) -> tuple[ContextMaterial, ...]:
+        """Return candidate context materials for a query."""
+
+    async def write(self, material: ContextMaterial) -> None:
+        """Persist one context material."""
+
+
+@dataclass(frozen=True)
+class _ContextMaterialStoreMount:
+    spec: ContextMaterialStoreSpec
+    store: ContextMaterialStorePort
+
+
+class ContextMaterialStoreNotFoundError(KeyError):
+    def __init__(self, name: str) -> None:
+        super().__init__(f"context material store not found: {name}")
+        self.name = name
+
+
+class InMemoryContextMaterialStore(ContextMaterialStorePort):
+    def __init__(self, materials: tuple[ContextMaterial, ...] = ()) -> None:
+        self.materials: list[ContextMaterial] = list(materials)
+
+    async def search(self, query: ContextMaterialQuery) -> tuple[ContextMaterial, ...]:
+        query = query.normalized()
+        route = ContextMaterialRoute.from_query(query)
+        terms = _selection_terms(query.query)
+        selected = [
+            material
+            for material in self.materials
+            if _material_matches_query(material, query, route)
+        ]
+        ranked = sorted(
+            selected,
+            key=lambda item: (-_context_material_score(item, terms), item.name),
+        )
+        return tuple(ranked[: query.limit])
+
+    async def write(self, material: ContextMaterial) -> None:
+        self.materials.append(material)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-in-memory-context-material-store/v1",
+            "backend": storage_backend_manifest(
+                role="context_material",
+                kind="in_memory",
+                name="in_memory",
+                inspectable=True,
+                queryable=True,
+                capabilities=("keyword", "semantic"),
+            ),
+            "material_count": len(self.materials),
+            "materials": [material.manifest() for material in self.materials],
+        }
+
+
+class ExternalContextMaterialStore(ContextMaterialStorePort):
+    """Prompt-safe wrapper for runtime-owned context material adapters."""
+
+    def __init__(
+        self,
+        adapter: ContextMaterialStorePort,
+        *,
+        name: str,
+        backend_kind: StorageBackendKind = "external",
+        priority: int = 0,
+        namespace: str = "",
+        location: str = "",
+        supports_keyword: bool = True,
+        supports_semantic: bool = True,
+        supports_vector: bool = False,
+        supports_graph: bool = False,
+        tags: tuple[str, ...] = (),
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.adapter = adapter
+        self.spec = ContextMaterialStoreSpec(
+            name=name,
+            priority=priority,
+            backend_kind=backend_kind,
+            core_builtin=False,
+            location=location,
+            namespace=namespace,
+            supports_keyword=supports_keyword,
+            supports_semantic=supports_semantic,
+            supports_vector=supports_vector,
+            supports_graph=supports_graph,
+            tags=tuple(tags),
+            metadata=dict(metadata or {}),
+        )
+        self.calls: list[ContextMaterialCallRecord] = []
+
+    async def search(self, query: ContextMaterialQuery) -> tuple[ContextMaterial, ...]:
+        try:
+            materials = await self.adapter.search(query)
+        except Exception as exc:
+            self.calls.append(
+                ContextMaterialCallRecord(
+                    operation="search",
+                    store=self.spec.name,
+                    backend_kind=self.spec.backend_kind,
+                    status="failed",
+                    query=query,
+                    error=str(exc),
+                )
+            )
+            raise
+        self.calls.append(
+            ContextMaterialCallRecord(
+                operation="search",
+                store=self.spec.name,
+                backend_kind=self.spec.backend_kind,
+                status="completed",
+                query=query,
+                material_count=len(materials),
+            )
+        )
+        return tuple(materials)
+
+    async def write(self, material: ContextMaterial) -> None:
+        try:
+            await self.adapter.write(material)
+        except Exception as exc:
+            self.calls.append(
+                ContextMaterialCallRecord(
+                    operation="write",
+                    store=self.spec.name,
+                    backend_kind=self.spec.backend_kind,
+                    status="failed",
+                    material=material,
+                    error=str(exc),
+                )
+            )
+            raise
+        self.calls.append(
+            ContextMaterialCallRecord(
+                operation="write",
+                store=self.spec.name,
+                backend_kind=self.spec.backend_kind,
+                status="completed",
+                material=material,
+                material_count=1,
+            )
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        adapter_manifest = getattr(self.adapter, "manifest", None)
+        return {
+            "schema_version": "agent-core-external-context-material-store/v1",
+            "store": self.spec.manifest(),
+            "call_count": len(self.calls),
+            "calls": [call.manifest() for call in self.calls],
+            "adapter": adapter_manifest() if callable(adapter_manifest) else {},
+        }
+
+
+class ContextMaterialCenter(ContextMaterialStorePort):
+    """Fan-out context material router for SDK and runtime-owned stores."""
+
+    def __init__(self, *, default_store: str = "") -> None:
+        self.default_store = default_store
+        self._stores: dict[str, _ContextMaterialStoreMount] = {}
+        self._calls: list[ContextMaterialCallRecord] = []
+
+    def register(
+        self,
+        name: str,
+        store: ContextMaterialStorePort,
+        *,
+        priority: int = 0,
+        readable: bool = True,
+        writable: bool = True,
+        backend_kind: StorageBackendKind = "custom",
+        core_builtin: bool = True,
+        location: str = "",
+        namespace: str = "",
+        supports_keyword: bool = True,
+        supports_semantic: bool = True,
+        supports_vector: bool = False,
+        supports_graph: bool = False,
+        tags: tuple[str, ...] = (),
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not name:
+            raise ValueError("context material store name is required")
+        self._stores[name] = _ContextMaterialStoreMount(
+            spec=ContextMaterialStoreSpec(
+                name=name,
+                priority=priority,
+                readable=readable,
+                writable=writable,
+                backend_kind=_infer_context_material_backend_kind(store)
+                if backend_kind == "custom"
+                else backend_kind,
+                core_builtin=core_builtin,
+                location=location,
+                namespace=namespace,
+                supports_keyword=supports_keyword,
+                supports_semantic=supports_semantic,
+                supports_vector=supports_vector,
+                supports_graph=supports_graph,
+                tags=tuple(tags),
+                metadata=dict(metadata or {}),
+            ),
+            store=store,
+        )
+
+    def register_spec(
+        self,
+        spec: ContextMaterialStoreSpec,
+        store: ContextMaterialStorePort,
+    ) -> None:
+        if not spec.name:
+            raise ValueError("context material store name is required")
+        self._stores[spec.name] = _ContextMaterialStoreMount(spec=spec, store=store)
+
+    def get(self, name: str) -> ContextMaterialStorePort:
+        mount = self._stores.get(name)
+        if mount is None:
+            raise ContextMaterialStoreNotFoundError(name)
+        return mount.store
+
+    def specs(self) -> tuple[ContextMaterialStoreSpec, ...]:
+        return tuple(mount.spec for mount in self._ordered_mounts())
+
+    def plan_search(self, query: ContextMaterialQuery) -> ContextMaterialSearchPlan:
+        query = query.normalized()
+        route = ContextMaterialRoute.from_query(query)
+        backend_filters = {
+            key: value
+            for key, value in query.filters.items()
+            if key not in {"store", "stores", "tag", "tags", "role", "roles", "namespace"}
+        }
+        return ContextMaterialSearchPlan(
+            query=query,
+            route=route,
+            selected_stores=tuple(mount.spec for mount in self._select_read_mounts(route)),
+            backend_filters=backend_filters,
+        )
+
+    async def search(self, query: ContextMaterialQuery) -> tuple[ContextMaterial, ...]:
+        plan = self.plan_search(query)
+        materials: list[tuple[float, int, ContextMaterial]] = []
+        terms = _selection_terms(plan.query.query)
+        for mount in (self._stores[spec.name] for spec in plan.selected_stores):
+            store_query = ContextMaterialQuery(
+                query=plan.query.query,
+                limit=plan.query.limit,
+                roles=tuple(plan.route.roles),
+                filters=dict(plan.backend_filters),
+                mode=plan.query.mode,
+                namespace=plan.route.namespace,
+                tags=tuple(plan.route.tags),
+                min_priority=plan.query.min_priority,
+            )
+            results = await mount.store.search(store_query)
+            self._calls.append(
+                ContextMaterialCallRecord(
+                    operation="search",
+                    store=mount.spec.name,
+                    backend_kind=mount.spec.backend_kind,
+                    status="completed",
+                    query=store_query,
+                    material_count=len(results),
+                )
+            )
+            for index, material in enumerate(results):
+                material = replace(
+                    material,
+                    metadata={**material.metadata, "store": mount.spec.name},
+                )
+                materials.append(
+                    (
+                        _context_material_score(material, terms) + mount.spec.priority,
+                        index,
+                        material,
+                    )
+                )
+        materials.sort(key=lambda item: (-item[0], item[1], item[2].name))
+        return tuple(material for _, _, material in materials[: plan.query.limit])
+
+    async def write(self, material: ContextMaterial) -> None:
+        store_name = str(material.metadata.get("store") or self.default_store or "")
+        mount = self._select_write_mount(store_name)
+        write_item = replace(
+            material,
+            metadata={key: value for key, value in material.metadata.items() if key != "store"},
+        )
+        await mount.store.write(write_item)
+        self._calls.append(
+            ContextMaterialCallRecord(
+                operation="write",
+                store=mount.spec.name,
+                backend_kind=mount.spec.backend_kind,
+                status="completed",
+                material=write_item,
+                material_count=1,
+            )
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-context-material-center/v1",
+            "default_store": self.default_store,
+            "stores": [spec.manifest() for spec in self.specs()],
+            "call_count": len(self._calls),
+            "calls": [call.manifest() for call in self._calls],
+        }
+
+    def _ordered_mounts(self) -> tuple[_ContextMaterialStoreMount, ...]:
+        return tuple(
+            sorted(
+                self._stores.values(),
+                key=lambda mount: (-mount.spec.priority, mount.spec.name),
+            )
+        )
+
+    def _select_read_mounts(
+        self,
+        route: ContextMaterialRoute,
+    ) -> tuple[_ContextMaterialStoreMount, ...]:
+        names = route.requested_store_names()
+        mounts = self._ordered_mounts()
+        if names:
+            mounts = tuple(mount for mount in mounts if mount.spec.name in names)
+        selected = []
+        for mount in mounts:
+            spec = mount.spec
+            if not spec.readable:
+                continue
+            if route.namespace and spec.namespace and route.namespace != spec.namespace:
+                continue
+            if route.tags and not set(route.tags).issubset(set(spec.tags)):
+                continue
+            if route.mode == "vector" and not spec.supports_vector:
+                continue
+            selected.append(mount)
+        return tuple(selected)
+
+    def _select_write_mount(self, store_name: str) -> _ContextMaterialStoreMount:
+        if store_name:
+            mount = self._stores.get(store_name)
+            if mount is None:
+                raise ContextMaterialStoreNotFoundError(store_name)
+            if not mount.spec.writable:
+                raise ValueError(f"context material store is not writable: {store_name}")
+            return mount
+        for mount in self._ordered_mounts():
+            if mount.spec.writable:
+                return mount
+        raise ContextMaterialStoreNotFoundError(store_name or "<default>")
 
 
 ContextMaterialSelectionStatus = Literal[
@@ -669,6 +1230,73 @@ def _context_role_bonus(target: PromptBucketRole) -> float:
         PromptBucketRole.DYNAMIC: 1.0,
     }
     return bonuses[target]
+
+
+def _material_matches_query(
+    material: ContextMaterial,
+    query: ContextMaterialQuery,
+    route: ContextMaterialRoute,
+) -> bool:
+    if query.min_priority is not None and material.priority < query.min_priority:
+        return False
+    if route.roles and material.role not in route.roles:
+        return False
+    material_namespace = str(material.metadata.get("namespace") or "")
+    if route.namespace and material_namespace and route.namespace != material_namespace:
+        return False
+    material_tags = _metadata_tags(material.metadata)
+    if route.tags and not set(route.tags).issubset(material_tags):
+        return False
+    for key, expected in query.filters.items():
+        if key in {"store", "stores", "tag", "tags", "role", "roles", "namespace"}:
+            continue
+        if material.metadata.get(key) != expected:
+            return False
+    if not query.query:
+        return True
+    terms = _selection_terms(query.query)
+    if not terms:
+        return True
+    haystack = _selection_terms(
+        " ".join(
+            (
+                material.name,
+                material.role,
+                material.content,
+                " ".join(str(value) for value in material.metadata.values()),
+            )
+        )
+    )
+    return bool(terms & haystack)
+
+
+def _metadata_tags(metadata: dict[str, Any]) -> set[str]:
+    raw = metadata.get("tags") or metadata.get("tag") or ()
+    if isinstance(raw, str):
+        return {raw}
+    try:
+        return {str(item) for item in raw}
+    except TypeError:
+        return set()
+
+
+def _infer_context_material_backend_kind(
+    store: ContextMaterialStorePort,
+) -> StorageBackendKind:
+    if isinstance(store, InMemoryContextMaterialStore):
+        return "in_memory"
+    manifest = getattr(store, "manifest", None)
+    if callable(manifest):
+        try:
+            data = manifest()
+        except Exception:
+            return "custom"
+        backend = data.get("backend") if isinstance(data, dict) else {}
+        if isinstance(backend, dict):
+            kind = str(backend.get("kind") or "")
+            if kind:
+                return kind  # type: ignore[return-value]
+    return "custom"
 
 
 def _selection_terms(text: str) -> frozenset[str]:

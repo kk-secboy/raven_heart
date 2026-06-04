@@ -27,9 +27,11 @@ from agent_core.context import (
     ContextInjection,
     ContextInjectionPolicy,
     ContextMaterial,
+    ContextMaterialQuery,
     ContextMaterialSelectionRequest,
     ContextMaterialSelectionResult,
     ContextMaterialSelectorPort,
+    ContextMaterialStorePort,
 )
 from agent_core.events import EventSinkPort
 from agent_core.errors import ResumeError
@@ -79,6 +81,7 @@ class AgentSession:
     timeline: TimelineStore = field(default_factory=TimelineStore)
     context_reducer: ContextReducerPort | None = None
     context_material_selector: ContextMaterialSelectorPort | None = None
+    context_material_store: ContextMaterialStorePort | None = None
     context_injection_policy: ContextInjectionPolicy = field(default_factory=ContextInjectionPolicy)
     prompt_bucket_budget_policy: PromptBucketBudgetPolicy | None = None
     prompt_semantic_reducer: PromptSemanticReducerPort | None = None
@@ -142,6 +145,7 @@ class AgentSession:
             "context_material_selector": _context_material_selector_manifest(
                 self.context_material_selector
             ),
+            "context_material_store": _component_manifest_sync(self.context_material_store),
             "context_injection_policy": self.context_injection_policy.manifest(),
             "prompt_bucket_budget_policy": _prompt_bucket_budget_policy_manifest(
                 self.prompt_bucket_budget_policy
@@ -164,6 +168,7 @@ class AgentRunRequest:
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
     context_materials: tuple[ContextMaterial, ...] = ()
+    context_material_query: ContextMaterialQuery | None = None
     context_material_selection: ContextMaterialSelectionRequest | None = None
     mcp_context_materials: MCPContextMaterialRequest | None = None
     timeout_seconds: float | None = None
@@ -182,6 +187,7 @@ class AgentResumeRequest:
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
     context_materials: tuple[ContextMaterial, ...] = ()
+    context_material_query: ContextMaterialQuery | None = None
     context_material_selection: ContextMaterialSelectionRequest | None = None
     mcp_context_materials: MCPContextMaterialRequest | None = None
     timeout_seconds: float | None = None
@@ -200,6 +206,7 @@ class AgentResumeRequest:
             "has_approval_resume": self.approval_resume is not None,
             "has_structured_output": self.structured_output is not None,
             "context_material_count": len(self.context_materials),
+            "has_context_material_query": self.context_material_query is not None,
             "has_context_material_selection": self.context_material_selection is not None,
             "has_mcp_context_materials": self.mcp_context_materials is not None,
             "timeout_seconds": self.timeout_seconds,
@@ -848,11 +855,17 @@ class AgentRunner:
         selector = self.session.context_material_selector
         if selector is None:
             return AgentContextMaterialSelection()
+        store_materials, store_manifest = await self._stored_context_materials(request)
         mcp_materials, mcp_manifest = await self._mcp_context_materials(request)
+        extra_metadata = {}
+        if store_manifest:
+            extra_metadata["context_material_store"] = store_manifest
+        if mcp_manifest:
+            extra_metadata["mcp_context_materials"] = mcp_manifest
         selection_request = _context_material_selection_request(
             request,
-            extra_materials=mcp_materials,
-            extra_metadata={"mcp_context_materials": mcp_manifest} if mcp_manifest else {},
+            extra_materials=(*store_materials, *mcp_materials),
+            extra_metadata=extra_metadata,
         )
         if not selection_request.materials:
             return AgentContextMaterialSelection()
@@ -872,6 +885,29 @@ class AgentRunner:
             injections=result.injections,
             manifest=result.manifest(),
         )
+
+    async def _stored_context_materials(
+        self,
+        request: AgentRunRequest,
+    ) -> tuple[tuple[ContextMaterial, ...], dict[str, Any]]:
+        if request.context_material_query is None or self.session.context_material_store is None:
+            return (), {}
+        store = self.session.context_material_store
+        plan_search = getattr(store, "plan_search", None)
+        plan_manifest = {}
+        if callable(plan_search):
+            plan = plan_search(request.context_material_query)
+            plan_manifest_method = getattr(plan, "manifest", None)
+            if callable(plan_manifest_method):
+                plan_manifest = plan_manifest_method()
+        materials = await store.search(request.context_material_query)
+        return materials, {
+            "schema_version": "agent-core-context-material-store-selection/v1",
+            "material_count": len(materials),
+            "query": request.context_material_query.manifest(),
+            "plan": plan_manifest,
+            "materials": [material.manifest() for material in materials],
+        }
 
     async def _mcp_context_materials(
         self,
@@ -1636,6 +1672,7 @@ def _run_request_from_resume(
         approval_resume=request.approval_resume,
         structured_output=request.structured_output,
         context_materials=request.context_materials,
+        context_material_query=request.context_material_query,
         context_material_selection=request.context_material_selection,
         mcp_context_materials=request.mcp_context_materials,
         timeout_seconds=request.timeout_seconds,
