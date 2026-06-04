@@ -64,6 +64,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreEventAcceptanceHarness",
         "AgentCoreEventAcceptanceIssue",
         "AgentCoreEventAcceptanceReport",
+        "AgentCoreGuardrailAcceptanceHarness",
+        "AgentCoreGuardrailAcceptanceIssue",
+        "AgentCoreGuardrailAcceptanceReport",
         "AgentCoreLifecycleAcceptanceHarness",
         "AgentCoreLifecycleAcceptanceIssue",
         "AgentCoreLifecycleAcceptanceReport",
@@ -319,6 +322,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_context_acceptance",
         "run_agent_core_coordination_acceptance",
         "run_agent_core_event_acceptance",
+        "run_agent_core_guardrail_acceptance",
         "run_agent_core_lifecycle_acceptance",
         "run_agent_core_orchestration_acceptance",
         "run_agent_core_provider_acceptance",
@@ -385,6 +389,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "orchestration_acceptance_harness" in capability_names
     assert "coordination_acceptance_harness" in capability_names
     assert "event_acceptance_harness" in capability_names
+    assert "guardrail_acceptance_harness" in capability_names
     assert "lifecycle_acceptance_harness" in capability_names
     assert "provider_acceptance_harness" in capability_names
     assert "storage_acceptance_harness" in capability_names
@@ -450,6 +455,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "orchestration_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "coordination_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "event_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "guardrail_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "lifecycle_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "storage_acceptance_harness" in manifest["matched"]["capabilities"]
