@@ -143,10 +143,13 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "AgentCoreAcceptanceReport",
     "AgentCoreRecoveryHarness",
     "AgentCoreRecoveryReport",
+    "AgentCoreResumeAcceptanceHarness",
+    "AgentCoreResumeAcceptanceReport",
     "agent_core_sdk_manifest",
     "evaluate_agent_core_readiness",
     "run_agent_core_acceptance",
     "run_agent_core_recovery_acceptance",
+    "run_agent_core_resume_acceptance",
 )
 
 
@@ -588,6 +591,16 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
             runtime_notes=("Runtime-specific retry budgets and circuit breakers remain host policy.",),
         ),
         AgentCoreCapability(
+            name="resume_acceptance_harness",
+            layer="eval",
+            summary="Pure-SDK checkpoint/resume acceptance checks and trace eval gate.",
+            public_contracts=(
+                "AgentCoreResumeAcceptanceHarness",
+                "AgentCoreResumeAcceptanceReport",
+            ),
+            runtime_notes=("Runtime-specific worker scheduling and UI recovery stay outside core.",),
+        ),
+        AgentCoreCapability(
             name="planner_handoff_artifacts",
             layer="coordination",
             summary="Planner protocol, handoff records, agent-as-tool contracts, and artifact stores.",
@@ -625,6 +638,7 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "trace_replay_eval",
             "replacement_acceptance_harness",
             "recovery_acceptance_harness",
+            "resume_acceptance_harness",
             "planner_handoff_artifacts",
             "runtime_boundary",
         ),
@@ -662,6 +676,9 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "AgentCoreRecoveryHarness",
             "AgentCoreRecoveryReport",
             "run_agent_core_recovery_acceptance",
+            "AgentCoreResumeAcceptanceHarness",
+            "AgentCoreResumeAcceptanceReport",
+            "run_agent_core_resume_acceptance",
         ),
         required_storage_roles=CORE_STORAGE_ROLES,
         required_builtin_storage_kinds=BUILTIN_STORAGE_KINDS,

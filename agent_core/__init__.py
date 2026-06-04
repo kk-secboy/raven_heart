@@ -343,6 +343,12 @@ from agent_core.recovery import (
     AgentCoreRecoveryReport,
     run_agent_core_recovery_acceptance,
 )
+from agent_core.resume_acceptance import (
+    AgentCoreResumeAcceptanceHarness,
+    AgentCoreResumeAcceptanceIssue,
+    AgentCoreResumeAcceptanceReport,
+    run_agent_core_resume_acceptance,
+)
 from agent_core.runner import (
     AgentManagerCapacityError,
     AgentManagerCapacityStatus,
@@ -485,6 +491,9 @@ __all__ = [
     "AgentCoreRecoveryHarness",
     "AgentCoreRecoveryIssue",
     "AgentCoreRecoveryReport",
+    "AgentCoreResumeAcceptanceHarness",
+    "AgentCoreResumeAcceptanceIssue",
+    "AgentCoreResumeAcceptanceReport",
     "AgentCoreRuntimeBoundary",
     "AgentCoreSDKManifest",
     "AgentEvent",
@@ -855,6 +864,7 @@ __all__ = [
     "agent_core_sdk_manifest",
     "run_agent_core_acceptance",
     "run_agent_core_recovery_acceptance",
+    "run_agent_core_resume_acceptance",
 ]
 
 

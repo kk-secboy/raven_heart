@@ -70,6 +70,14 @@ audit shape and default acceptance checks; host runtimes own real retry budgets,
 rate-limit handling, circuit breakers, vendor-specific failover, and operator
 policy.
 
+`AgentCoreResumeAcceptanceHarness` adds the checkpoint/resume gate. It creates a
+checkpoint, builds a `ResumePlan`, resumes through `AgentRunner.resume()`,
+checks prompt injection of the checkpoint state, runs trace eval for resume and
+resume-plan readiness, and verifies strict terminal checkpoints are rejected
+when `allow_terminal=False`. The SDK owns resume tokens, plans, prompt-safe
+resume manifests, and the acceptance report; runtimes own distributed worker
+selection, UI recovery flows, and product workflow state.
+
 ## Boundary Table
 
 | Core area | Runtime responsibility |

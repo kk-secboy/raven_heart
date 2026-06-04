@@ -140,6 +140,13 @@ that retryable tool failures record attempts and finish successfully. Host
 runtimes still own production retry budgets, rate-limit policy, circuit
 breakers, and provider-specific failover rules.
 
+`agent_core.run_agent_core_resume_acceptance()` runs deterministic
+checkpoint/resume checks. It creates a checkpoint, selects a resume plan,
+continues through `AgentRunner.resume()`, injects resumed state into the prompt,
+evaluates the run trace, and verifies strict terminal checkpoints are rejected
+when `allow_terminal=False`. Runtime worker scheduling and user-facing recovery
+flows remain outside the SDK.
+
 ## Core Capabilities
 
 ### Harness
@@ -866,6 +873,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK public API stability contract | MVP implemented |
 | SDK replacement acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
+| SDK resume acceptance harness | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
 | Manager run event paging | MVP implemented |
