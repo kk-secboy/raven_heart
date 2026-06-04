@@ -106,6 +106,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreProviderConformanceIssue",
         "AgentCoreProviderConformanceReport",
         "AgentCoreProviderConformanceSpec",
+        "AgentCoreProviderResilienceAcceptanceHarness",
+        "AgentCoreProviderResilienceAcceptanceIssue",
+        "AgentCoreProviderResilienceAcceptanceReport",
         "AgentCoreRedactionAcceptanceHarness",
         "AgentCoreRedactionAcceptanceIssue",
         "AgentCoreRedactionAcceptanceReport",
@@ -397,6 +400,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_packaging_acceptance",
         "run_agent_core_provider_acceptance",
         "run_agent_core_provider_conformance",
+        "run_agent_core_provider_resilience_acceptance",
         "run_agent_core_redaction_acceptance",
         "run_agent_core_recovery_acceptance",
         "run_agent_core_resume_acceptance",
@@ -487,6 +491,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "packaging_acceptance_harness" in capability_names
     assert "provider_acceptance_harness" in capability_names
     assert "provider_conformance_harness" in capability_names
+    assert "provider_resilience_acceptance_harness" in capability_names
     assert "budget_acceptance_harness" in capability_names
     assert "redaction_contracts" in capability_names
     assert "trace_export_bundle" in capability_names
@@ -566,6 +571,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "packaging_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_conformance_harness" in manifest["matched"]["capabilities"]
+    assert "provider_resilience_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "budget_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "redaction_contracts" in manifest["matched"]["capabilities"]
     assert "trace_export_bundle" in manifest["matched"]["capabilities"]

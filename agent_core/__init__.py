@@ -209,6 +209,12 @@ from agent_core.provider_conformance import (
     ProviderConformanceDeterministicProvider,
     run_agent_core_provider_conformance,
 )
+from agent_core.provider_resilience_acceptance import (
+    AgentCoreProviderResilienceAcceptanceHarness,
+    AgentCoreProviderResilienceAcceptanceIssue,
+    AgentCoreProviderResilienceAcceptanceReport,
+    run_agent_core_provider_resilience_acceptance,
+)
 from agent_core.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingCallRecord,
@@ -721,6 +727,9 @@ __all__ = [
     "AgentCoreProviderConformanceIssue",
     "AgentCoreProviderConformanceReport",
     "AgentCoreProviderConformanceSpec",
+    "AgentCoreProviderResilienceAcceptanceHarness",
+    "AgentCoreProviderResilienceAcceptanceIssue",
+    "AgentCoreProviderResilienceAcceptanceReport",
     "AgentCoreRedactionAcceptanceHarness",
     "AgentCoreRedactionAcceptanceIssue",
     "AgentCoreRedactionAcceptanceReport",
@@ -1167,6 +1176,7 @@ __all__ = [
     "run_agent_core_packaging_acceptance",
     "run_agent_core_provider_acceptance",
     "run_agent_core_provider_conformance",
+    "run_agent_core_provider_resilience_acceptance",
     "run_agent_core_redaction_acceptance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",

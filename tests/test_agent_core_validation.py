@@ -36,6 +36,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["packaging_acceptance"]["ready"] is True
     assert manifest["provider_acceptance"]["ready"] is True
     assert manifest["provider_conformance"]["ready"] is True
+    assert manifest["provider_resilience_acceptance"]["ready"] is True
     assert manifest["redaction_acceptance"]["ready"] is True
     assert manifest["trace_export_acceptance"]["ready"] is True
     assert manifest["eval_suite_acceptance"]["ready"] is True
@@ -125,6 +126,20 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["provider_acceptance"]["route_matrix"]["selected"]["vision"] == "vision"
     assert manifest["provider_conformance"]["tool_calls"]["tool_call_names"] == ["lookup"]
     assert manifest["provider_conformance"]["json_mode"]["parsed_ok"] is True
+    assert manifest["provider_resilience_acceptance"]["retry_completion"][
+        "fallback_request_count"
+    ] == 1
+    assert manifest["provider_resilience_acceptance"]["explicit_provider"][
+        "fallback_request_count"
+    ] == 0
+    assert manifest["provider_resilience_acceptance"]["stream_fallback"]["event_types"] == [
+        "delta",
+        "usage",
+        "message_end",
+    ]
+    assert manifest["provider_resilience_acceptance"]["trace_evals"]["stream_fallback"][
+        "ok"
+    ] is True
     assert manifest["redaction_acceptance"]["leak_scan"]["leaked_count"] == 0
     assert manifest["redaction_acceptance"]["redaction"]["redacted_count"] >= 5
     assert manifest["trace_export_acceptance"]["leak_scan"]["leaked_count"] == 0
@@ -195,6 +210,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "packaging_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "provider_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "provider_conformance_harness" in readiness["matched"]["capabilities"]
+    assert "provider_resilience_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "redaction_contracts" in readiness["matched"]["capabilities"]
     assert "trace_export_bundle" in readiness["matched"]["capabilities"]
     assert "eval_suite_runner" in readiness["matched"]["capabilities"]
@@ -245,6 +261,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "AgentCoreProviderConformanceReport" in readiness["matched"]["public_api"]
     assert "AgentCoreProviderConformanceSpec" in readiness["matched"]["public_api"]
     assert "run_agent_core_provider_conformance" in readiness["matched"]["public_api"]
+    assert "AgentCoreProviderResilienceAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_provider_resilience_acceptance" in readiness["matched"]["public_api"]
     assert "RedactionPolicy" in readiness["matched"]["public_api"]
     assert "AgentCoreRedactionAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_redaction_acceptance" in readiness["matched"]["public_api"]
@@ -310,6 +328,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "AgentCoreProviderConformanceReport" in stability["present_stable_api"]
     assert "AgentCoreProviderConformanceSpec" in stability["present_stable_api"]
     assert "run_agent_core_provider_conformance" in stability["present_stable_api"]
+    assert "AgentCoreProviderResilienceAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_provider_resilience_acceptance" in stability["present_stable_api"]
     assert "RedactionPolicy" in stability["present_stable_api"]
     assert "AgentCoreRedactionAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_redaction_acceptance" in stability["present_stable_api"]

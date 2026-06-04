@@ -241,6 +241,15 @@ streaming, JSON mode, and native tool-call behavior through the same report
 shape. HTTP clients, API keys, deployment routing, and rate-limit handling stay
 outside `agent_core`.
 
+`agent_core.run_agent_core_provider_resilience_acceptance()` runs deterministic
+provider retry and fallback checks. It verifies retryable completion failures
+retry before fallback, retry-after policy can suppress retries, non-retryable
+failures move to fallback without retrying, explicit provider requests fail
+closed instead of silently falling back, streaming errors can retry and recover
+through a fallback stream, and trace eval records provider error classification
+for each scenario. Concrete provider credentials, runtime circuit breakers,
+tenant retry budgets, and vendor failover policy remain outside the SDK.
+
 `agent_core.run_agent_core_budget_acceptance()` runs deterministic provider
 budget checks for `LLMProviderCenter`. It verifies estimated-cost preflight,
 actual-cost enforcement, request-level budget overrides, call-attempt limits,
