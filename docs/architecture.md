@@ -64,6 +64,9 @@ Structured output is intentionally contract-based rather than provider-specific.
 the schema into prompt context, and `ReActExecutor` validates `finish.output`.
 Invalid output becomes repair feedback inside the ReAct loop. Runtime code owns
 the domain schema, typed object mapping, and downstream storage.
+`StructuredOutputTrace` is derived from journal checkpoints so replay/eval suites
+can prove which schemas passed, when repair was requested, and when validation
+failed without persisting final-output bodies in trace summaries.
 The shared `validate_json_schema_subset()` contract returns prompt-safe
 `SchemaValidationResult` manifests and is also used by action argument
 validation, so runtime UIs and trace/eval tooling can inspect schema failures
@@ -145,7 +148,8 @@ trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
 streaming calls using prompt-safe summaries, prompt bucket budget, semantic
-prompt trim, global prompt trim, approval records, artifact records, embedding calls, and lifecycle hook records. The core
+prompt trim, global prompt trim, approval records, artifact records, structured
+output validation/repair records, embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, required events, required tools,

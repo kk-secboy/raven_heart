@@ -239,6 +239,50 @@ class ArtifactTrace:
         }
 
 
+@dataclass(frozen=True)
+class StructuredOutputTrace:
+    """Run-level summary of structured output validation attempts."""
+
+    records: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_journal(cls, journal_replay: dict[str, Any]) -> "StructuredOutputTrace":
+        records: list[dict[str, Any]] = []
+        for event in _dict_items(journal_replay.get("events")):
+            if str(event.get("event_type") or "") != "checkpoint":
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+            record = _structured_output_record_from_state(
+                state,
+                run_id=str(event.get("run_id") or payload.get("run_id") or ""),
+                turn_id=str(event.get("turn_id") or payload.get("turn_id") or ""),
+                sequence=_safe_int(payload.get("sequence")),
+            )
+            if record:
+                records.append(record)
+        return cls(records=tuple(records))
+
+    def manifest(self) -> dict[str, Any]:
+        records = tuple(dict(item) for item in self.records)
+        ok_records = tuple(item for item in records if item.get("ok") is True)
+        failed_records = tuple(item for item in records if item.get("ok") is False)
+        repair_records = tuple(item for item in records if item.get("status") == "structured_output_error")
+        return {
+            "schema_version": "agent-core-structured-output-trace/v1",
+            "record_count": len(records),
+            "ok_count": len(ok_records),
+            "failed_count": len(failed_records),
+            "repair_count": len(repair_records),
+            "statuses": _count_injection_field(records, "status"),
+            "schema_names": _count_injection_field(records, "schema_name"),
+            "errors": _count_injection_field(records, "error"),
+            "records": list(records),
+            "metadata": dict(self.metadata),
+        }
+
+
 class ToolCenterTrace:
     """Run-level summary of ToolCenter route and call audit records."""
 
@@ -490,6 +534,7 @@ class AgentRunTraceBundle:
     skill_center: dict[str, Any] = field(default_factory=dict)
     storage_backends: dict[str, Any] = field(default_factory=dict)
     artifact_trace: dict[str, Any] = field(default_factory=dict)
+    structured_output_trace: dict[str, Any] = field(default_factory=dict)
     context_injections: dict[str, Any] = field(default_factory=dict)
     memory_governance: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
@@ -517,6 +562,9 @@ class AgentRunTraceBundle:
             self.approvals
         ).manifest()
         artifact_trace = self.artifact_trace or ArtifactTrace.from_session(self.session).manifest()
+        structured_output_trace = self.structured_output_trace or StructuredOutputTrace.from_journal(
+            self.journal_replay
+        ).manifest()
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
@@ -566,6 +614,15 @@ class AgentRunTraceBundle:
                 "artifact_count": int(artifact_trace.get("artifact_count") or 0),
                 "artifact_total_bytes": int(artifact_trace.get("total_bytes") or 0),
                 "artifact_max_bytes": int(artifact_trace.get("max_artifact_bytes") or 0),
+                "structured_output_record_count": int(
+                    structured_output_trace.get("record_count") or 0
+                ),
+                "structured_output_repair_count": int(
+                    structured_output_trace.get("repair_count") or 0
+                ),
+                "structured_output_failed_count": int(
+                    structured_output_trace.get("failed_count") or 0
+                ),
                 "event_log_count": int(self.event_log.get("event_count") or 0),
                 "correlation_entry_count": int(correlation.get("entry_count") or 0),
                 "has_resume": bool(self.resume),
@@ -624,6 +681,7 @@ class AgentRunTraceBundle:
             "approvals": dict(self.approvals),
             "approval_trace": dict(approval_trace),
             "artifact_trace": dict(artifact_trace),
+            "structured_output_trace": dict(structured_output_trace),
             "event_log": dict(self.event_log),
             "resume": dict(self.resume),
             "resume_plan": dict(self.resume_plan),
@@ -761,6 +819,45 @@ def _artifact_trace_record(record: dict[str, Any]) -> dict[str, Any]:
         "call_id": str(metadata.get("call_id") or ""),
         "status": str(metadata.get("status") or ""),
         "metadata": dict(metadata),
+    }
+
+
+def _structured_output_record_from_state(
+    state: dict[str, Any],
+    *,
+    run_id: str = "",
+    turn_id: str = "",
+    sequence: int = 0,
+) -> dict[str, Any]:
+    status = str(state.get("status") or "")
+    result = state.get("structured_output") if isinstance(state.get("structured_output"), dict) else {}
+    if status not in {"structured_output_error", "structured_output_failed"} and not result:
+        return {}
+    ok = result.get("ok")
+    if ok is None and status == "structured_output_error":
+        ok = False
+    if ok is None and status == "structured_output_failed":
+        ok = False
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    schema_validation = (
+        metadata.get("schema_validation")
+        if isinstance(metadata.get("schema_validation"), dict)
+        else {}
+    )
+    schema_name = str(metadata.get("schema_name") or schema_validation.get("schema_name") or "")
+    error = str(result.get("error") or state.get("error") or "")
+    return {
+        "run_id": run_id,
+        "turn_id": turn_id,
+        "sequence": sequence,
+        "status": status or ("structured_output_ok" if ok is True else "structured_output_failed"),
+        "ok": bool(ok) if ok is not None else False,
+        "schema_name": schema_name,
+        "raw_output_bytes": _safe_int(result.get("raw_output_bytes")),
+        "error": error,
+        "repair_attempt": _safe_int(state.get("repair_attempt")),
+        "iteration": _safe_int(state.get("iteration")),
+        "schema_validation": dict(schema_validation),
     }
 
 

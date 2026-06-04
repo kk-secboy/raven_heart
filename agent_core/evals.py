@@ -130,6 +130,12 @@ class TraceEvalSpec:
     max_artifact_count: int | None = None
     max_artifact_total_bytes: int | None = None
     max_artifact_size_bytes: int | None = None
+    require_structured_output: bool = False
+    require_structured_output_ok: bool = False
+    required_structured_output_schema_names: tuple[str, ...] = ()
+    forbidden_structured_output_errors: tuple[str, ...] = ()
+    max_structured_output_repairs: int | None = None
+    max_structured_output_failures: int | None = None
     required_tool_names: tuple[str, ...] = ()
     required_tool_execution_names: tuple[str, ...] = ()
     required_tool_execution_ok_names: tuple[str, ...] = ()
@@ -285,6 +291,14 @@ class TraceEvalSpec:
             "max_artifact_count": self.max_artifact_count,
             "max_artifact_total_bytes": self.max_artifact_total_bytes,
             "max_artifact_size_bytes": self.max_artifact_size_bytes,
+            "require_structured_output": self.require_structured_output,
+            "require_structured_output_ok": self.require_structured_output_ok,
+            "required_structured_output_schema_names": list(
+                self.required_structured_output_schema_names
+            ),
+            "forbidden_structured_output_errors": list(self.forbidden_structured_output_errors),
+            "max_structured_output_repairs": self.max_structured_output_repairs,
+            "max_structured_output_failures": self.max_structured_output_failures,
             "required_tool_names": list(self.required_tool_names),
             "required_tool_execution_names": list(self.required_tool_execution_names),
             "required_tool_execution_ok_names": list(self.required_tool_execution_ok_names),
@@ -596,6 +610,17 @@ class TraceReplayHarness:
                     payload=dict(item),
                 )
             )
+        for item in _structured_output_replay_steps(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="structured_output",
+                    event_type=str(item.get("event_type") or ""),
+                    run_id=str(item.get("run_id") or run_id),
+                    turn_id=str(item.get("turn_id") or ""),
+                    payload=dict(item.get("payload") or {}),
+                )
+            )
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
         for item in _provider_call_records(provider):
             steps.append(
@@ -841,6 +866,25 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             (_safe_int(record.get("size_bytes")) for record in artifact_records),
             default=0,
         )
+        structured_output_trace = _structured_output_trace(trace)
+        structured_output_records = _structured_output_records(structured_output_trace)
+        structured_output_schema_names = _structured_output_values(
+            structured_output_records,
+            "schema_name",
+        )
+        structured_output_errors = _structured_output_values(
+            structured_output_records,
+            "error",
+        )
+        structured_output_repairs = tuple(
+            record
+            for record in structured_output_records
+            if record.get("status") == "structured_output_error"
+        )
+        structured_output_failures = tuple(
+            record for record in structured_output_records if record.get("ok") is False
+        )
+        structured_output_ok = any(record.get("ok") is True for record in structured_output_records)
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -1923,6 +1967,70 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_structured_output and not structured_output_trace:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "structured_output_trace_missing",
+                    "structured output trace is required",
+                )
+            )
+        if spec.require_structured_output_ok and not structured_output_ok:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "structured_output_ok_missing",
+                    "structured output must have at least one successful validation",
+                )
+            )
+        for schema_name in spec.required_structured_output_schema_names:
+            if schema_name not in structured_output_schema_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_structured_output_schema_name",
+                        f"required structured output schema missing: {schema_name}",
+                    )
+                )
+        for error in spec.forbidden_structured_output_errors:
+            if error in structured_output_errors:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_structured_output_error",
+                        f"forbidden structured output error present: {error}",
+                    )
+                )
+        if (
+            spec.max_structured_output_repairs is not None
+            and len(structured_output_repairs) > spec.max_structured_output_repairs
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "structured_output_repair_limit_exceeded",
+                    "structured output repair count exceeded limit",
+                    metadata={
+                        "actual": len(structured_output_repairs),
+                        "limit": spec.max_structured_output_repairs,
+                    },
+                )
+            )
+        if (
+            spec.max_structured_output_failures is not None
+            and len(structured_output_failures) > spec.max_structured_output_failures
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "structured_output_failure_limit_exceeded",
+                    "structured output failure count exceeded limit",
+                    metadata={
+                        "actual": len(structured_output_failures),
+                        "limit": spec.max_structured_output_failures,
+                    },
+                )
+            )
         tool_names = _tool_names(trace)
         for tool_name in spec.required_tool_names:
             if tool_name not in tool_names:
@@ -2353,6 +2461,13 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "artifact_content_types": sorted(artifact_content_types),
                 "artifact_total_bytes": artifact_total_bytes,
                 "artifact_max_bytes": artifact_max_bytes,
+                "has_structured_output_trace": bool(structured_output_trace),
+                "structured_output_record_count": len(structured_output_records),
+                "structured_output_ok": structured_output_ok,
+                "structured_output_schema_names": sorted(structured_output_schema_names),
+                "structured_output_errors": sorted(structured_output_errors),
+                "structured_output_repair_count": len(structured_output_repairs),
+                "structured_output_failure_count": len(structured_output_failures),
                 "terminal_event_types": sorted(
                     {str(event.get("type") or "") for event in terminal_events}
                 ),
@@ -2750,6 +2865,35 @@ def _artifact_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         }
         for record in _artifact_records(_artifact_trace(trace))
     )
+
+
+def _structured_output_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    steps: list[dict[str, Any]] = []
+    for record in _structured_output_records(_structured_output_trace(trace)):
+        status = str(record.get("status") or "structured_output")
+        if record.get("ok") is True:
+            event_type = "structured_output_ok"
+        elif status == "structured_output_error":
+            event_type = "structured_output_repair_requested"
+        else:
+            event_type = "structured_output_failed"
+        steps.append(
+            {
+                "event_type": event_type,
+                "run_id": str(record.get("run_id") or ""),
+                "turn_id": str(record.get("turn_id") or ""),
+                "payload": {
+                    "status": status,
+                    "ok": bool(record.get("ok")),
+                    "schema_name": str(record.get("schema_name") or ""),
+                    "raw_output_bytes": _safe_int(record.get("raw_output_bytes")),
+                    "error": str(record.get("error") or ""),
+                    "repair_attempt": _safe_int(record.get("repair_attempt")),
+                    "iteration": _safe_int(record.get("iteration")),
+                },
+            }
+        )
+    return tuple(steps)
 
 
 def _mcp_inventory_replay_payload(refresh: dict[str, Any]) -> dict[str, Any]:
@@ -3622,6 +3766,90 @@ def _artifact_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 
 
 def _artifact_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in records if item.get(key)}
+
+
+def _structured_output_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("structured_output_trace")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    journal = trace.get("journal_replay") if isinstance(trace.get("journal_replay"), dict) else {}
+    records: list[dict[str, Any]] = []
+    for event in _dict_items(journal.get("events")):
+        if str(event.get("event_type") or "") != "checkpoint":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+        record = _structured_output_record_from_state(
+            state,
+            run_id=str(event.get("run_id") or payload.get("run_id") or ""),
+            turn_id=str(event.get("turn_id") or payload.get("turn_id") or ""),
+            sequence=_safe_int(payload.get("sequence")),
+        )
+        if record:
+            records.append(record)
+    if not records:
+        return {}
+    return _structured_output_trace_from_records(tuple(records))
+
+
+def _structured_output_trace_from_records(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    ok_records = tuple(item for item in records if item.get("ok") is True)
+    failed_records = tuple(item for item in records if item.get("ok") is False)
+    repair_records = tuple(item for item in records if item.get("status") == "structured_output_error")
+    return {
+        "schema_version": "agent-core-structured-output-trace/v1",
+        "record_count": len(records),
+        "ok_count": len(ok_records),
+        "failed_count": len(failed_records),
+        "repair_count": len(repair_records),
+        "statuses": _count_values(records, "status"),
+        "schema_names": _count_values(records, "schema_name"),
+        "errors": _count_values(records, "error"),
+        "records": list(records),
+    }
+
+
+def _structured_output_record_from_state(
+    state: dict[str, Any],
+    *,
+    run_id: str = "",
+    turn_id: str = "",
+    sequence: int = 0,
+) -> dict[str, Any]:
+    status = str(state.get("status") or "")
+    result = state.get("structured_output") if isinstance(state.get("structured_output"), dict) else {}
+    if status not in {"structured_output_error", "structured_output_failed"} and not result:
+        return {}
+    ok = result.get("ok")
+    if ok is None and status in {"structured_output_error", "structured_output_failed"}:
+        ok = False
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    schema_validation = (
+        metadata.get("schema_validation")
+        if isinstance(metadata.get("schema_validation"), dict)
+        else {}
+    )
+    return {
+        "run_id": run_id,
+        "turn_id": turn_id,
+        "sequence": sequence,
+        "status": status or ("structured_output_ok" if ok is True else "structured_output_failed"),
+        "ok": bool(ok) if ok is not None else False,
+        "schema_name": str(metadata.get("schema_name") or schema_validation.get("schema_name") or ""),
+        "raw_output_bytes": _safe_int(result.get("raw_output_bytes")),
+        "error": str(result.get("error") or state.get("error") or ""),
+        "repair_attempt": _safe_int(state.get("repair_attempt")),
+        "iteration": _safe_int(state.get("iteration")),
+        "schema_validation": dict(schema_validation),
+    }
+
+
+def _structured_output_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("records")))
+
+
+def _structured_output_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in records if item.get(key)}
 
 

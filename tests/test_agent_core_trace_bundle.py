@@ -30,6 +30,7 @@ from agent_core.trace import (
     SQLiteRunTraceStore,
     SkillCenterTrace,
     StorageBackendTrace,
+    StructuredOutputTrace,
     TraceCorrelationIndex,
 )
 from agent_core.artifacts import InMemoryArtifactStore
@@ -46,7 +47,49 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         status="completed",
         iterations=2,
         output_bytes=4,
-        journal_replay={"ok": True, "event_count": 7},
+        journal_replay={
+            "ok": True,
+            "event_count": 7,
+            "events": [
+                {
+                    "event_type": "checkpoint",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "payload": {
+                        "sequence": 1,
+                        "state": {
+                            "status": "structured_output_error",
+                            "error": "$.risk is required",
+                            "repair_attempt": 1,
+                            "iteration": 0,
+                        },
+                    },
+                },
+                {
+                    "event_type": "checkpoint",
+                    "run_id": "run-1",
+                    "turn_id": "turn-2",
+                    "payload": {
+                        "sequence": 2,
+                        "state": {
+                            "status": "finished",
+                            "iteration": 1,
+                            "structured_output": {
+                                "ok": True,
+                                "raw_output_bytes": 28,
+                                "metadata": {
+                                    "schema_name": "risk_summary",
+                                    "schema_validation": {
+                                        "schema_name": "risk_summary",
+                                        "ok": True,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            ],
+        },
         provider={"call_count": 2},
         tool_replay={"record_count": 1},
         policy_decisions={"record_count": 2},
@@ -232,6 +275,10 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["artifact_max_bytes"] == 4096
     assert manifest["artifact_trace"]["kinds"] == {"tool_result": 1}
     assert manifest["artifact_trace"]["tool_names"] == {"dump": 1}
+    assert manifest["summary"]["structured_output_record_count"] == 2
+    assert manifest["summary"]["structured_output_repair_count"] == 1
+    assert manifest["summary"]["structured_output_failed_count"] == 1
+    assert manifest["structured_output_trace"]["schema_names"] == {"risk_summary": 1}
     assert manifest["approval_trace"]["statuses"] == {
         "approved": 1,
         "pending": 1,
@@ -239,7 +286,7 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     }
     assert manifest["approval_trace"]["subject_kinds"] == {"action": 1, "tool": 2}
     assert manifest["summary"]["event_log_count"] == 9
-    assert manifest["summary"]["correlation_entry_count"] == 3
+    assert manifest["summary"]["correlation_entry_count"] == 5
     assert manifest["summary"]["has_resume"] is True
     assert manifest["summary"]["has_resume_plan"] is True
     assert manifest["summary"]["resume_plan_ready"] is True
@@ -260,6 +307,51 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["capability_discovery"]["match_count"] == 4
     assert manifest["memory_search"]["hit_count"] == 2
     assert manifest["resume_plan"]["checkpoint_id"] == "c1"
+
+
+def test_structured_output_trace_summarizes_journal_checkpoints() -> None:
+    trace = StructuredOutputTrace.from_journal(
+        {
+            "events": [
+                {
+                    "event_type": "checkpoint",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "payload": {
+                        "sequence": 1,
+                        "state": {
+                            "status": "structured_output_failed",
+                            "error": "invalid json",
+                            "iteration": 0,
+                        },
+                    },
+                },
+                {
+                    "event_type": "checkpoint",
+                    "run_id": "run-1",
+                    "turn_id": "turn-2",
+                    "payload": {
+                        "sequence": 2,
+                        "state": {
+                            "status": "finished",
+                            "structured_output": {
+                                "ok": True,
+                                "raw_output_bytes": 28,
+                                "metadata": {"schema_name": "risk_summary"},
+                            },
+                        },
+                    },
+                },
+            ]
+        }
+    ).manifest()
+
+    assert trace["schema_version"] == "agent-core-structured-output-trace/v1"
+    assert trace["record_count"] == 2
+    assert trace["ok_count"] == 1
+    assert trace["failed_count"] == 1
+    assert trace["statuses"] == {"finished": 1, "structured_output_failed": 1}
+    assert trace["errors"] == {"invalid json": 1}
 
 
 def test_trace_correlation_index_cross_references_trace_materials() -> None:

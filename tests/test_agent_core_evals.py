@@ -385,6 +385,44 @@ def _trace_manifest() -> dict[str, object]:
                 }
             ],
         },
+        "structured_output_trace": {
+            "schema_version": "agent-core-structured-output-trace/v1",
+            "record_count": 2,
+            "ok_count": 1,
+            "failed_count": 1,
+            "repair_count": 1,
+            "statuses": {"structured_output_error": 1, "finished": 1},
+            "schema_names": {"risk_summary": 1},
+            "errors": {"$.risk is required": 1},
+            "records": [
+                {
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 1,
+                    "status": "structured_output_error",
+                    "ok": False,
+                    "schema_name": "",
+                    "raw_output_bytes": 0,
+                    "error": "$.risk is required",
+                    "repair_attempt": 1,
+                    "iteration": 0,
+                    "schema_validation": {},
+                },
+                {
+                    "run_id": "run-1",
+                    "turn_id": "turn-2",
+                    "sequence": 2,
+                    "status": "finished",
+                    "ok": True,
+                    "schema_name": "risk_summary",
+                    "raw_output_bytes": 28,
+                    "error": "",
+                    "repair_attempt": 0,
+                    "iteration": 1,
+                    "schema_validation": {"schema_name": "risk_summary", "ok": True},
+                },
+            ],
+        },
         "storage_backends": {
             "schema_version": "agent-core-storage-backend-trace/v1",
             "backend_count": 3,
@@ -499,6 +537,8 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "approval_pending",
         "approval_rejected",
         "artifact_stored",
+        "structured_output_repair_requested",
+        "structured_output_ok",
         "provider_call_completed",
         "provider_call_completed",
     )
@@ -516,8 +556,12 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
     assert manifest["steps"][13]["source"] == "approval_trace"
     assert manifest["steps"][14]["source"] == "artifact_trace"
     assert manifest["steps"][14]["payload"]["artifact_id"] == "artifact-1"
-    assert manifest["steps"][15]["source"] == "provider"
-    assert manifest["steps"][15]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][15]["source"] == "structured_output"
+    assert manifest["steps"][15]["payload"]["error"] == "$.risk is required"
+    assert manifest["steps"][16]["source"] == "structured_output"
+    assert manifest["steps"][16]["payload"]["schema_name"] == "risk_summary"
+    assert manifest["steps"][17]["source"] == "provider"
+    assert manifest["steps"][17]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1631,6 +1675,59 @@ def test_trace_eval_reports_artifact_contract_failures() -> None:
     assert {issue.code for issue in missing.issues} == {"artifact_trace_missing"}
 
 
+def test_trace_eval_validates_structured_output_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_structured_output=True,
+            require_structured_output_ok=True,
+            required_structured_output_schema_names=("risk_summary",),
+            max_structured_output_repairs=1,
+            max_structured_output_failures=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_structured_output_trace"] is True
+    assert report.summary["structured_output_record_count"] == 2
+    assert report.summary["structured_output_ok"] is True
+    assert report.summary["structured_output_schema_names"] == ["risk_summary"]
+    assert report.summary["structured_output_errors"] == ["$.risk is required"]
+    assert report.summary["structured_output_repair_count"] == 1
+    assert report.summary["structured_output_failure_count"] == 1
+    assert report.metadata["spec"]["require_structured_output"] is True
+
+
+def test_trace_eval_reports_structured_output_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_structured_output_schema_names=("asset_finding",),
+            forbidden_structured_output_errors=("$.risk is required",),
+            max_structured_output_repairs=0,
+            max_structured_output_failures=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "structured_output_trace"},
+        TraceEvalSpec(require_structured_output=True, require_structured_output_ok=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_structured_output_schema_name",
+        "forbidden_structured_output_error",
+        "structured_output_repair_limit_exceeded",
+        "structured_output_failure_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {
+        "structured_output_trace_missing",
+        "structured_output_ok_missing",
+    }
+
+
 def test_trace_eval_validates_mcp_and_skill_center_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
@@ -2055,7 +2152,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 17
+    assert report.summary["baseline_step_count"] == 19
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -2097,6 +2194,8 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "approval_pending",
         "approval_rejected",
         "artifact_stored",
+        "structured_output_repair_requested",
+        "structured_output_ok",
         "provider_call_completed",
         "provider_call_completed",
     ]

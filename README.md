@@ -221,6 +221,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   decision metadata without depending on an operator UI or workflow engine.
 - `ArtifactTrace` summarizes prompt-safe artifact ids, URIs, hashes, sizes,
   content types, kinds, and tool ownership without embedding artifact content.
+- `StructuredOutputTrace` summarizes final-output validation attempts,
+  successful schemas, repair requests, and validation failures from journal
+  checkpoints.
 - `MCPCenterTrace` summarizes prompt-safe MCP server inventory, refreshed/
   failed/partial servers, transports, tool/resource/prompt counts, and the last
   inventory refresh records.
@@ -242,8 +245,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   event-log, and provider call manifests, including resume-plan,
   checkpoint-loaded, prompt-bucket-budget, prompt-semantic-trim,
   prompt-trim, MCP inventory/server, skill-load/resource-view, approval
-  request/decision, artifact-store, provider-call, provider-stream,
-  embedding-call, and lifecycle-hook steps.
+  request/decision, artifact-store, structured-output validation/repair,
+  provider-call, provider-stream, embedding-call, and lifecycle-hook steps.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
@@ -256,7 +259,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   validation, minimum tool attempt counts, ToolCenter route/call audit
   constraints, MCP center inventory constraints, skill center constraints,
   approval status/subject constraints, artifact count/size/type constraints,
-  storage backend constraints,
+  structured output schema/repair/failure constraints, storage backend constraints,
   lifecycle hook constraints, event-log presence, event-log types, terminal
   events, event sequence monotonicity, duplicate sequence limits,
   context injection name/source/target/status constraints, included/trimmed/
@@ -707,6 +710,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Approval core | MVP implemented |
 | Approval trace/eval contracts | MVP implemented |
 | Artifact trace/eval contracts | MVP implemented |
+| Structured output trace/eval contracts | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |
 | Prompt bucket budget policy | MVP implemented |
 | Runtime semantic prompt reducer | MVP implemented |

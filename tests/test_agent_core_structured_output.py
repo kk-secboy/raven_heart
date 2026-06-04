@@ -141,3 +141,9 @@ async def test_agent_runner_injects_structured_output_schema_into_prompt() -> No
     assert provider.requests[0].response_format.name == "risk_summary"
     assert outcome.prompt_manifest["metadata"]["structured_output"]["name"] == "risk_summary"
     assert outcome.result.metadata["structured_output"]["value"]["summary"] == "ready"
+    assert outcome.trace_manifest["summary"]["structured_output_record_count"] == 1
+    assert outcome.trace_manifest["summary"]["structured_output_repair_count"] == 0
+    assert outcome.trace_manifest["structured_output_trace"]["ok_count"] == 1
+    assert outcome.trace_manifest["structured_output_trace"]["schema_names"] == {
+        "risk_summary": 1
+    }
