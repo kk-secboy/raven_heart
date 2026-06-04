@@ -23,6 +23,7 @@ from agent_core.trace import (
     AgentRunTraceBundle,
     ApprovalTrace,
     ContextInjectionTrace,
+    ContextMaterialSelectionTrace,
     InMemoryRunTraceStore,
     MarkdownRunTraceStore,
     MCPCenterTrace,
@@ -233,6 +234,41 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
                         "trimmed": False,
                     },
                 ],
+                "context_material_selection": {
+                    "schema_version": "agent-core-context-material-selection-result/v1",
+                    "selection_count": 2,
+                    "selected_count": 1,
+                    "dropped_count": 1,
+                    "selected_bytes": 64,
+                    "selections": [
+                        {
+                            "name": "memory_recall",
+                            "role": "memory",
+                            "target": "semi_dynamic_1",
+                            "status": "selected",
+                            "selected": True,
+                            "score": 101.0,
+                            "rank": 1,
+                            "reason": "semantic_priority_selected",
+                            "priority": 4,
+                            "bytes": 64,
+                            "sha256": "memsha",
+                        },
+                        {
+                            "name": "old_note",
+                            "role": "memory",
+                            "target": "semi_dynamic_1",
+                            "status": "score_below_threshold",
+                            "selected": False,
+                            "score": 0.2,
+                            "rank": 0,
+                            "reason": "score_below_threshold",
+                            "priority": 1,
+                            "bytes": 20,
+                            "sha256": "oldsha",
+                        },
+                    ],
+                },
                 "bucket_budget": {
                     "schema_version": "agent-core-prompt-bucket-budget-result/v1",
                     "trimmed_count": 1,
@@ -296,6 +332,13 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["context_injection_count"] == 2
     assert manifest["summary"]["context_injection_trimmed_count"] == 1
     assert manifest["context_injections"]["sources"] == {"memory": 1, "runtime": 1}
+    assert manifest["summary"]["context_material_selection_count"] == 2
+    assert manifest["summary"]["context_material_selected_count"] == 1
+    assert manifest["summary"]["context_material_dropped_count"] == 1
+    assert manifest["context_material_selection"]["statuses"] == {
+        "score_below_threshold": 1,
+        "selected": 1,
+    }
     assert manifest["summary"]["memory_governance_decision_count"] == 2
     assert manifest["summary"]["memory_governance_denied_count"] == 1
     assert manifest["summary"]["memory_governance_rewritten_count"] == 1
@@ -533,6 +576,77 @@ def test_context_injection_trace_summarizes_prompt_injection_decisions() -> None
     assert trace["trimmed_count"] == 1
     assert trace["sources"] == {"memory": 1, "runtime": 1}
     assert trace["targets"] == {"high_static": 1, "semi_dynamic_1": 1}
+
+
+def test_context_material_selection_trace_summarizes_prompt_selection_decisions() -> None:
+    trace = ContextMaterialSelectionTrace.from_prompt(
+        {
+            "metadata": {
+                "context_material_selection": {
+                    "schema_version": "agent-core-context-material-selection-result/v1",
+                    "selections": [
+                        {
+                            "name": "auth_trace",
+                            "role": "timeline",
+                            "target": "timeline_open",
+                            "status": "selected",
+                            "selected": True,
+                            "bytes": 64,
+                        },
+                        {
+                            "name": "old_note",
+                            "role": "memory",
+                            "target": "semi_dynamic_1",
+                            "status": "score_below_threshold",
+                            "selected": False,
+                            "bytes": 20,
+                        },
+                    ],
+                }
+            }
+        }
+    ).manifest()
+
+    assert trace["schema_version"] == "agent-core-context-material-selection-trace/v1"
+    assert trace["selection_count"] == 2
+    assert trace["selected_count"] == 1
+    assert trace["dropped_count"] == 1
+    assert trace["selected_bytes"] == 64
+    assert trace["statuses"] == {"score_below_threshold": 1, "selected": 1}
+    assert trace["targets"] == {"timeline_open": 1}
+    assert trace["names"] == {"auth_trace": 1, "old_note": 1}
+
+
+def test_context_material_selection_trace_can_fallback_to_selected_injections() -> None:
+    trace = ContextMaterialSelectionTrace.from_prompt(
+        {
+            "metadata": {
+                "context_injections": [
+                    {
+                        "name": "auth_trace",
+                        "source": "trace",
+                        "target": "timeline_open",
+                        "priority": 3,
+                        "bytes": 64,
+                        "metadata": {
+                            "context_material_selection": {
+                                "score": 314.5,
+                                "rank": 1,
+                                "reason": "semantic_priority_selected",
+                                "target": "timeline_open",
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    ).manifest()
+
+    assert trace["selection_count"] == 1
+    assert trace["selected_count"] == 1
+    assert trace["dropped_count"] == 0
+    assert trace["targets"] == {"timeline_open": 1}
+    assert trace["selections"][0]["score"] == 314.5
 
 
 def test_memory_governance_trace_summarizes_session_memory_decisions() -> None:

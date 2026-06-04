@@ -183,6 +183,13 @@ class TraceEvalSpec:
     forbid_trimmed_context_injections: bool = False
     max_trimmed_context_injections: int | None = None
     max_excluded_context_injections: int | None = None
+    require_context_material_selection: bool = False
+    required_selected_context_material_names: tuple[str, ...] = ()
+    required_context_material_statuses: tuple[str, ...] = ()
+    forbidden_context_material_statuses: tuple[str, ...] = ()
+    required_context_material_targets: tuple[str, ...] = ()
+    max_dropped_context_materials: int | None = None
+    max_selected_context_material_bytes: int | None = None
     require_memory_governance: bool = False
     required_memory_governance_decisions: tuple[str, ...] = ()
     forbidden_memory_governance_decisions: tuple[str, ...] = ()
@@ -364,6 +371,17 @@ class TraceEvalSpec:
             "forbid_trimmed_context_injections": self.forbid_trimmed_context_injections,
             "max_trimmed_context_injections": self.max_trimmed_context_injections,
             "max_excluded_context_injections": self.max_excluded_context_injections,
+            "require_context_material_selection": self.require_context_material_selection,
+            "required_selected_context_material_names": list(
+                self.required_selected_context_material_names
+            ),
+            "required_context_material_statuses": list(self.required_context_material_statuses),
+            "forbidden_context_material_statuses": list(
+                self.forbidden_context_material_statuses
+            ),
+            "required_context_material_targets": list(self.required_context_material_targets),
+            "max_dropped_context_materials": self.max_dropped_context_materials,
+            "max_selected_context_material_bytes": self.max_selected_context_material_bytes,
             "require_memory_governance": self.require_memory_governance,
             "required_memory_governance_decisions": list(self.required_memory_governance_decisions),
             "forbidden_memory_governance_decisions": list(self.forbidden_memory_governance_decisions),
@@ -771,6 +789,31 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         excluded_context_injection_sources = _context_injection_values(
             excluded_context_injections,
             "source",
+        )
+        context_material_selection = _context_material_selection_trace(trace)
+        context_material_records = _context_material_selection_records(
+            context_material_selection
+        )
+        selected_context_materials = tuple(
+            item for item in context_material_records if item.get("selected") is True
+        )
+        dropped_context_materials = tuple(
+            item for item in context_material_records if item.get("selected") is False
+        )
+        selected_context_material_names = _context_material_values(
+            selected_context_materials,
+            "name",
+        )
+        context_material_statuses = _context_material_values(
+            context_material_records,
+            "status",
+        )
+        context_material_targets = _context_material_values(
+            context_material_records,
+            "target",
+        )
+        selected_context_material_bytes = sum(
+            _safe_int(item.get("bytes")) for item in selected_context_materials
         )
         memory_governance_decisions = _memory_governance_decisions(trace)
         memory_governance_statuses = _memory_governance_values(
@@ -1388,6 +1431,81 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     metadata={
                         "actual": len(excluded_context_injections),
                         "limit": spec.max_excluded_context_injections,
+                    },
+                )
+            )
+
+        if spec.require_context_material_selection and not context_material_selection:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "context_material_selection_missing",
+                    "context material selection trace is required",
+                )
+            )
+        for name in spec.required_selected_context_material_names:
+            if name not in selected_context_material_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_selected_context_material_name",
+                        f"required selected context material missing: {name}",
+                    )
+                )
+        for status_value in spec.required_context_material_statuses:
+            if status_value not in context_material_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_context_material_status",
+                        f"required context material status missing: {status_value}",
+                    )
+                )
+        for status_value in spec.forbidden_context_material_statuses:
+            if status_value in context_material_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_context_material_status",
+                        f"forbidden context material status present: {status_value}",
+                    )
+                )
+        for target in spec.required_context_material_targets:
+            if target not in context_material_targets:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_context_material_target",
+                        f"required context material target missing: {target}",
+                    )
+                )
+        if (
+            spec.max_dropped_context_materials is not None
+            and len(dropped_context_materials) > spec.max_dropped_context_materials
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "context_material_dropped_limit_exceeded",
+                    "dropped context material count exceeded limit",
+                    metadata={
+                        "actual": len(dropped_context_materials),
+                        "limit": spec.max_dropped_context_materials,
+                    },
+                )
+            )
+        if (
+            spec.max_selected_context_material_bytes is not None
+            and selected_context_material_bytes > spec.max_selected_context_material_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "context_material_selected_bytes_exceeded",
+                    "selected context material bytes exceeded limit",
+                    metadata={
+                        "actual": selected_context_material_bytes,
+                        "limit": spec.max_selected_context_material_bytes,
                     },
                 )
             )
@@ -2421,6 +2539,14 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "excluded_context_injection_sources": sorted(excluded_context_injection_sources),
                 "trimmed_context_injection_count": len(trimmed_context_injections),
                 "excluded_context_injection_count": len(excluded_context_injections),
+                "has_context_material_selection": bool(context_material_selection),
+                "context_material_selection_count": len(context_material_records),
+                "selected_context_material_count": len(selected_context_materials),
+                "dropped_context_material_count": len(dropped_context_materials),
+                "selected_context_material_names": sorted(selected_context_material_names),
+                "context_material_statuses": sorted(context_material_statuses),
+                "context_material_targets": sorted(context_material_targets),
+                "selected_context_material_bytes": selected_context_material_bytes,
                 "memory_governance_decision_count": len(memory_governance_decisions),
                 "memory_governance_decisions": sorted(memory_governance_statuses),
                 "denied_memory_write_count": len(denied_memory_writes),
@@ -2756,6 +2882,15 @@ def _payload(item: dict[str, Any]) -> dict[str, Any]:
 
 def _prompt_shaping_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     steps: list[dict[str, Any]] = []
+    context_selection = _context_material_selection_trace(trace)
+    if context_selection:
+        steps.append(
+            {
+                "source": "context_material_selection",
+                "event_type": "context_material_selection_applied",
+                "payload": _context_material_selection_replay_payload(context_selection),
+            }
+        )
     bucket_budget = _prompt_bucket_budget(trace)
     if bucket_budget:
         steps.append(
@@ -2959,6 +3094,22 @@ def _prompt_semantic_trim_replay_payload(manifest: dict[str, Any]) -> dict[str, 
         "statuses": sorted(_prompt_semantic_trim_values(decisions, "status")),
         "dropped_units": sum(_safe_int(decision.get("dropped_units")) for decision in decisions),
         "decision_count": len(decisions),
+    }
+
+
+def _context_material_selection_replay_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+    records = _context_material_selection_records(manifest)
+    selected = tuple(item for item in records if item.get("selected") is True)
+    dropped = tuple(item for item in records if item.get("selected") is False)
+    return {
+        "schema_version": str(manifest.get("schema_version") or ""),
+        "selection_count": len(records),
+        "selected_count": len(selected),
+        "dropped_count": len(dropped),
+        "selected_bytes": sum(_safe_int(item.get("bytes")) for item in selected),
+        "selected_names": sorted(_context_material_values(selected, "name")),
+        "statuses": sorted(_context_material_values(records, "status")),
+        "targets": sorted(_context_material_values(records, "target")),
     }
 
 
@@ -3353,6 +3504,73 @@ def _context_injections(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 
 def _context_injection_values(injections: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in injections if item.get(key)}
+
+
+def _context_material_selection_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("context_material_selection")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    prompt = trace.get("prompt")
+    prompt_metadata = prompt.get("metadata") if isinstance(prompt, dict) else {}
+    manifest = (
+        prompt_metadata.get("context_material_selection")
+        if isinstance(prompt_metadata, dict)
+        else {}
+    )
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    records: list[dict[str, Any]] = []
+    for injection in _context_injections(trace):
+        metadata = injection.get("metadata") if isinstance(injection.get("metadata"), dict) else {}
+        selection = metadata.get("context_material_selection")
+        if not isinstance(selection, dict):
+            continue
+        records.append(
+            {
+                "name": str(injection.get("name") or ""),
+                "role": str(injection.get("source") or ""),
+                "target": str(selection.get("target") or injection.get("target") or ""),
+                "status": "selected",
+                "selected": True,
+                "score": _safe_float(selection.get("score")),
+                "rank": _safe_int(selection.get("rank")),
+                "reason": str(selection.get("reason") or ""),
+                "priority": _safe_int(injection.get("priority")),
+                "bytes": _safe_int(injection.get("bytes") or injection.get("final_bytes")),
+                "sha256": str(injection.get("sha256") or ""),
+                "metadata": dict(metadata),
+            }
+        )
+    if not records:
+        return {}
+    return _context_material_selection_trace_from_records(tuple(records))
+
+
+def _context_material_selection_trace_from_records(
+    records: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    selected = tuple(item for item in records if item.get("selected") is True)
+    dropped = tuple(item for item in records if item.get("selected") is False)
+    return {
+        "schema_version": "agent-core-context-material-selection-trace/v1",
+        "selection_count": len(records),
+        "selected_count": len(selected),
+        "dropped_count": len(dropped),
+        "selected_bytes": sum(_safe_int(item.get("bytes")) for item in selected),
+        "statuses": _count_values(records, "status"),
+        "targets": _count_values(selected, "target"),
+        "names": _count_values(records, "name"),
+        "roles": _count_values(records, "role"),
+        "selections": list(records),
+    }
+
+
+def _context_material_selection_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("selections")))
+
+
+def _context_material_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in records if item.get(key)}
 
 
 def _memory_governance_decisions(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
@@ -4024,3 +4242,10 @@ def _safe_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0

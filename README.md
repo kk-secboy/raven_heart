@@ -215,6 +215,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `ContextInjectionTrace` summarizes prompt injection decisions by name,
   source, target bucket, status, included count, excluded count, and trimmed
   count.
+- `ContextMaterialSelectionTrace` summarizes candidate context selection by
+  selected/dropped status, target bucket, score, byte count, and prompt-safe
+  hashes before injection policy is applied.
 - `MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny decisions,
   risk levels, stores, and prompt-safe leak hashes.
 - `ApprovalTrace` summarizes human approval status, subject, subject kind, and
@@ -244,9 +247,10 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `TraceReplayHarness` builds a deterministic replay timeline from journal,
   event-log, and provider call manifests, including resume-plan,
   checkpoint-loaded, prompt-bucket-budget, prompt-semantic-trim,
-  prompt-trim, MCP inventory/server, skill-load/resource-view, approval
-  request/decision, artifact-store, structured-output validation/repair,
-  provider-call, provider-stream, embedding-call, and lifecycle-hook steps.
+  prompt-trim, context-material-selection, MCP inventory/server,
+  skill-load/resource-view, approval request/decision, artifact-store,
+  structured-output validation/repair, provider-call, provider-stream,
+  embedding-call, and lifecycle-hook steps.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
@@ -263,7 +267,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   lifecycle hook constraints, event-log presence, event-log types, terminal
   events, event sequence monotonicity, duplicate sequence limits,
   context injection name/source/target/status constraints, included/trimmed/
-  excluded injection source constraints, memory governance constraints, prompt
+  excluded injection source constraints, context material selection constraints,
+  memory governance constraints, prompt
   bucket budget constraints, runtime semantic prompt trim constraints, and
   global prompt trim constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
@@ -725,6 +730,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Runtime semantic prompt reducer | MVP implemented |
 | Runtime semantic prompt trace/eval | MVP implemented |
 | Context material selector | MVP implemented |
+| Context material selection trace/eval | MVP implemented |
 | Context injection policy | MVP implemented |
 | Context reducer | runner-integrated MVP |
 | Runtime adapter code | intentionally excluded |

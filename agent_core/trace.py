@@ -138,6 +138,79 @@ class ContextInjectionTrace:
 
 
 @dataclass(frozen=True)
+class ContextMaterialSelectionTrace:
+    """Run-level inventory of context material selection decisions."""
+
+    selections: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_prompt(cls, prompt: dict[str, Any]) -> "ContextMaterialSelectionTrace":
+        metadata = prompt.get("metadata") if isinstance(prompt.get("metadata"), dict) else {}
+        manifest = (
+            metadata.get("context_material_selection") if isinstance(metadata, dict) else {}
+        )
+        if isinstance(manifest, dict):
+            raw = manifest.get("selections")
+            if isinstance(raw, (list, tuple)):
+                return cls(
+                    selections=tuple(dict(item) for item in raw if isinstance(item, dict)),
+                    metadata={
+                        key: value
+                        for key, value in manifest.items()
+                        if key not in {"selections", "request"}
+                    },
+                )
+
+        raw_injections = metadata.get("context_injections") if isinstance(metadata, dict) else ()
+        selections: list[dict[str, Any]] = []
+        for injection in raw_injections or ():
+            if not isinstance(injection, dict):
+                continue
+            injection_metadata = (
+                injection.get("metadata") if isinstance(injection.get("metadata"), dict) else {}
+            )
+            selection = injection_metadata.get("context_material_selection")
+            if not isinstance(selection, dict):
+                continue
+            selections.append(
+                {
+                    "name": str(injection.get("name") or ""),
+                    "role": str(injection.get("source") or ""),
+                    "target": str(selection.get("target") or injection.get("target") or ""),
+                    "status": "selected",
+                    "selected": True,
+                    "score": _safe_float(selection.get("score")),
+                    "rank": _safe_int(selection.get("rank")),
+                    "reason": str(selection.get("reason") or ""),
+                    "priority": _safe_int(injection.get("priority")),
+                    "bytes": _safe_int(injection.get("bytes") or injection.get("final_bytes")),
+                    "sha256": str(injection.get("sha256") or ""),
+                    "metadata": dict(injection_metadata),
+                }
+            )
+        return cls(selections=tuple(selections))
+
+    def manifest(self) -> dict[str, Any]:
+        selections = tuple(dict(item) for item in self.selections)
+        selected = tuple(item for item in selections if item.get("selected") is True)
+        dropped = tuple(item for item in selections if item.get("selected") is False)
+        return {
+            "schema_version": "agent-core-context-material-selection-trace/v1",
+            "selection_count": len(selections),
+            "selected_count": len(selected),
+            "dropped_count": len(dropped),
+            "selected_bytes": sum(_safe_int(item.get("bytes")) for item in selected),
+            "statuses": _count_injection_field(selections, "status"),
+            "targets": _count_injection_field(selected, "target"),
+            "names": _count_injection_field(selections, "name"),
+            "roles": _count_injection_field(selections, "role"),
+            "selections": list(selections),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class MemoryGovernanceTrace:
     """Run-level inventory of memory write governance decisions."""
 
@@ -536,6 +609,7 @@ class AgentRunTraceBundle:
     artifact_trace: dict[str, Any] = field(default_factory=dict)
     structured_output_trace: dict[str, Any] = field(default_factory=dict)
     context_injections: dict[str, Any] = field(default_factory=dict)
+    context_material_selection: dict[str, Any] = field(default_factory=dict)
     memory_governance: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -555,6 +629,10 @@ class AgentRunTraceBundle:
         context_injections = self.context_injections or ContextInjectionTrace.from_prompt(
             self.prompt
         ).manifest()
+        context_material_selection = (
+            self.context_material_selection
+            or ContextMaterialSelectionTrace.from_prompt(self.prompt).manifest()
+        )
         tool_center = ToolCenterTrace.from_session(self.session)
         mcp_center = self.mcp_center or MCPCenterTrace.from_session(self.session)
         skill_center = self.skill_center or SkillCenterTrace.from_session(self.session)
@@ -646,6 +724,15 @@ class AgentRunTraceBundle:
                 "context_injection_excluded_count": int(
                     context_injections.get("excluded_count") or 0
                 ),
+                "context_material_selection_count": int(
+                    context_material_selection.get("selection_count") or 0
+                ),
+                "context_material_selected_count": int(
+                    context_material_selection.get("selected_count") or 0
+                ),
+                "context_material_dropped_count": int(
+                    context_material_selection.get("dropped_count") or 0
+                ),
                 "memory_governance_decision_count": int(
                     memory_governance.get("decision_count") or 0
                 ),
@@ -690,6 +777,7 @@ class AgentRunTraceBundle:
             "memory_search": dict(self.memory_search),
             "storage_backends": dict(storage_backends),
             "context_injections": dict(context_injections),
+            "context_material_selection": dict(context_material_selection),
             "memory_governance": dict(memory_governance),
             "prompt_bucket_budget": dict(prompt_bucket_budget),
             "prompt_semantic_trim": dict(prompt_semantic_trim),
@@ -866,6 +954,13 @@ def _safe_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _count_route_field(route_plans: tuple[dict[str, Any], ...], field_name: str) -> dict[str, int]:

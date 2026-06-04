@@ -120,9 +120,11 @@ governance counts, and prompt-trim presence.
 `StorageBackendTrace` deduplicates the backend manifests visible
 across those components so a runtime can audit which state lived in core
 builtins and which state lived in external PG/vector/graph/object-store
-adapters. `ContextInjectionTrace` summarizes prompt injection decisions by
-source, target bucket, status, included count, excluded count, and trimmed
-count. `MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny
+adapters. `ContextMaterialSelectionTrace` summarizes candidate context selection
+before injection policy by status, target, score, bytes, and hashes.
+`ContextInjectionTrace` summarizes prompt injection decisions by source, target
+bucket, status, included count, excluded count, and trimmed count.
+`MemoryGovernanceTrace` summarizes memory write allow/rewrite/deny
 decisions, risk levels, stores, reasons, and prompt-safe leak hashes. Runtime
 code owns where the bundle is stored, how long it is retained, and how it is
 queried for product observability or incident review.
@@ -489,6 +491,9 @@ overlap, role mapping, priority, max material count, and byte budget, returning
 `ContextInjection` objects plus a manifest of selected and dropped candidates.
 The manifest stores names, roles, targets, scores, byte counts, and hashes rather
 than raw hidden context bodies.
+`AgentRunTraceBundle`, `TraceReplayHarness`, and `DefaultTraceEvaluator` expose
+that manifest as a first-class trace contract, so suites can require selected
+materials, forbid drop statuses, cap dropped count, or cap selected bytes.
 
 `ContextInjectionPolicy` is the SDK-level guardrail applied before prompt
 assembly. It can restrict target buckets, trim each injected block, cap total

@@ -160,6 +160,60 @@ def _trace_manifest() -> dict[str, object]:
                         "trimmed": False,
                     },
                 ],
+                "context_material_selection": {
+                    "schema_version": "agent-core-context-material-selection-result/v1",
+                    "selection_count": 3,
+                    "selected_count": 1,
+                    "dropped_count": 2,
+                    "selected_bytes": 64,
+                    "statuses": {
+                        "count_exceeded": 1,
+                        "score_below_threshold": 1,
+                        "selected": 1,
+                    },
+                    "targets": {"timeline_open": 1},
+                    "selections": [
+                        {
+                            "name": "auth_trace",
+                            "role": "timeline",
+                            "target": "timeline_open",
+                            "status": "selected",
+                            "selected": True,
+                            "score": 314.5,
+                            "rank": 1,
+                            "reason": "semantic_priority_selected",
+                            "priority": 3,
+                            "bytes": 64,
+                            "sha256": "authsha",
+                        },
+                        {
+                            "name": "schema_hint",
+                            "role": "schema",
+                            "target": "semi_dynamic_2",
+                            "status": "count_exceeded",
+                            "selected": False,
+                            "score": 211.2,
+                            "rank": 2,
+                            "reason": "max_materials_exceeded",
+                            "priority": 2,
+                            "bytes": 42,
+                            "sha256": "schemasha",
+                        },
+                        {
+                            "name": "old_note",
+                            "role": "memory",
+                            "target": "semi_dynamic_1",
+                            "status": "score_below_threshold",
+                            "selected": False,
+                            "score": 0.5,
+                            "rank": 0,
+                            "reason": "score_below_threshold",
+                            "priority": 1,
+                            "bytes": 38,
+                            "sha256": "oldsha",
+                        },
+                    ],
+                },
                 "trim": {
                     "schema_version": "agent-core-prompt-trim/v1",
                     "target_bytes": 900,
@@ -526,6 +580,7 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "run_finished",
         "tool_started",
         "tool_finished",
+        "context_material_selection_applied",
         "prompt_bucket_budget_applied",
         "prompt_semantic_trim_applied",
         "prompt_trim_applied",
@@ -543,25 +598,27 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "provider_call_completed",
     )
     assert manifest["steps"][2]["source"] == "event_log"
-    assert manifest["steps"][4]["source"] == "prompt_bucket_budget"
-    assert manifest["steps"][5]["source"] == "prompt_semantic_trim"
-    assert manifest["steps"][5]["payload"]["roles"] == ["dynamic", "timeline_open"]
-    assert manifest["steps"][5]["payload"]["dropped_units"] == 3
-    assert manifest["steps"][7]["source"] == "mcp_center"
-    assert manifest["steps"][7]["payload"]["server_name"] == "fs"
-    assert manifest["steps"][9]["source"] == "skill_center"
-    assert manifest["steps"][10]["payload"]["view_id"] == "review:rules.md:abcd"
-    assert manifest["steps"][11]["source"] == "approval_trace"
-    assert manifest["steps"][11]["payload"]["subject"] == "tool:deploy"
-    assert manifest["steps"][13]["source"] == "approval_trace"
-    assert manifest["steps"][14]["source"] == "artifact_trace"
-    assert manifest["steps"][14]["payload"]["artifact_id"] == "artifact-1"
-    assert manifest["steps"][15]["source"] == "structured_output"
-    assert manifest["steps"][15]["payload"]["error"] == "$.risk is required"
+    assert manifest["steps"][4]["source"] == "context_material_selection"
+    assert manifest["steps"][4]["payload"]["selected_names"] == ["auth_trace"]
+    assert manifest["steps"][5]["source"] == "prompt_bucket_budget"
+    assert manifest["steps"][6]["source"] == "prompt_semantic_trim"
+    assert manifest["steps"][6]["payload"]["roles"] == ["dynamic", "timeline_open"]
+    assert manifest["steps"][6]["payload"]["dropped_units"] == 3
+    assert manifest["steps"][8]["source"] == "mcp_center"
+    assert manifest["steps"][8]["payload"]["server_name"] == "fs"
+    assert manifest["steps"][10]["source"] == "skill_center"
+    assert manifest["steps"][11]["payload"]["view_id"] == "review:rules.md:abcd"
+    assert manifest["steps"][12]["source"] == "approval_trace"
+    assert manifest["steps"][12]["payload"]["subject"] == "tool:deploy"
+    assert manifest["steps"][14]["source"] == "approval_trace"
+    assert manifest["steps"][15]["source"] == "artifact_trace"
+    assert manifest["steps"][15]["payload"]["artifact_id"] == "artifact-1"
     assert manifest["steps"][16]["source"] == "structured_output"
-    assert manifest["steps"][16]["payload"]["schema_name"] == "risk_summary"
-    assert manifest["steps"][17]["source"] == "provider"
-    assert manifest["steps"][17]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][16]["payload"]["error"] == "$.risk is required"
+    assert manifest["steps"][17]["source"] == "structured_output"
+    assert manifest["steps"][17]["payload"]["schema_name"] == "risk_summary"
+    assert manifest["steps"][18]["source"] == "provider"
+    assert manifest["steps"][18]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1930,6 +1987,76 @@ def test_trace_eval_reports_context_injection_contract_failures() -> None:
     assert {issue.code for issue in missing.issues} == {"context_injections_missing"}
 
 
+def test_trace_eval_validates_context_material_selection_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_context_material_selection=True,
+            required_selected_context_material_names=("auth_trace",),
+            required_context_material_statuses=("selected", "count_exceeded"),
+            required_context_material_targets=("timeline_open", "semi_dynamic_2"),
+            max_dropped_context_materials=2,
+            max_selected_context_material_bytes=64,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_context_material_selection"] is True
+    assert report.summary["context_material_selection_count"] == 3
+    assert report.summary["selected_context_material_count"] == 1
+    assert report.summary["dropped_context_material_count"] == 2
+    assert report.summary["selected_context_material_names"] == ["auth_trace"]
+    assert report.summary["context_material_statuses"] == [
+        "count_exceeded",
+        "score_below_threshold",
+        "selected",
+    ]
+    assert report.summary["context_material_targets"] == [
+        "semi_dynamic_1",
+        "semi_dynamic_2",
+        "timeline_open",
+    ]
+    assert report.summary["selected_context_material_bytes"] == 64
+    assert report.metadata["spec"]["require_context_material_selection"] is True
+
+
+def test_trace_eval_reports_context_material_selection_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_selected_context_material_names=("schema_hint",),
+            required_context_material_statuses=("budget_exceeded",),
+            forbidden_context_material_statuses=("score_below_threshold",),
+            required_context_material_targets=("dynamic",),
+            max_dropped_context_materials=1,
+            max_selected_context_material_bytes=32,
+        ),
+    )
+    missing_trace = _trace_manifest()
+    missing_prompt = dict(missing_trace["prompt"])
+    missing_metadata = dict(missing_prompt.get("metadata") or {})
+    missing_metadata.pop("context_material_selection", None)
+    missing_prompt["metadata"] = missing_metadata
+    missing_trace["prompt"] = missing_prompt
+    missing = DefaultTraceEvaluator().evaluate(
+        missing_trace,
+        TraceEvalSpec(require_context_material_selection=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_selected_context_material_name",
+        "missing_context_material_status",
+        "forbidden_context_material_status",
+        "missing_context_material_target",
+        "context_material_dropped_limit_exceeded",
+        "context_material_selected_bytes_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"context_material_selection_missing"}
+
+
 def test_trace_eval_validates_prompt_trim_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
@@ -2152,7 +2279,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 19
+    assert report.summary["baseline_step_count"] == 20
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -2183,6 +2310,7 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "run_finished",
         "tool_finished",
         "tool_started",
+        "context_material_selection_applied",
         "prompt_bucket_budget_applied",
         "prompt_semantic_trim_applied",
         "prompt_trim_applied",
