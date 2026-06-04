@@ -220,6 +220,14 @@ class TraceEvalSpec:
     max_denied_memory_writes: int | None = None
     max_rewritten_memory_writes: int | None = None
     max_high_risk_memory_writes: int | None = None
+    require_prompt_budget: bool = False
+    forbid_prompt_budget: bool = False
+    require_prompt_budget_provider_limited: bool = False
+    forbid_prompt_budget_provider_limited: bool = False
+    required_prompt_budget_sources: tuple[str, ...] = ()
+    required_prompt_budget_provider_names: tuple[str, ...] = ()
+    max_prompt_budget_target_bytes: int | None = None
+    max_prompt_budget_provider_input_bytes: int | None = None
     require_prompt_bucket_budget: bool = False
     required_prompt_bucket_budget_roles: tuple[str, ...] = ()
     required_prompt_bucket_budget_statuses: tuple[str, ...] = ()
@@ -438,6 +446,16 @@ class TraceEvalSpec:
             "max_denied_memory_writes": self.max_denied_memory_writes,
             "max_rewritten_memory_writes": self.max_rewritten_memory_writes,
             "max_high_risk_memory_writes": self.max_high_risk_memory_writes,
+            "require_prompt_budget": self.require_prompt_budget,
+            "forbid_prompt_budget": self.forbid_prompt_budget,
+            "require_prompt_budget_provider_limited": self.require_prompt_budget_provider_limited,
+            "forbid_prompt_budget_provider_limited": self.forbid_prompt_budget_provider_limited,
+            "required_prompt_budget_sources": list(self.required_prompt_budget_sources),
+            "required_prompt_budget_provider_names": list(
+                self.required_prompt_budget_provider_names
+            ),
+            "max_prompt_budget_target_bytes": self.max_prompt_budget_target_bytes,
+            "max_prompt_budget_provider_input_bytes": self.max_prompt_budget_provider_input_bytes,
             "require_prompt_bucket_budget": self.require_prompt_bucket_budget,
             "required_prompt_bucket_budget_roles": list(self.required_prompt_bucket_budget_roles),
             "required_prompt_bucket_budget_statuses": list(
@@ -945,6 +963,15 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         )
         high_risk_memory_writes = tuple(
             decision for decision in memory_governance_decisions if decision.get("risk_level") == "high"
+        )
+        prompt_budget = _prompt_budget(trace)
+        prompt_budget_source = str(prompt_budget.get("source") or "")
+        prompt_budget_provider_name = str(prompt_budget.get("provider_name") or "")
+        prompt_budget_provider_limited = bool(prompt_budget.get("provider_limited"))
+        prompt_budget_target_bytes = _prompt_budget_int(prompt_budget, "target_prompt_bytes")
+        prompt_budget_provider_input_bytes = _prompt_budget_int(
+            prompt_budget,
+            "provider_input_budget_bytes",
         )
         prompt_bucket_budget = _prompt_bucket_budget(trace)
         prompt_bucket_budget_decisions = _prompt_bucket_budget_decisions(prompt_bucket_budget)
@@ -1817,6 +1844,89 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     metadata={
                         "actual": len(high_risk_memory_writes),
                         "limit": spec.max_high_risk_memory_writes,
+                    },
+                )
+            )
+
+        if spec.require_prompt_budget and not prompt_budget:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_budget_missing",
+                    "prompt budget trace is required",
+                )
+            )
+        if spec.forbid_prompt_budget and prompt_budget:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_budget_forbidden",
+                    "prompt budget trace is forbidden",
+                )
+            )
+        if spec.require_prompt_budget_provider_limited and not prompt_budget_provider_limited:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_budget_provider_limit_missing",
+                    "provider-limited prompt budget is required",
+                )
+            )
+        if spec.forbid_prompt_budget_provider_limited and prompt_budget_provider_limited:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_budget_provider_limit_forbidden",
+                    "provider-limited prompt budget is forbidden",
+                )
+            )
+        for source in spec.required_prompt_budget_sources:
+            if source != prompt_budget_source:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_prompt_budget_source",
+                        f"required prompt budget source missing: {source}",
+                        metadata={"actual": prompt_budget_source},
+                    )
+                )
+        for provider_name in spec.required_prompt_budget_provider_names:
+            if provider_name != prompt_budget_provider_name:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_prompt_budget_provider",
+                        f"required prompt budget provider missing: {provider_name}",
+                        metadata={"actual": prompt_budget_provider_name},
+                    )
+                )
+        if (
+            spec.max_prompt_budget_target_bytes is not None
+            and prompt_budget_target_bytes > spec.max_prompt_budget_target_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_budget_target_bytes_exceeded",
+                    "prompt budget target bytes exceeded limit",
+                    metadata={
+                        "actual": prompt_budget_target_bytes,
+                        "limit": spec.max_prompt_budget_target_bytes,
+                    },
+                )
+            )
+        if (
+            spec.max_prompt_budget_provider_input_bytes is not None
+            and prompt_budget_provider_input_bytes > spec.max_prompt_budget_provider_input_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "prompt_budget_provider_input_bytes_exceeded",
+                    "prompt budget provider input bytes exceeded limit",
+                    metadata={
+                        "actual": prompt_budget_provider_input_bytes,
+                        "limit": spec.max_prompt_budget_provider_input_bytes,
                     },
                 )
             )
@@ -2936,6 +3046,12 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "denied_memory_write_count": len(denied_memory_writes),
                 "rewritten_memory_write_count": len(rewritten_memory_writes),
                 "high_risk_memory_write_count": len(high_risk_memory_writes),
+                "has_prompt_budget": bool(prompt_budget),
+                "prompt_budget_source": prompt_budget_source,
+                "prompt_budget_provider_name": prompt_budget_provider_name,
+                "prompt_budget_provider_limited": prompt_budget_provider_limited,
+                "prompt_budget_target_bytes": prompt_budget_target_bytes,
+                "prompt_budget_provider_input_bytes": prompt_budget_provider_input_bytes,
                 "has_prompt_bucket_budget": bool(prompt_bucket_budget),
                 "prompt_bucket_budget_role_count": len(prompt_bucket_budget_roles),
                 "prompt_bucket_budget_roles": sorted(prompt_bucket_budget_roles),
@@ -3286,6 +3402,15 @@ def _prompt_shaping_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any],
                 "payload": _context_material_selection_replay_payload(context_selection),
             }
         )
+    prompt_budget = _prompt_budget(trace)
+    if prompt_budget:
+        steps.append(
+            {
+                "source": "prompt_budget",
+                "event_type": "prompt_budget_applied",
+                "payload": _prompt_budget_replay_payload(prompt_budget),
+            }
+        )
     bucket_budget = _prompt_bucket_budget(trace)
     if bucket_budget:
         steps.append(
@@ -3551,6 +3676,23 @@ def _prompt_bucket_budget_replay_payload(manifest: dict[str, Any]) -> dict[str, 
         "roles": sorted(_prompt_bucket_budget_values(decisions, "role")),
         "statuses": sorted(_prompt_bucket_budget_values(decisions, "status")),
         "decision_count": len(decisions),
+    }
+
+
+def _prompt_budget_replay_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": str(manifest.get("schema_version") or ""),
+        "source": str(manifest.get("source") or ""),
+        "provider_limited": bool(manifest.get("provider_limited")),
+        "provider_name": str(manifest.get("provider_name") or ""),
+        "model": str(manifest.get("model") or ""),
+        "profile_max_prompt_bytes": _safe_int(manifest.get("profile_max_prompt_bytes")),
+        "target_prompt_bytes": _safe_int(manifest.get("target_prompt_bytes")),
+        "context_window_tokens": _safe_int(manifest.get("context_window_tokens")),
+        "reserved_output_tokens": _safe_int(manifest.get("reserved_output_tokens")),
+        "provider_input_budget_bytes": _safe_int(
+            manifest.get("provider_input_budget_bytes")
+        ),
     }
 
 
@@ -4246,6 +4388,27 @@ def _prompt_bucket_budget(trace: dict[str, Any]) -> dict[str, Any]:
     prompt_metadata = prompt.get("metadata") if isinstance(prompt, dict) else {}
     budget = prompt_metadata.get("bucket_budget") if isinstance(prompt_metadata, dict) else {}
     return dict(budget) if isinstance(budget, dict) else {}
+
+
+def _prompt_budget(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("prompt_budget")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    prompt = trace.get("prompt")
+    prompt_metadata = prompt.get("metadata") if isinstance(prompt, dict) else {}
+    budget = prompt_metadata.get("prompt_budget") if isinstance(prompt_metadata, dict) else {}
+    if isinstance(budget, dict) and budget:
+        return dict(budget)
+    metadata = trace.get("metadata")
+    budget = metadata.get("prompt_budget") if isinstance(metadata, dict) else {}
+    return dict(budget) if isinstance(budget, dict) else {}
+
+
+def _prompt_budget_int(manifest: dict[str, Any], key: str) -> int:
+    try:
+        return int(manifest.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _prompt_bucket_budget_decisions(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:

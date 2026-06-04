@@ -290,6 +290,18 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
                     ],
                 },
                 "trim": {"target_bytes": 900},
+                "prompt_budget": {
+                    "schema_version": "agent-core-prompt-budget-plan/v1",
+                    "profile_max_prompt_bytes": 4096,
+                    "target_prompt_bytes": 900,
+                    "provider_limited": True,
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "context_window_tokens": 300,
+                    "reserved_output_tokens": 75,
+                    "provider_input_budget_bytes": 900,
+                    "source": "provider_context_window",
+                },
                 "context_injections": [
                     {
                         "name": "memory_recall",
@@ -429,6 +441,9 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["has_prompt_bucket_budget"] is True
     assert manifest["summary"]["prompt_bucket_budget_trimmed_count"] == 1
     assert manifest["prompt_bucket_budget"]["trimmed_count"] == 1
+    assert manifest["summary"]["has_prompt_budget"] is True
+    assert manifest["summary"]["prompt_budget_provider_limited"] is True
+    assert manifest["prompt_budget"]["target_prompt_bytes"] == 900
     assert manifest["summary"]["has_prompt_trim"] is True
     assert manifest["capability_discovery"]["match_count"] == 4
     assert manifest["memory_search"]["hit_count"] == 2

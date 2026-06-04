@@ -267,8 +267,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 
 - `TraceReplayHarness` builds a deterministic replay timeline from journal,
   event-log, and provider call manifests, including resume-plan,
-  checkpoint-loaded, preflight, prompt-bucket-budget, prompt-semantic-trim,
-  prompt-trim, context-material-selection, MCP inventory/server,
+  checkpoint-loaded, preflight, prompt-budget, prompt-bucket-budget,
+  prompt-semantic-trim, prompt-trim, context-material-selection, MCP inventory/server,
   skill-load/resource-view, handoff decision, approval request/decision,
   artifact-store, structured-output validation/repair, provider-call,
   provider-stream, embedding-call, and lifecycle-hook steps.
@@ -291,8 +291,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   context injection name/source/target/status constraints, included/trimmed/
   excluded injection source constraints, context material selection constraints,
   memory governance constraints, prompt
-  bucket budget constraints, runtime semantic prompt trim constraints, and
-  global prompt trim constraints.
+  budget constraints, bucket budget constraints, runtime semantic prompt trim
+  constraints, and global prompt trim constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
@@ -791,6 +791,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Structured output trace/eval contracts | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |
 | Provider-aware prompt budget | MVP implemented |
+| Provider-aware prompt budget replay/eval | MVP implemented |
 | Prompt bucket budget policy | MVP implemented |
 | Runtime semantic prompt reducer | MVP implemented |
 | Runtime semantic prompt trace/eval | MVP implemented |

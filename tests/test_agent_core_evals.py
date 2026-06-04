@@ -590,6 +590,18 @@ def _trace_manifest() -> dict[str, object]:
                 },
             ],
         },
+        "prompt_budget": {
+            "schema_version": "agent-core-prompt-budget-plan/v1",
+            "profile_max_prompt_bytes": 4096,
+            "target_prompt_bytes": 900,
+            "provider_limited": True,
+            "provider_name": "mock",
+            "model": "mock-mini",
+            "context_window_tokens": 300,
+            "reserved_output_tokens": 75,
+            "provider_input_budget_bytes": 900,
+            "source": "provider_context_window",
+        },
         "prompt_bucket_budget": {
             "schema_version": "agent-core-prompt-bucket-budget-result/v1",
             "trimmed_count": 1,
@@ -656,6 +668,7 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "plan_execution_completed",
         "handoff_selected",
         "context_material_selection_applied",
+        "prompt_budget_applied",
         "prompt_bucket_budget_applied",
         "prompt_semantic_trim_applied",
         "prompt_trim_applied",
@@ -681,25 +694,27 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
     assert manifest["steps"][6]["payload"]["selected_session"] == "code-reviewer"
     assert manifest["steps"][7]["source"] == "context_material_selection"
     assert manifest["steps"][7]["payload"]["selected_names"] == ["auth_trace"]
-    assert manifest["steps"][8]["source"] == "prompt_bucket_budget"
-    assert manifest["steps"][9]["source"] == "prompt_semantic_trim"
-    assert manifest["steps"][9]["payload"]["roles"] == ["dynamic", "timeline_open"]
-    assert manifest["steps"][9]["payload"]["dropped_units"] == 3
-    assert manifest["steps"][11]["source"] == "mcp_center"
-    assert manifest["steps"][11]["payload"]["server_name"] == "fs"
-    assert manifest["steps"][13]["source"] == "skill_center"
-    assert manifest["steps"][14]["payload"]["view_id"] == "review:rules.md:abcd"
-    assert manifest["steps"][15]["source"] == "approval_trace"
-    assert manifest["steps"][15]["payload"]["subject"] == "tool:deploy"
-    assert manifest["steps"][17]["source"] == "approval_trace"
-    assert manifest["steps"][18]["source"] == "artifact_trace"
-    assert manifest["steps"][18]["payload"]["artifact_id"] == "artifact-1"
-    assert manifest["steps"][19]["source"] == "structured_output"
-    assert manifest["steps"][19]["payload"]["error"] == "$.risk is required"
+    assert manifest["steps"][8]["source"] == "prompt_budget"
+    assert manifest["steps"][8]["payload"]["provider_limited"] is True
+    assert manifest["steps"][9]["source"] == "prompt_bucket_budget"
+    assert manifest["steps"][10]["source"] == "prompt_semantic_trim"
+    assert manifest["steps"][10]["payload"]["roles"] == ["dynamic", "timeline_open"]
+    assert manifest["steps"][10]["payload"]["dropped_units"] == 3
+    assert manifest["steps"][12]["source"] == "mcp_center"
+    assert manifest["steps"][12]["payload"]["server_name"] == "fs"
+    assert manifest["steps"][14]["source"] == "skill_center"
+    assert manifest["steps"][15]["payload"]["view_id"] == "review:rules.md:abcd"
+    assert manifest["steps"][16]["source"] == "approval_trace"
+    assert manifest["steps"][16]["payload"]["subject"] == "tool:deploy"
+    assert manifest["steps"][18]["source"] == "approval_trace"
+    assert manifest["steps"][19]["source"] == "artifact_trace"
+    assert manifest["steps"][19]["payload"]["artifact_id"] == "artifact-1"
     assert manifest["steps"][20]["source"] == "structured_output"
-    assert manifest["steps"][20]["payload"]["schema_name"] == "risk_summary"
-    assert manifest["steps"][21]["source"] == "provider"
-    assert manifest["steps"][21]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][20]["payload"]["error"] == "$.risk is required"
+    assert manifest["steps"][21]["source"] == "structured_output"
+    assert manifest["steps"][21]["payload"]["schema_name"] == "risk_summary"
+    assert manifest["steps"][22]["source"] == "provider"
+    assert manifest["steps"][22]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -2563,6 +2578,60 @@ def test_trace_eval_reports_memory_governance_contract_failures() -> None:
     assert {issue.code for issue in missing.issues} == {"memory_governance_missing"}
 
 
+def test_trace_eval_validates_prompt_budget_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_prompt_budget=True,
+            require_prompt_budget_provider_limited=True,
+            required_prompt_budget_sources=("provider_context_window",),
+            required_prompt_budget_provider_names=("mock",),
+            max_prompt_budget_target_bytes=900,
+            max_prompt_budget_provider_input_bytes=900,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_prompt_budget"] is True
+    assert report.summary["prompt_budget_source"] == "provider_context_window"
+    assert report.summary["prompt_budget_provider_name"] == "mock"
+    assert report.summary["prompt_budget_provider_limited"] is True
+    assert report.summary["prompt_budget_target_bytes"] == 900
+    assert report.summary["prompt_budget_provider_input_bytes"] == 900
+    assert report.metadata["spec"]["require_prompt_budget"] is True
+
+
+def test_trace_eval_reports_prompt_budget_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            forbid_prompt_budget=True,
+            forbid_prompt_budget_provider_limited=True,
+            required_prompt_budget_sources=("profile_budget",),
+            required_prompt_budget_provider_names=("other",),
+            max_prompt_budget_target_bytes=800,
+            max_prompt_budget_provider_input_bytes=800,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "prompt_budget"},
+        TraceEvalSpec(require_prompt_budget=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "prompt_budget_forbidden",
+        "prompt_budget_provider_limit_forbidden",
+        "missing_prompt_budget_source",
+        "missing_prompt_budget_provider",
+        "prompt_budget_target_bytes_exceeded",
+        "prompt_budget_provider_input_bytes_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"prompt_budget_missing"}
+
+
 def test_trace_eval_validates_prompt_bucket_budget_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
@@ -2687,7 +2756,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 23
+    assert report.summary["baseline_step_count"] == 24
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -2722,6 +2791,7 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "plan_execution_completed",
         "handoff_selected",
         "context_material_selection_applied",
+        "prompt_budget_applied",
         "prompt_bucket_budget_applied",
         "prompt_semantic_trim_applied",
         "prompt_trim_applied",

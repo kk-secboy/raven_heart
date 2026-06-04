@@ -159,8 +159,8 @@ trace indexes can implement the same port without changing replay/eval code.
 trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
-streaming calls using prompt-safe summaries, prompt bucket budget, semantic
-prompt trim, global prompt trim, preflight reports, approval records, artifact
+streaming calls using prompt-safe summaries, prompt budget, prompt bucket
+budget, semantic prompt trim, global prompt trim, preflight reports, approval records, artifact
 records, structured output validation/repair records, handoff records,
 embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
@@ -177,8 +177,9 @@ hook event/status/failure constraints, required context injection
 names/sources/targets/statuses, required included/trimmed/excluded injection
 sources, forbidden injection sources/statuses,
 trimmed/excluded injection limits, memory governance allow/rewrite/deny and risk
-ceilings, prompt bucket budget roles/statuses/over-budget ceilings, runtime
-semantic prompt trim roles/statuses/dropped-unit ceilings, approval
+ceilings, prompt budget source/provider/provider-limited/byte ceilings, prompt
+bucket budget roles/statuses/over-budget ceilings, runtime semantic prompt trim
+roles/statuses/dropped-unit ceilings, approval
 status/subject/pending/rejected constraints, artifact kind/tool/content-type
 and byte ceilings, and global prompt trim roles/byte ceilings. Runtime code owns
 domain-specific eval datasets, baseline selection, scoring policy, dashboards,
