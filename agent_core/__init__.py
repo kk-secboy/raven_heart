@@ -104,6 +104,12 @@ from agent_core.context_acceptance import (
     AgentCoreContextAcceptanceReport,
     run_agent_core_context_acceptance,
 )
+from agent_core.orchestration_acceptance import (
+    AgentCoreOrchestrationAcceptanceHarness,
+    AgentCoreOrchestrationAcceptanceIssue,
+    AgentCoreOrchestrationAcceptanceReport,
+    run_agent_core_orchestration_acceptance,
+)
 from agent_core.provider_acceptance import (
     AgentCoreProviderAcceptanceHarness,
     AgentCoreProviderAcceptanceIssue,
@@ -518,6 +524,9 @@ __all__ = [
     "AgentCoreContextAcceptanceHarness",
     "AgentCoreContextAcceptanceIssue",
     "AgentCoreContextAcceptanceReport",
+    "AgentCoreOrchestrationAcceptanceHarness",
+    "AgentCoreOrchestrationAcceptanceIssue",
+    "AgentCoreOrchestrationAcceptanceReport",
     "AgentCoreProviderAcceptanceHarness",
     "AgentCoreProviderAcceptanceIssue",
     "AgentCoreProviderAcceptanceReport",
@@ -907,6 +916,7 @@ __all__ = [
     "run_agent_core_acceptance",
     "run_agent_core_approval_acceptance",
     "run_agent_core_context_acceptance",
+    "run_agent_core_orchestration_acceptance",
     "run_agent_core_provider_acceptance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",

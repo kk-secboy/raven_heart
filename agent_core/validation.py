@@ -18,6 +18,7 @@ from agent_core.manifest import (
     evaluate_agent_core_api_stability,
     evaluate_agent_core_readiness,
 )
+from agent_core.orchestration_acceptance import run_agent_core_orchestration_acceptance
 from agent_core.provider_acceptance import run_agent_core_provider_acceptance
 from agent_core.recovery import run_agent_core_recovery_acceptance
 from agent_core.resume_acceptance import run_agent_core_resume_acceptance
@@ -113,6 +114,7 @@ class AgentCoreValidationReport:
     acceptance: dict[str, Any] = field(default_factory=dict)
     approval_acceptance: dict[str, Any] = field(default_factory=dict)
     context_acceptance: dict[str, Any] = field(default_factory=dict)
+    orchestration_acceptance: dict[str, Any] = field(default_factory=dict)
     provider_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
@@ -141,6 +143,7 @@ class AgentCoreValidationReport:
             "acceptance": dict(self.acceptance),
             "approval_acceptance": dict(self.approval_acceptance),
             "context_acceptance": dict(self.context_acceptance),
+            "orchestration_acceptance": dict(self.orchestration_acceptance),
             "provider_acceptance": dict(self.provider_acceptance),
             "recovery": dict(self.recovery),
             "resume": dict(self.resume),
@@ -184,6 +187,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "context_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        orchestration_acceptance = (
+            await run_agent_core_orchestration_acceptance(
+                metadata={"validation_gate": "orchestration_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         provider_acceptance = (
             await run_agent_core_provider_acceptance(
                 metadata={"validation_gate": "provider_acceptance", **dict(self.metadata)}
@@ -206,6 +214,7 @@ class AgentCoreValidationSuite:
             acceptance=acceptance,
             approval_acceptance=approval_acceptance,
             context_acceptance=context_acceptance,
+            orchestration_acceptance=orchestration_acceptance,
             provider_acceptance=provider_acceptance,
             recovery=recovery,
             resume=resume,
@@ -219,6 +228,7 @@ class AgentCoreValidationSuite:
             acceptance=acceptance,
             approval_acceptance=approval_acceptance,
             context_acceptance=context_acceptance,
+            orchestration_acceptance=orchestration_acceptance,
             provider_acceptance=provider_acceptance,
             recovery=recovery,
             resume=resume,
@@ -336,6 +346,7 @@ def _validation_issues(
     acceptance: dict[str, Any],
     approval_acceptance: dict[str, Any],
     context_acceptance: dict[str, Any],
+    orchestration_acceptance: dict[str, Any],
     provider_acceptance: dict[str, Any],
     recovery: dict[str, Any],
     resume: dict[str, Any],
@@ -347,6 +358,11 @@ def _validation_issues(
     _extend_report_issues(issues, source="acceptance", report=acceptance)
     _extend_report_issues(issues, source="approval_acceptance", report=approval_acceptance)
     _extend_report_issues(issues, source="context_acceptance", report=context_acceptance)
+    _extend_report_issues(
+        issues,
+        source="orchestration_acceptance",
+        report=orchestration_acceptance,
+    )
     _extend_report_issues(issues, source="provider_acceptance", report=provider_acceptance)
     _extend_report_issues(issues, source="recovery", report=recovery)
     _extend_report_issues(issues, source="resume", report=resume)

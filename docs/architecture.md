@@ -84,6 +84,15 @@ policy records to trace eval. The SDK owns the contract, queue primitives,
 resume material, and acceptance report; runtimes own operator identity, UI,
 notifications, ticketing, workflow routing, and organization policy sources.
 
+`AgentCoreOrchestrationAcceptanceHarness` is the capability-orchestration gate.
+It verifies unified discovery across actions, local tools, loaded skills, MCP
+tools, MCP resources, MCP prompts, and MCP servers; `ToolCenter` routing and
+execution for local and MCP-backed tools; MCP inventory refresh; MCP
+context-material export; capability prompt rendering; and ToolCenter/MCP/skill
+trace summaries. The SDK owns the portable registry, center, discovery, and
+trace contracts; runtimes own concrete tools, MCP process lifecycle, secrets,
+network sessions, sandboxing, and product workflow queues.
+
 `AgentCoreProviderAcceptanceHarness` is the provider-compatibility gate. It runs
 a deterministic matrix for text, multimodal, structured-output, native-tool,
 OpenAI-compatible codec, transport fallback, and streaming routes. It proves the
@@ -109,10 +118,11 @@ selection, UI recovery flows, and product workflow state.
 
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, approval acceptance, provider acceptance, recovery acceptance, and
-resume acceptance, then returns one `AgentCoreValidationReport` with all
-subreports and blocking issues. This is the SDK-level check a runtime should pass before adapter
-implementation or product-specific migration tests begin.
+acceptance, approval acceptance, orchestration acceptance, provider acceptance,
+recovery acceptance, and resume acceptance, then returns one
+`AgentCoreValidationReport` with all subreports and blocking issues. This is the
+SDK-level check a runtime should pass before adapter implementation or
+product-specific migration tests begin.
 
 ## Boundary Table
 

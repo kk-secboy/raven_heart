@@ -21,6 +21,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["acceptance"]["ready"] is True
     assert manifest["approval_acceptance"]["ready"] is True
     assert manifest["context_acceptance"]["ready"] is True
+    assert manifest["orchestration_acceptance"]["ready"] is True
     assert manifest["provider_acceptance"]["ready"] is True
     assert manifest["recovery"]["ready"] is True
     assert manifest["resume"]["ready"] is True
@@ -28,6 +29,9 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["approval_acceptance"]["approval_resume"]["approved_count"] == 1
     assert manifest["context_acceptance"]["context_summary"][
         "prompt_semantic_trimmed_count"
+    ] == 1
+    assert manifest["orchestration_acceptance"]["capability_discovery"]["counts"][
+        "mcp_resource"
     ] == 1
     assert manifest["provider_acceptance"]["route_matrix"]["selected"]["vision"] == "vision"
     assert manifest["recovery"]["provider_recovery"]["fallback_used"] is True
@@ -62,6 +66,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "runtime_boundary_audit" in readiness["matched"]["capabilities"]
     assert "approval_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "orchestration_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "provider_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "validation_suite" in readiness["matched"]["capabilities"]
     assert "AgentCoreRuntimeBoundaryReport" in readiness["matched"]["public_api"]
@@ -70,6 +75,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_approval_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreContextAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_context_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCoreOrchestrationAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_orchestration_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreProviderAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_provider_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreValidationSuite" in readiness["matched"]["public_api"]
@@ -80,6 +87,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_approval_acceptance" in stability["present_stable_api"]
     assert "AgentCoreContextAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_context_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreOrchestrationAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_orchestration_acceptance" in stability["present_stable_api"]
     assert "AgentCoreProviderAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_provider_acceptance" in stability["present_stable_api"]
     assert "AgentCoreValidationSuite" in stability["present_stable_api"]

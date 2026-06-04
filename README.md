@@ -153,6 +153,15 @@ approval material is injected into the prompt, the gated tool executes after
 approval, and approval/policy events are trace-evaluable. Operator UX, identity,
 notifications, ticketing, and workflow routing remain runtime responsibilities.
 
+`agent_core.run_agent_core_orchestration_acceptance()` runs deterministic
+capability orchestration checks. It verifies unified discovery across actions,
+local tools, loaded skills, MCP tools, MCP resources, MCP prompts, and MCP
+servers; ToolCenter routing/execution for local and MCP-backed tools; MCP
+inventory refresh; MCP context-material export; capability prompt rendering;
+and ToolCenter/MCP/skill trace summaries. Concrete tools, MCP processes,
+credentials, network sessions, and product workflow queues remain outside the
+SDK.
+
 `agent_core.run_agent_core_provider_acceptance()` runs a deterministic provider
 compatibility matrix. It checks provider routing for text, multimodal,
 structured-output, and native-tool requests; OpenAI-compatible codec
@@ -176,10 +185,10 @@ flows remain outside the SDK.
 
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, approval acceptance, provider acceptance, recovery acceptance, and
-resume acceptance, then returns one `AgentCoreValidationReport`. This is the
-default package-level check a host runtime should pass before starting
-adapter-specific migration tests.
+acceptance, approval acceptance, orchestration acceptance, provider acceptance,
+recovery acceptance, and resume acceptance, then returns one
+`AgentCoreValidationReport`. This is the default package-level check a host
+runtime should pass before starting adapter-specific migration tests.
 
 ## Core Capabilities
 
@@ -933,6 +942,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | MCP center | MVP implemented |
 | MCP context material export | MVP implemented |
 | Capability discovery | MVP implemented |
+| SDK orchestration acceptance harness | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
 | Memory backend routing/specs | MVP implemented |
 | External memory call audit | MVP implemented |
