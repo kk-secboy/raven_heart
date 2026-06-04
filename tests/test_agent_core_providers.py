@@ -26,6 +26,7 @@ from agent_core.providers import (
     LLMToolChoice,
     LLMToolContract,
     LLMUsageLimits,
+    OpenAICompatibleLLMProviderCodec,
     RetryHint,
     TransportLLMProvider,
     UsageInfo,
@@ -333,6 +334,141 @@ def test_llm_request_supports_provider_neutral_tool_and_response_contracts() -> 
         LLMToolChoice(mode="tool")
     with pytest.raises(ValueError):
         LLMRequest(messages=[], tool_choice=LLMToolChoice(mode="required"))
+
+
+def test_openai_compatible_codec_encodes_chat_completion_payloads() -> None:
+    codec = OpenAICompatibleLLMProviderCodec()
+    payload = codec.encode_request(
+        LLMRequest(
+            messages=[
+                LLMMessage(role="system", content="rules"),
+                LLMMessage(
+                    role="user",
+                    content="inspect",
+                    content_parts=(
+                        LLMContentPart(
+                            kind="image",
+                            uri="file://finding.png",
+                            mime_type="image/png",
+                            metadata={"detail": "high"},
+                        ),
+                    ),
+                ),
+            ],
+            model="gpt-compatible",
+            temperature=0.2,
+            max_output_tokens=128,
+            tools=(
+                LLMToolContract(
+                    name="lookup",
+                    description="Lookup target",
+                    parameters_schema={"type": "object"},
+                    strict=True,
+                ),
+            ),
+            tool_choice=LLMToolChoice(mode="tool", tool_name="lookup"),
+            response_format=LLMResponseFormat(
+                kind="json_schema",
+                name="finding",
+                schema={"type": "object"},
+                strict=True,
+            ),
+            metadata={"request_id": "r1"},
+        )
+    )
+
+    assert payload["model"] == "gpt-compatible"
+    assert payload["max_tokens"] == 128
+    assert payload["messages"][0] == {"role": "system", "content": "rules"}
+    assert payload["messages"][1]["content"][0] == {"type": "text", "text": "inspect"}
+    assert payload["messages"][1]["content"][1]["image_url"]["url"] == "file://finding.png"
+    assert payload["messages"][1]["content"][1]["image_url"]["detail"] == "high"
+    assert payload["tools"][0]["type"] == "function"
+    assert payload["tools"][0]["function"]["name"] == "lookup"
+    assert payload["tools"][0]["function"]["strict"] is True
+    assert payload["tool_choice"] == {"type": "function", "function": {"name": "lookup"}}
+    assert payload["response_format"]["type"] == "json_schema"
+    assert payload["response_format"]["json_schema"]["name"] == "finding"
+    assert codec.manifest()["schema_version"] == "agent-core-openai-compatible-llm-provider-codec/v1"
+
+
+def test_openai_compatible_codec_decodes_chat_completion_payloads() -> None:
+    codec = OpenAICompatibleLLMProviderCodec()
+    response = codec.decode_response(
+        {
+            "id": "chatcmpl-1",
+            "model": "gpt-compatible",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "content": "need lookup",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup",
+                                    "arguments": "{\"target\":\"demo\"}",
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    )
+    delta = codec.decode_stream_event(
+        {"choices": [{"delta": {"content": "hel"}, "finish_reason": None}]}
+    )
+    tool_event = codec.decode_stream_event(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "id": "call-2",
+                                "type": "function",
+                                "function": {
+                                    "name": "scan",
+                                    "arguments": "{\"target\":\"demo\"}",
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ]
+        }
+    )
+    usage = codec.decode_stream_event(
+        {"usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}}
+    )
+    end = codec.decode_stream_event(
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+    )
+
+    assert response.content == "need lookup"
+    assert response.tool_calls[0].tool_name == "lookup"
+    assert response.tool_calls[0].arguments == {"target": "demo"}
+    assert response.tool_calls[0].call_id == "call-1"
+    assert response.usage.input_tokens == 10
+    assert response.usage.output_tokens == 5
+    assert response.finish_reason == "tool_calls"
+    assert response.metadata["id"] == "chatcmpl-1"
+    assert delta.type == "delta"
+    assert delta.delta == "hel"
+    assert tool_event.type == "tool_call"
+    assert tool_event.tool_call is not None
+    assert tool_event.tool_call.tool_name == "scan"
+    assert usage.type == "usage"
+    assert usage.usage is not None
+    assert usage.usage.total_tokens == 5
+    assert end.type == "message_end"
+    assert end.metadata["finish_reason"] == "stop"
 
 
 def test_llm_response_supports_provider_native_tool_calls() -> None:

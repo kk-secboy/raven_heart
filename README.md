@@ -351,6 +351,8 @@ ranking contract used by lightweight core stores.
 - `LLMProviderPort` protocol.
 - `LLMTransportPort`, `LLMProviderCodecPort`, `DefaultLLMProviderCodec`, and
   `TransportLLMProvider` for dependency-free provider adapter contracts.
+- `OpenAICompatibleLLMProviderCodec` for Chat Completions-style payload
+  encoding/decoding without importing the OpenAI SDK.
 - Provider registry and routing.
 - `LLMContentPart` for provider-neutral text, image, audio, file, binary, and
   JSON message parts without binding the SDK to one vendor message schema.
@@ -392,6 +394,10 @@ Native tool calling and response-format contracts are represented as SDK
 request fields, not vendor payloads. Adapter packages translate them to
 OpenAI-compatible `tools`/`response_format`, Anthropic tool use, Gemini function
 calling, local model schemas, or gateway-specific payloads.
+For OpenAI-compatible HTTP gateways, `OpenAICompatibleLLMProviderCodec` provides
+the common message/tool/response-format/usage/tool-call mapping while the
+runtime still owns HTTP, auth, retries at the network layer, and deployment
+selection.
 `ReActConfig.native_tool_calls` lets a runtime opt into the provider-native
 loop: the executor sends `ToolSpec`-derived contracts, executes returned
 `LLMToolCall` items through the same policy/replay/tool boundary, and appends
@@ -699,6 +705,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider center | MVP implemented |
 | Provider call audit | MVP implemented |
 | Provider transport contract | MVP implemented |
+| OpenAI-compatible provider codec | MVP implemented |
 | Provider route plan/preflight audit | MVP implemented |
 | Provider model capabilities | MVP implemented |
 | Provider tool/response-format contracts | MVP implemented |

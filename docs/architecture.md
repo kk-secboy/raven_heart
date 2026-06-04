@@ -286,6 +286,11 @@ message part payloads.
 dependency-free adapter boundary: runtimes can provide a transport and optional
 vendor codec while the SDK keeps provider-neutral request, response, stream, and
 error/retry semantics.
+`OpenAICompatibleLLMProviderCodec` is a built-in codec for Chat
+Completions-style payloads. It maps SDK messages, multimodal parts, native tool
+contracts, tool choices, response formats, usage, tool calls, and basic stream
+chunks without depending on the OpenAI SDK; HTTP/auth/model deployment remain
+runtime responsibilities.
 `LLMStreamAccumulator` gives streaming calls a single reconstruction and audit
 contract: events become an `LLMResponse`, while manifests retain event counts,
 event types, byte counts, usage, finish reason, and action presence without
