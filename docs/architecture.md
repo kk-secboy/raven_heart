@@ -76,6 +76,14 @@ budgeting, and trace eval. It proves the Yaklang-inspired context pipeline is a
 portable SDK behavior; runtime-specific stores, rankers, embeddings, domain
 prompts, and product policies remain outside core.
 
+`AgentCoreApprovalAcceptanceHarness` is the policy/approval gate. It verifies
+that a policy rule can block a tool, create a prompt-safe pending approval
+record, accept an approved decision as `ApprovalResumeContext`, inject that
+approval into a resumed prompt, execute the gated tool, and expose approval plus
+policy records to trace eval. The SDK owns the contract, queue primitives,
+resume material, and acceptance report; runtimes own operator identity, UI,
+notifications, ticketing, workflow routing, and organization policy sources.
+
 `AgentCoreProviderAcceptanceHarness` is the provider-compatibility gate. It runs
 a deterministic matrix for text, multimodal, structured-output, native-tool,
 OpenAI-compatible codec, transport fallback, and streaming routes. It proves the
@@ -101,9 +109,9 @@ selection, UI recovery flows, and product workflow state.
 
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, provider acceptance, recovery acceptance, and resume acceptance,
-then returns one `AgentCoreValidationReport` with all subreports and blocking
-issues. This is the SDK-level check a runtime should pass before adapter
+acceptance, approval acceptance, provider acceptance, recovery acceptance, and
+resume acceptance, then returns one `AgentCoreValidationReport` with all
+subreports and blocking issues. This is the SDK-level check a runtime should pass before adapter
 implementation or product-specific migration tests begin.
 
 ## Boundary Table

@@ -12,6 +12,12 @@ from agent_core.acceptance import (
     AgentCoreAcceptanceReport,
     run_agent_core_acceptance as _run_agent_core_acceptance,
 )
+from agent_core.approval_acceptance import (
+    AgentCoreApprovalAcceptanceHarness,
+    AgentCoreApprovalAcceptanceIssue,
+    AgentCoreApprovalAcceptanceReport,
+    run_agent_core_approval_acceptance,
+)
 from agent_core.actions import (
     ActionRegistry,
     ActionSpec,
@@ -505,6 +511,9 @@ __all__ = [
     "AgentCoreAcceptanceReport",
     "AgentCoreAPIContract",
     "AgentCoreAPIStabilityReport",
+    "AgentCoreApprovalAcceptanceHarness",
+    "AgentCoreApprovalAcceptanceIssue",
+    "AgentCoreApprovalAcceptanceReport",
     "AgentCoreCapability",
     "AgentCoreContextAcceptanceHarness",
     "AgentCoreContextAcceptanceIssue",
@@ -896,6 +905,7 @@ __all__ = [
     "validate_tool_arguments",
     "agent_core_sdk_manifest",
     "run_agent_core_acceptance",
+    "run_agent_core_approval_acceptance",
     "run_agent_core_context_acceptance",
     "run_agent_core_provider_acceptance",
     "run_agent_core_recovery_acceptance",

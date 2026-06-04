@@ -51,6 +51,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreAcceptanceReport",
         "AgentCoreAPIContract",
         "AgentCoreAPIStabilityReport",
+        "AgentCoreApprovalAcceptanceHarness",
+        "AgentCoreApprovalAcceptanceIssue",
+        "AgentCoreApprovalAcceptanceReport",
         "AgentCoreCapability",
         "AgentCoreContextAcceptanceHarness",
         "AgentCoreContextAcceptanceIssue",
@@ -297,6 +300,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "evaluate_agent_core_runtime_boundary",
         "evaluate_agent_core_readiness",
         "run_agent_core_acceptance",
+        "run_agent_core_approval_acceptance",
         "run_agent_core_context_acceptance",
         "run_agent_core_provider_acceptance",
         "run_agent_core_recovery_acceptance",
@@ -356,6 +360,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "runtime_boundary_audit" in capability_names
     assert "trace_replay_eval" in capability_names
     assert "replacement_acceptance_harness" in capability_names
+    assert "approval_acceptance_harness" in capability_names
     assert "context_acceptance_harness" in capability_names
     assert "provider_acceptance_harness" in capability_names
     assert "recovery_acceptance_harness" in capability_names
@@ -415,6 +420,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "runtime_boundary_audit" in manifest["matched"]["capabilities"]
     assert "prompt_context_semantics" in manifest["matched"]["capabilities"]
     assert "replacement_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "approval_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "context_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]

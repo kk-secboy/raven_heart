@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_core.acceptance import run_agent_core_acceptance
+from agent_core.approval_acceptance import run_agent_core_approval_acceptance
 from agent_core.context_acceptance import run_agent_core_context_acceptance
 from agent_core.manifest import (
     AgentCoreSDKManifest,
@@ -110,6 +111,7 @@ class AgentCoreValidationReport:
     readiness: dict[str, Any] = field(default_factory=dict)
     api_stability: dict[str, Any] = field(default_factory=dict)
     acceptance: dict[str, Any] = field(default_factory=dict)
+    approval_acceptance: dict[str, Any] = field(default_factory=dict)
     context_acceptance: dict[str, Any] = field(default_factory=dict)
     provider_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
@@ -137,6 +139,7 @@ class AgentCoreValidationReport:
             "readiness": dict(self.readiness),
             "api_stability": dict(self.api_stability),
             "acceptance": dict(self.acceptance),
+            "approval_acceptance": dict(self.approval_acceptance),
             "context_acceptance": dict(self.context_acceptance),
             "provider_acceptance": dict(self.provider_acceptance),
             "recovery": dict(self.recovery),
@@ -171,6 +174,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "acceptance", **dict(self.metadata)},
             )
         ).manifest()
+        approval_acceptance = (
+            await run_agent_core_approval_acceptance(
+                metadata={"validation_gate": "approval_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         context_acceptance = (
             await run_agent_core_context_acceptance(
                 metadata={"validation_gate": "context_acceptance", **dict(self.metadata)}
@@ -196,6 +204,7 @@ class AgentCoreValidationSuite:
             readiness=readiness,
             api_stability=api_stability,
             acceptance=acceptance,
+            approval_acceptance=approval_acceptance,
             context_acceptance=context_acceptance,
             provider_acceptance=provider_acceptance,
             recovery=recovery,
@@ -208,6 +217,7 @@ class AgentCoreValidationSuite:
             readiness=readiness,
             api_stability=api_stability,
             acceptance=acceptance,
+            approval_acceptance=approval_acceptance,
             context_acceptance=context_acceptance,
             provider_acceptance=provider_acceptance,
             recovery=recovery,
@@ -324,6 +334,7 @@ def _validation_issues(
     readiness: dict[str, Any],
     api_stability: dict[str, Any],
     acceptance: dict[str, Any],
+    approval_acceptance: dict[str, Any],
     context_acceptance: dict[str, Any],
     provider_acceptance: dict[str, Any],
     recovery: dict[str, Any],
@@ -334,6 +345,7 @@ def _validation_issues(
     _extend_report_issues(issues, source="readiness", report=readiness)
     _extend_api_stability_issues(issues, api_stability)
     _extend_report_issues(issues, source="acceptance", report=acceptance)
+    _extend_report_issues(issues, source="approval_acceptance", report=approval_acceptance)
     _extend_report_issues(issues, source="context_acceptance", report=context_acceptance)
     _extend_report_issues(issues, source="provider_acceptance", report=provider_acceptance)
     _extend_report_issues(issues, source="recovery", report=recovery)
