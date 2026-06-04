@@ -124,6 +124,12 @@ from agent_core.context_window_acceptance import (
     AgentCoreContextWindowAcceptanceReport,
     run_agent_core_context_window_acceptance,
 )
+from agent_core.concurrency_acceptance import (
+    AgentCoreConcurrencyAcceptanceHarness,
+    AgentCoreConcurrencyAcceptanceIssue,
+    AgentCoreConcurrencyAcceptanceReport,
+    run_agent_core_concurrency_acceptance,
+)
 from agent_core.coordination_acceptance import (
     AgentCoreCoordinationAcceptanceHarness,
     AgentCoreCoordinationAcceptanceIssue,
@@ -688,6 +694,9 @@ __all__ = [
     "AgentCoreContextWindowAcceptanceHarness",
     "AgentCoreContextWindowAcceptanceIssue",
     "AgentCoreContextWindowAcceptanceReport",
+    "AgentCoreConcurrencyAcceptanceHarness",
+    "AgentCoreConcurrencyAcceptanceIssue",
+    "AgentCoreConcurrencyAcceptanceReport",
     "AgentCoreCoordinationAcceptanceHarness",
     "AgentCoreCoordinationAcceptanceIssue",
     "AgentCoreCoordinationAcceptanceReport",
@@ -1163,6 +1172,7 @@ __all__ = [
     "run_agent_core_budget_acceptance",
     "run_agent_core_context_acceptance",
     "run_agent_core_context_window_acceptance",
+    "run_agent_core_concurrency_acceptance",
     "run_agent_core_coordination_acceptance",
     "run_agent_core_durable_session_acceptance",
     "run_agent_core_eval_suite_acceptance",

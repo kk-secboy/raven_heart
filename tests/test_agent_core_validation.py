@@ -25,6 +25,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["context_acceptance"]["ready"] is True
     assert manifest["context_window_acceptance"]["ready"] is True
     assert manifest["orchestration_acceptance"]["ready"] is True
+    assert manifest["concurrency_acceptance"]["ready"] is True
     assert manifest["coordination_acceptance"]["ready"] is True
     assert manifest["durable_session_acceptance"]["ready"] is True
     assert manifest["event_acceptance"]["ready"] is True
@@ -62,6 +63,15 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["orchestration_acceptance"]["capability_discovery"]["counts"][
         "mcp_resource"
     ] == 1
+    assert manifest["concurrency_acceptance"]["active_snapshot"]["active_run_count"] == 2
+    assert manifest["concurrency_acceptance"]["tools"]["alpha_arguments"] == [
+        {"owner": "alpha"}
+    ]
+    assert manifest["concurrency_acceptance"]["event_streams"]["beta"]["session_names"] == [
+        "beta"
+    ]
+    assert manifest["concurrency_acceptance"]["traces"]["record_count"] == 2
+    assert manifest["concurrency_acceptance"]["trace_evals"]["alpha"]["ok"] is True
     assert manifest["coordination_acceptance"]["planner"]["status"] == "completed"
     assert manifest["coordination_acceptance"]["handoff"]["decision"]["selected_session"] == "code-reviewer"
     assert manifest["coordination_acceptance"]["agent_tool"]["result"]["status"] == "completed"
@@ -199,6 +209,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "context_window_report" in readiness["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "concurrency_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "coordination_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "durable_session_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "event_acceptance_harness" in readiness["matched"]["capabilities"]
@@ -236,6 +247,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_context_window_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreOrchestrationAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_orchestration_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCoreConcurrencyAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_concurrency_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreCoordinationAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_coordination_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreDurableSessionAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -303,6 +316,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_context_window_acceptance" in stability["present_stable_api"]
     assert "AgentCoreOrchestrationAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_orchestration_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreConcurrencyAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_concurrency_acceptance" in stability["present_stable_api"]
     assert "AgentCoreCoordinationAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_coordination_acceptance" in stability["present_stable_api"]
     assert "AgentCoreDurableSessionAcceptanceHarness" in stability["present_stable_api"]

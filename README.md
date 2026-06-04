@@ -178,6 +178,14 @@ evaluates planner, handoff, agent-tool, and artifact traces. Distributed
 scheduling, product workflow queues, and runtime-specific worker policy remain
 outside the SDK.
 
+`agent_core.run_agent_core_concurrency_acceptance()` runs deterministic
+concurrent session-isolation checks. It starts two managed sessions at the same
+time, proves the manager observes both active before release, keeps provider
+requests and tool invocations isolated per session, tails terminal event streams
+by run key/session name, stores both traces in one shared trace store, and
+passes trace eval for each run. Distributed locks, worker pools, process
+supervision, and UI scheduling remain runtime responsibilities.
+
 `agent_core.run_agent_core_event_acceptance()` runs deterministic streaming and
 event-stream checks. It verifies streaming provider runs emit prompt-safe
 `model_stream` events, event logs can be paged and tailed by cursor, managed

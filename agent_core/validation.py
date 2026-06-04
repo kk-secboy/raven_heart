@@ -12,6 +12,7 @@ from agent_core.approval_acceptance import run_agent_core_approval_acceptance
 from agent_core.budget_acceptance import run_agent_core_budget_acceptance
 from agent_core.context_acceptance import run_agent_core_context_acceptance
 from agent_core.context_window_acceptance import run_agent_core_context_window_acceptance
+from agent_core.concurrency_acceptance import run_agent_core_concurrency_acceptance
 from agent_core.coordination_acceptance import run_agent_core_coordination_acceptance
 from agent_core.durable_session_acceptance import run_agent_core_durable_session_acceptance
 from agent_core.event_acceptance import run_agent_core_event_acceptance
@@ -142,6 +143,7 @@ class AgentCoreValidationReport:
     context_acceptance: dict[str, Any] = field(default_factory=dict)
     context_window_acceptance: dict[str, Any] = field(default_factory=dict)
     orchestration_acceptance: dict[str, Any] = field(default_factory=dict)
+    concurrency_acceptance: dict[str, Any] = field(default_factory=dict)
     coordination_acceptance: dict[str, Any] = field(default_factory=dict)
     durable_session_acceptance: dict[str, Any] = field(default_factory=dict)
     event_acceptance: dict[str, Any] = field(default_factory=dict)
@@ -191,6 +193,7 @@ class AgentCoreValidationReport:
             "context_acceptance": dict(self.context_acceptance),
             "context_window_acceptance": dict(self.context_window_acceptance),
             "orchestration_acceptance": dict(self.orchestration_acceptance),
+            "concurrency_acceptance": dict(self.concurrency_acceptance),
             "coordination_acceptance": dict(self.coordination_acceptance),
             "durable_session_acceptance": dict(self.durable_session_acceptance),
             "event_acceptance": dict(self.event_acceptance),
@@ -268,6 +271,11 @@ class AgentCoreValidationSuite:
         orchestration_acceptance = (
             await run_agent_core_orchestration_acceptance(
                 metadata={"validation_gate": "orchestration_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
+        concurrency_acceptance = (
+            await run_agent_core_concurrency_acceptance(
+                metadata={"validation_gate": "concurrency_acceptance", **dict(self.metadata)}
             )
         ).manifest()
         coordination_acceptance = (
@@ -390,6 +398,7 @@ class AgentCoreValidationSuite:
             context_acceptance=context_acceptance,
             context_window_acceptance=context_window_acceptance,
             orchestration_acceptance=orchestration_acceptance,
+            concurrency_acceptance=concurrency_acceptance,
             coordination_acceptance=coordination_acceptance,
             durable_session_acceptance=durable_session_acceptance,
             event_acceptance=event_acceptance,
@@ -424,6 +433,7 @@ class AgentCoreValidationSuite:
             context_acceptance=context_acceptance,
             context_window_acceptance=context_window_acceptance,
             orchestration_acceptance=orchestration_acceptance,
+            concurrency_acceptance=concurrency_acceptance,
             coordination_acceptance=coordination_acceptance,
             durable_session_acceptance=durable_session_acceptance,
             event_acceptance=event_acceptance,
@@ -562,6 +572,7 @@ def _validation_issues(
     context_acceptance: dict[str, Any],
     context_window_acceptance: dict[str, Any],
     orchestration_acceptance: dict[str, Any],
+    concurrency_acceptance: dict[str, Any],
     coordination_acceptance: dict[str, Any],
     durable_session_acceptance: dict[str, Any],
     event_acceptance: dict[str, Any],
@@ -601,6 +612,11 @@ def _validation_issues(
         issues,
         source="orchestration_acceptance",
         report=orchestration_acceptance,
+    )
+    _extend_report_issues(
+        issues,
+        source="concurrency_acceptance",
+        report=concurrency_acceptance,
     )
     _extend_report_issues(
         issues,
