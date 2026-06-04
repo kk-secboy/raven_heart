@@ -333,6 +333,12 @@ from agent_core.reducer import (
     ReducerResult,
     apply_reduction_to_timeline,
 )
+from agent_core.recovery import (
+    AgentCoreRecoveryHarness,
+    AgentCoreRecoveryIssue,
+    AgentCoreRecoveryReport,
+    run_agent_core_recovery_acceptance,
+)
 from agent_core.runner import (
     AgentManagerCapacityError,
     AgentManagerCapacityStatus,
@@ -470,6 +476,9 @@ __all__ = [
     "AgentCoreReadinessIssue",
     "AgentCoreReadinessProfile",
     "AgentCoreReadinessReport",
+    "AgentCoreRecoveryHarness",
+    "AgentCoreRecoveryIssue",
+    "AgentCoreRecoveryReport",
     "AgentCoreRuntimeBoundary",
     "AgentCoreSDKManifest",
     "AgentEvent",
@@ -837,6 +846,7 @@ __all__ = [
     "validate_tool_arguments",
     "agent_core_sdk_manifest",
     "run_agent_core_acceptance",
+    "run_agent_core_recovery_acceptance",
 ]
 
 

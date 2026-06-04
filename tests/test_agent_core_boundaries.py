@@ -53,6 +53,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreReadinessIssue",
         "AgentCoreReadinessProfile",
         "AgentCoreReadinessReport",
+        "AgentCoreRecoveryHarness",
+        "AgentCoreRecoveryIssue",
+        "AgentCoreRecoveryReport",
         "AgentCoreRuntimeBoundary",
         "AgentCoreSDKManifest",
         "AgentSession",
@@ -275,6 +278,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "agent_core_replacement_readiness_profile",
         "evaluate_agent_core_readiness",
         "run_agent_core_acceptance",
+        "run_agent_core_recovery_acceptance",
         "UsageInfo",
         "ToolReplayRecord",
         "ToolReplayStorePort",
@@ -325,6 +329,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "memory_governance" in capability_names
     assert "trace_replay_eval" in capability_names
     assert "replacement_acceptance_harness" in capability_names
+    assert "recovery_acceptance_harness" in capability_names
     assert "runtime_boundary" in capability_names
     assert manifest["capability_statuses"]["excluded"] == 1
     assert boundary["dependency_direction"] == "runtime imports agent_core"
@@ -377,6 +382,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "AgentRunner" in manifest["matched"]["public_api"]
     assert "prompt_context_semantics" in manifest["matched"]["capabilities"]
     assert "replacement_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "postgres" in manifest["matched"]["external_storage_kinds"]
     assert "openai_agents_runtime" in manifest["matched"]["forbidden_packages"]
 

@@ -54,6 +54,14 @@ base can execute the generic agent loop end to end, while RavenStorm-specific
 routes, credentials, distributed workers, UI streaming, and production storage
 remain separate adapter/runtime acceptance concerns.
 
+`AgentCoreRecoveryHarness` adds the recovery gate. It runs provider fallback and
+tool retry scenarios with deterministic failures, then returns an
+`AgentCoreRecoveryReport` containing retry counts, fallback use, attempt
+statuses, and error-classification kinds. The SDK owns the portable recovery
+audit shape and default acceptance checks; host runtimes own real retry budgets,
+rate-limit handling, circuit breakers, vendor-specific failover, and operator
+policy.
+
 ## Boundary Table
 
 | Core area | Runtime responsibility |

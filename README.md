@@ -126,6 +126,13 @@ result is an `AgentCoreAcceptanceReport` with blocking issues, run summary,
 readiness report, and trace-eval report. This is the package-level gate before a
 runtime starts adapter-specific migration tests.
 
+`agent_core.run_agent_core_recovery_acceptance()` runs deterministic recovery
+checks for provider fallback and tool retry. The report proves that retryable
+provider failures are classified, retried, and recovered through fallback, and
+that retryable tool failures record attempts and finish successfully. Host
+runtimes still own production retry budgets, rate-limit policy, circuit
+breakers, and provider-specific failover rules.
+
 ## Core Capabilities
 
 ### Harness
@@ -850,6 +857,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK capability/boundary manifest | MVP implemented |
 | SDK replacement-readiness profile | MVP implemented |
 | SDK replacement acceptance harness | MVP implemented |
+| SDK recovery acceptance harness | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
 | Manager run event paging | MVP implemented |
