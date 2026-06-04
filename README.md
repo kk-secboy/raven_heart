@@ -297,6 +297,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   required provider model capabilities, provider stream event contracts,
   provider-native tool-call presence and tool-call names,
   provider/tool error classification kinds,
+  unified failure-summary sources/kinds,
   provider route plans and provider route preflight readiness,
   embedding call limits, required embedding providers/models/dimensions,
   required events, required tools, preflight presence/status/issue-code constraints,
@@ -809,6 +810,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Schema validation contracts | MVP implemented |
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |
+| Run failure summary trace/eval | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
 | Manager run event paging | MVP implemented |

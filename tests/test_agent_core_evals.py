@@ -1435,6 +1435,68 @@ def test_trace_eval_reports_provider_route_preflight_contract_failures() -> None
     } <= {issue.code for issue in report.issues}
 
 
+def test_trace_eval_validates_failure_summary_contracts() -> None:
+    trace = {
+        **_trace_manifest(),
+        "failure_summary": {
+            "schema_version": "agent-core-failure-summary/v1",
+            "failure_count": 2,
+            "retryable_count": 1,
+            "sources": {"provider": 1, "tool_center": 1},
+            "kinds": {"provider_failed": 1, "tool_failed": 1},
+            "statuses": {"failed": 2},
+            "records": [
+                {
+                    "schema_version": "agent-core-failure-record/v1",
+                    "source": "provider",
+                    "kind": "provider_failed",
+                    "status": "failed",
+                    "retryable": True,
+                },
+                {
+                    "schema_version": "agent-core-failure-record/v1",
+                    "source": "tool_center",
+                    "kind": "tool_failed",
+                    "status": "failed",
+                    "retryable": False,
+                },
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_failure_summary=True,
+            required_failure_sources=("provider", "tool_center"),
+            required_failure_kinds=("provider_failed", "tool_failed"),
+            forbidden_failure_kinds=("unknown",),
+            max_failure_count=2,
+        ),
+    )
+    failed = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_failure_sources=("preflight",),
+            required_failure_kinds=("timeout",),
+            forbidden_failure_kinds=("tool_failed",),
+            max_failure_count=1,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_failure_summary"] is True
+    assert report.summary["failure_count"] == 2
+    assert report.summary["failure_sources"] == ["provider", "tool_center"]
+    assert report.summary["failure_kinds"] == ["provider_failed", "tool_failed"]
+    assert {
+        "missing_failure_source",
+        "missing_failure_kind",
+        "forbidden_failure_kind",
+        "failure_count_limit_exceeded",
+    } <= {issue.code for issue in failed.issues}
+
+
 def test_trace_eval_validates_provider_request_shape_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),

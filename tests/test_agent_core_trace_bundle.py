@@ -737,9 +737,80 @@ def test_run_trace_bundle_summarizes_preflight_report() -> None:
     assert manifest["summary"]["has_storage_backend_preflight"] is True
     assert manifest["summary"]["storage_backend_preflight_ready"] is False
     assert manifest["summary"]["storage_backend_preflight_blocking_count"] == 1
+    assert manifest["summary"]["failure_count"] >= 4
+    assert manifest["summary"]["failure_sources"]["preflight"] == 1
+    assert manifest["summary"]["failure_sources"]["provider_route_preflight"] == 1
+    assert manifest["summary"]["failure_sources"]["storage_backend_preflight"] == 1
     assert manifest["preflight"]["blocking_codes"] == ["missing_tool"]
     assert manifest["provider_route_preflight"]["streamed"] is True
     assert manifest["storage_backend_preflight"]["missing_roles"] == ["memory"]
+    assert manifest["failure_summary"]["kinds"]["policy_denied"] >= 2
+
+
+def test_run_trace_bundle_builds_unified_failure_summary() -> None:
+    manifest = AgentRunTraceBundle(
+        run_id="run-failed",
+        status="timeout",
+        provider={
+            "call_count": 1,
+            "calls": [
+                {
+                    "provider_name": "mock",
+                    "model": "mock-mini",
+                    "attempt": 1,
+                    "status": "failed",
+                    "error": "rate limited",
+                    "retryable": True,
+                    "error_classification": {
+                        "schema_version": "agent-core-error-classification/v1",
+                        "kind": "provider_failed",
+                        "status": "failed",
+                        "retryable": True,
+                        "message": "rate limited",
+                    },
+                }
+            ],
+        },
+        session={
+            "tools": {
+                "schema_version": "agent-core-tool-center/v1",
+                "calls": [
+                    {
+                        "requested_tool_name": "lookup",
+                        "status": "failed",
+                        "error": "tool failed",
+                    }
+                ]
+            }
+        },
+        event_log={
+            "event_count": 1,
+            "events": [
+                {
+                    "type": "run_timeout",
+                    "run_id": "run-failed",
+                    "payload": {"reason": "deadline"},
+                }
+            ],
+        },
+        structured_output_trace={
+            "record_count": 1,
+            "failed_count": 1,
+            "errors": {"$.risk is required": 1},
+        },
+    ).manifest()
+
+    summary = manifest["failure_summary"]
+
+    assert manifest["summary"]["failure_count"] == summary["failure_count"]
+    assert manifest["summary"]["retryable_failure_count"] == 1
+    assert summary["sources"]["provider"] == 1
+    assert summary["sources"]["tool_center"] == 1
+    assert summary["sources"]["event_log"] == 1
+    assert summary["sources"]["structured_output"] == 1
+    assert summary["kinds"]["provider_failed"] == 1
+    assert summary["kinds"]["timeout"] >= 1
+    assert summary["kinds"]["schema_invalid"] == 1
 
 
 def test_context_injection_trace_summarizes_prompt_injection_decisions() -> None:

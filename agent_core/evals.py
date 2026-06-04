@@ -199,6 +199,11 @@ class TraceEvalSpec:
     required_agent_tool_sessions: tuple[str, ...] = ()
     required_agent_tool_statuses: tuple[str, ...] = ()
     max_agent_tool_failures: int | None = None
+    require_failure_summary: bool = False
+    required_failure_sources: tuple[str, ...] = ()
+    required_failure_kinds: tuple[str, ...] = ()
+    forbidden_failure_kinds: tuple[str, ...] = ()
+    max_failure_count: int | None = None
     require_mcp_center: bool = False
     required_mcp_server_names: tuple[str, ...] = ()
     required_mcp_refreshed_servers: tuple[str, ...] = ()
@@ -464,6 +469,11 @@ class TraceEvalSpec:
             "required_agent_tool_sessions": list(self.required_agent_tool_sessions),
             "required_agent_tool_statuses": list(self.required_agent_tool_statuses),
             "max_agent_tool_failures": self.max_agent_tool_failures,
+            "require_failure_summary": self.require_failure_summary,
+            "required_failure_sources": list(self.required_failure_sources),
+            "required_failure_kinds": list(self.required_failure_kinds),
+            "forbidden_failure_kinds": list(self.forbidden_failure_kinds),
+            "max_failure_count": self.max_failure_count,
             "require_mcp_center": self.require_mcp_center,
             "required_mcp_server_names": list(self.required_mcp_server_names),
             "required_mcp_refreshed_servers": list(self.required_mcp_refreshed_servers),
@@ -1045,6 +1055,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             for record in agent_tool_records
             if str(record.get("status") or "") != "completed"
         )
+        failure_summary = _failure_summary(trace)
+        failure_records = _failure_records(failure_summary)
+        failure_sources = _failure_values(failure_records, "source")
+        failure_kinds = _failure_values(failure_records, "kind")
         mcp_center = _mcp_center_trace(trace)
         mcp_servers = _mcp_server_records(mcp_center)
         mcp_server_names = _mcp_server_values(mcp_servers, "name")
@@ -3245,6 +3259,56 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_failure_summary and not failure_summary:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "failure_summary_missing",
+                    "failure summary trace is required",
+                )
+            )
+        for source in spec.required_failure_sources:
+            if source not in failure_sources:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_failure_source",
+                        f"required failure source missing: {source}",
+                    )
+                )
+        for kind in spec.required_failure_kinds:
+            if kind not in failure_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_failure_kind",
+                        f"required failure kind missing: {kind}",
+                    )
+                )
+        for kind in spec.forbidden_failure_kinds:
+            if kind in failure_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_failure_kind",
+                        f"forbidden failure kind present: {kind}",
+                    )
+                )
+        if (
+            spec.max_failure_count is not None
+            and len(failure_records) > spec.max_failure_count
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "failure_count_limit_exceeded",
+                    "failure summary count exceeded limit",
+                    metadata={
+                        "actual": len(failure_records),
+                        "limit": spec.max_failure_count,
+                    },
+                )
+            )
         if spec.require_mcp_center and not mcp_center:
             issues.append(
                 TraceEvalIssue(
@@ -3465,6 +3529,10 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "agent_tool_names": sorted(agent_tool_names),
                 "agent_tool_sessions": sorted(agent_tool_sessions),
                 "agent_tool_statuses": sorted(agent_tool_statuses),
+                "has_failure_summary": bool(failure_summary),
+                "failure_count": len(failure_records),
+                "failure_sources": sorted(failure_sources),
+                "failure_kinds": sorted(failure_kinds),
                 "has_mcp_center": bool(mcp_center),
                 "mcp_server_count": len(mcp_servers),
                 "mcp_server_names": sorted(mcp_server_names),
@@ -5295,6 +5363,19 @@ def _agent_tool_record(record: dict[str, Any]) -> dict[str, Any]:
         "output_bytes": _safe_int(result.get("output_bytes")),
         "error": error,
     }
+
+
+def _failure_summary(trace: dict[str, Any]) -> dict[str, Any]:
+    summary = trace.get("failure_summary")
+    return dict(summary) if isinstance(summary, dict) else {}
+
+
+def _failure_records(summary: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(summary.get("records")))
+
+
+def _failure_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(record.get(key) or "") for record in records if record.get(key)}
 
 
 def _mcp_center_trace(trace: dict[str, Any]) -> dict[str, Any]:

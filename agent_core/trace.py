@@ -833,6 +833,20 @@ class AgentRunTraceBundle:
         prompt_bucket_budget = _prompt_bucket_budget(self.prompt)
         prompt_semantic_trim = _prompt_semantic_trim(self.prompt)
         prompt_budget = _prompt_budget(self.prompt)
+        failure_summary = _failure_summary(
+            run_status=self.status,
+            provider=self.provider,
+            tool_center=tool_center,
+            preflight=self.preflight,
+            provider_route_preflight=provider_route_preflight,
+            storage_backend_preflight=storage_backend_preflight,
+            event_log=self.event_log,
+            structured_output_trace=structured_output_trace,
+            planner_trace=planner_trace,
+            approval_trace=approval_trace,
+            agent_tool_trace=agent_tool_trace,
+            mcp_center=mcp_center,
+        )
         correlation = self.correlation or TraceCorrelationIndex.from_trace_components(
             run_id=self.run_id,
             journal_replay=self.journal_replay,
@@ -980,6 +994,12 @@ class AgentRunTraceBundle:
                 "has_prompt_budget": bool(prompt_budget),
                 "prompt_budget_provider_limited": bool(prompt_budget.get("provider_limited")),
                 "has_prompt_trim": bool(self.prompt.get("metadata", {}).get("trim")),
+                "failure_count": int(failure_summary.get("failure_count") or 0),
+                "failure_sources": dict(failure_summary.get("sources") or {}),
+                "failure_kinds": dict(failure_summary.get("kinds") or {}),
+                "retryable_failure_count": int(
+                    failure_summary.get("retryable_count") or 0
+                ),
             },
             "session": dict(self.session),
             "prompt": dict(self.prompt),
@@ -1014,9 +1034,261 @@ class AgentRunTraceBundle:
             "prompt_budget": dict(prompt_budget),
             "prompt_bucket_budget": dict(prompt_bucket_budget),
             "prompt_semantic_trim": dict(prompt_semantic_trim),
+            "failure_summary": dict(failure_summary),
             "correlation": dict(correlation),
             "metadata": dict(self.metadata),
         }
+
+
+def _failure_summary(
+    *,
+    run_status: str,
+    provider: dict[str, Any],
+    tool_center: dict[str, Any],
+    preflight: dict[str, Any],
+    provider_route_preflight: dict[str, Any],
+    storage_backend_preflight: dict[str, Any],
+    event_log: dict[str, Any],
+    structured_output_trace: dict[str, Any],
+    planner_trace: dict[str, Any],
+    approval_trace: dict[str, Any],
+    agent_tool_trace: dict[str, Any],
+    mcp_center: dict[str, Any],
+) -> dict[str, Any]:
+    records: list[dict[str, Any]] = []
+
+    if run_status and run_status not in {"completed"}:
+        records.append(
+            _failure_record(
+                source="run",
+                kind=_failure_kind_for_status(run_status),
+                status=run_status,
+                message=f"run status: {run_status}",
+            )
+        )
+
+    for call in _dict_items(provider.get("calls")):
+        if str(call.get("status") or "") != "failed" and not call.get("error"):
+            continue
+        classification = call.get("error_classification")
+        classification = classification if isinstance(classification, dict) else {}
+        records.append(
+            _failure_record(
+                source="provider",
+                kind=str(classification.get("kind") or "provider_failed"),
+                status=str(classification.get("status") or call.get("status") or "failed"),
+                name=str(call.get("provider_name") or ""),
+                message=str(classification.get("message") or call.get("error") or ""),
+                retryable=bool(classification.get("retryable") or call.get("retryable")),
+                metadata={
+                    "model": str(call.get("model") or ""),
+                    "attempt": int(call.get("attempt") or 0),
+                },
+            )
+        )
+
+    for call in _dict_items(tool_center.get("calls")):
+        if str(call.get("status") or "") == "completed":
+            continue
+        records.append(
+            _failure_record(
+                source="tool_center",
+                kind="tool_failed",
+                status=str(call.get("status") or "failed"),
+                name=str(call.get("requested_tool_name") or ""),
+                message=str(call.get("error") or ""),
+            )
+        )
+
+    if preflight.get("status") == "blocked":
+        for code in _string_items(preflight.get("blocking_codes")):
+            records.append(
+                _failure_record(
+                    source="preflight",
+                    kind="policy_denied",
+                    status="blocked",
+                    name=code,
+                    message=f"preflight blocked: {code}",
+                )
+            )
+
+    if provider_route_preflight and provider_route_preflight.get("ready") is not True:
+        records.append(
+            _failure_record(
+                source="provider_route_preflight",
+                kind="provider_failed",
+                status="blocked",
+                message="provider route preflight is not ready",
+                metadata={
+                    "requested_provider": provider_route_preflight.get("requested_provider"),
+                    "requested_model": provider_route_preflight.get("requested_model"),
+                },
+            )
+        )
+
+    if storage_backend_preflight and storage_backend_preflight.get("ready") is not True:
+        records.append(
+            _failure_record(
+                source="storage_backend_preflight",
+                kind="storage_unavailable",
+                status=str(storage_backend_preflight.get("status") or "blocked"),
+                message="storage backend preflight is not ready",
+                metadata={
+                    "blocking_count": storage_backend_preflight.get("blocking_count"),
+                    "missing_roles": list(
+                        storage_backend_preflight.get("missing_roles") or ()
+                    ),
+                },
+            )
+        )
+
+    for event in _dict_items(event_log.get("events")):
+        event_type = str(event.get("type") or "")
+        if event_type not in {"error", "run_cancelled", "run_timeout"}:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        records.append(
+            _failure_record(
+                source="event_log",
+                kind=_failure_kind_for_status(event_type),
+                status=event_type,
+                message=str(payload.get("message") or payload.get("reason") or ""),
+                metadata={"event_type": event_type},
+            )
+        )
+
+    if int(structured_output_trace.get("failed_count") or 0):
+        for error in _string_items(structured_output_trace.get("errors")):
+            records.append(
+                _failure_record(
+                    source="structured_output",
+                    kind="schema_invalid",
+                    status="failed",
+                    message=error,
+                )
+            )
+
+    if int(planner_trace.get("failed_step_count") or 0):
+        records.append(
+            _failure_record(
+                source="planner",
+                kind="tool_failed",
+                status="failed",
+                message="planner has failed steps",
+                metadata={"failed_step_count": planner_trace.get("failed_step_count")},
+            )
+        )
+
+    for status, kind in (("rejected_count", "policy_denied"), ("cancelled_count", "cancelled")):
+        count = int(approval_trace.get(status) or 0)
+        if count:
+            records.append(
+                _failure_record(
+                    source="approval",
+                    kind=kind,
+                    status=status.removesuffix("_count"),
+                    message=f"approval {status.removesuffix('_count')}: {count}",
+                    metadata={"count": count},
+                )
+            )
+
+    for record in _dict_items(agent_tool_trace.get("records")):
+        if str(record.get("status") or "") == "completed":
+            continue
+        records.append(
+            _failure_record(
+                source="agent_tool",
+                kind="tool_failed",
+                status=str(record.get("status") or "failed"),
+                name=str(record.get("tool_name") or ""),
+                message=str(record.get("error") or ""),
+            )
+        )
+
+    if int(mcp_center.get("failed_server_count") or 0):
+        for name in _string_items(mcp_center.get("failed_servers")):
+            records.append(
+                _failure_record(
+                    source="mcp",
+                    kind="tool_failed",
+                    status="failed",
+                    name=name,
+                    message=f"MCP server failed: {name}",
+                )
+            )
+
+    return _failure_summary_manifest(tuple(records))
+
+
+def _failure_record(
+    *,
+    source: str,
+    kind: str,
+    status: str,
+    name: str = "",
+    message: str = "",
+    retryable: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "agent-core-failure-record/v1",
+        "source": source,
+        "kind": kind or "unknown",
+        "status": status,
+        "name": name,
+        "message": message,
+        "retryable": bool(retryable),
+        "metadata": dict(metadata or {}),
+    }
+
+
+def _failure_summary_manifest(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    return {
+        "schema_version": "agent-core-failure-summary/v1",
+        "failure_count": len(records),
+        "retryable_count": sum(1 for record in records if record.get("retryable") is True),
+        "sources": _count_manifest_values(records, "source"),
+        "kinds": _count_manifest_values(records, "kind"),
+        "statuses": _count_manifest_values(records, "status"),
+        "records": [dict(record) for record in records],
+    }
+
+
+def _count_manifest_values(records: tuple[dict[str, Any], ...], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        value = str(record.get(key) or "")
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _failure_kind_for_status(status: str) -> str:
+    value = status.lower()
+    if "timeout" in value:
+        return "timeout"
+    if "cancel" in value:
+        return "cancelled"
+    if "denied" in value or "approval" in value or "blocked" in value:
+        return "policy_denied"
+    if "schema" in value or "validation" in value:
+        return "schema_invalid"
+    if "provider" in value:
+        return "provider_failed"
+    if "tool" in value:
+        return "tool_failed"
+    return "unknown"
+
+
+def _string_items(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, dict):
+        return tuple(str(item) for item in value if item)
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item) for item in value if item)
+    return ()
 
 
 def _iter_storage_backend_manifests(
