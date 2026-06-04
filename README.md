@@ -384,6 +384,8 @@ ranking contract used by lightweight core stores.
   and completed streamed calls record a standard stream summary.
 - Stream summaries expose event types and error counts to trace/eval contracts
   without storing raw streamed content.
+- `AgentSession.stream` and `AgentRunRequest.stream` let runners choose
+  streaming per session or per run without changing provider adapters.
 
 Concrete clients for OpenAI, Anthropic, local models, gateways, credentials, and
 vendor rate limits live in runtimes or adapter packages. `agent_core` owns the
@@ -709,7 +711,8 @@ A runtime should:
 5. Build an `AgentSession`.
 6. Run it with `AgentRunner`.
 7. Resume from checkpoints by passing a `ResumeToken` into `AgentRunRequest`.
-8. Optionally set `AgentRunRequest.timeout_seconds` or cancel background runs
+8. Optionally set `AgentRunRequest.stream` for streaming provider runs.
+9. Optionally set `AgentRunRequest.timeout_seconds` or cancel background runs
    through `AgentSessionManager.cancel()`.
 
 The runtime may be Raven, a code agent, an ops agent, or any other host. The runtime owns concrete tools, credentials, persistence, UI, and deployment. `raven_heart` owns the reusable agent mechanics.
@@ -727,6 +730,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider model capabilities | MVP implemented |
 | Provider tool/response-format contracts | MVP implemented |
 | Provider-native tool-call loop | opt-in MVP implemented |
+| Runner streaming control | MVP implemented |
 | Provider multimodal content contracts | MVP implemented |
 | Embedding provider center | MVP implemented |
 | Semantic ranking contract | MVP implemented |

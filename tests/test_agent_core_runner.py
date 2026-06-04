@@ -16,6 +16,7 @@ from agent_core.context import (
     DefaultContextMaterialSelector,
     InMemoryContextMaterialStore,
 )
+from agent_core.events import ListEventSink
 from agent_core.errors import ResumeError
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.lifecycle import AgentLifecycleEvent, AgentLifecycleHookCenter
@@ -282,6 +283,57 @@ async def test_agent_runner_native_tool_call_session_default_can_be_overridden()
     assert provider.requests[0].tools[0].name == "lookup"
     assert override_outcome.trace_manifest["metadata"]["native_tool_calls"] is False
     assert provider.requests[1].tools == ()
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_can_enable_streaming_per_request() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "streamed"}}])
+    events = ListEventSink()
+    session = AgentSession(
+        profile=AgentProfile(name="streaming"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        event_sink=events,
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(task="stream task", stream=True)
+    )
+
+    assert outcome.result.status == "completed"
+    assert outcome.result.output == "streamed"
+    assert outcome.session_manifest["stream"] is False
+    assert outcome.trace_manifest["metadata"]["stream"] is True
+    assert session.harness.model_events[0]["metadata"]["streamed"] is True
+    assert session.harness.model_events[0]["metadata"]["stream"]["has_action"] is True
+    assert [event.type for event in events.events if event.type == "model_stream"]
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_streaming_session_default_can_be_overridden() -> None:
+    provider = MockLLMProvider(
+        [
+            {"action": "finish", "arguments": {"output": "streamed"}},
+            {"action": "finish", "arguments": {"output": "plain"}},
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="stream-default"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        stream=True,
+    )
+
+    default_outcome = await AgentRunner(session).run("default stream")
+    override_outcome = await AgentRunner(session).run(
+        AgentRunRequest(task="override stream", stream=False)
+    )
+
+    assert default_outcome.session_manifest["stream"] is True
+    assert default_outcome.trace_manifest["metadata"]["stream"] is True
+    assert session.harness.model_events[0]["metadata"]["streamed"] is True
+    assert override_outcome.trace_manifest["metadata"]["stream"] is False
+    assert session.harness.model_events[1]["metadata"].get("streamed") is not True
 
 
 @pytest.mark.asyncio

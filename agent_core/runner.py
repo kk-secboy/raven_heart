@@ -98,6 +98,7 @@ class AgentSession:
     artifact_store: ArtifactStorePort | None = None
     cancel_token: CancelToken = field(default_factory=CancelToken)
     native_tool_calls: bool = False
+    stream: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def reset_cancel_token(self) -> None:
@@ -141,6 +142,7 @@ class AgentSession:
             "lifecycle_hooks": self.lifecycle_hooks.manifest(),
             "artifact_store": _component_manifest_sync(self.artifact_store),
             "native_tool_calls": self.native_tool_calls,
+            "stream": self.stream,
             "context_reducer": _context_reducer_manifest(self.context_reducer),
             "context_material_selector": _context_material_selector_manifest(
                 self.context_material_selector
@@ -173,6 +175,7 @@ class AgentRunRequest:
     mcp_context_materials: MCPContextMaterialRequest | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
+    stream: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -192,6 +195,7 @@ class AgentResumeRequest:
     mcp_context_materials: MCPContextMaterialRequest | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
+    stream: bool | None = None
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -211,6 +215,7 @@ class AgentResumeRequest:
             "has_mcp_context_materials": self.mcp_context_materials is not None,
             "timeout_seconds": self.timeout_seconds,
             "native_tool_calls": self.native_tool_calls,
+            "stream": self.stream,
         }
 
 
@@ -626,6 +631,7 @@ class AgentRunner:
                 run_request.structured_output,
                 run_request.timeout_seconds,
                 run_request.native_tool_calls,
+                run_request.stream,
             )
             result = await executor.run(run_request.task, prompt)
             await self._emit_lifecycle_event(
@@ -967,6 +973,7 @@ class AgentRunner:
         structured_output: StructuredOutputSpec | None = None,
         timeout_seconds: float | None = None,
         native_tool_calls: bool | None = None,
+        stream: bool | None = None,
     ) -> ReActExecutor:
         budget = self.session.profile.budget
         effective_native_tool_calls = (
@@ -974,6 +981,7 @@ class AgentRunner:
             if native_tool_calls is None
             else bool(native_tool_calls)
         )
+        effective_stream = self.session.stream if stream is None else bool(stream)
         return ReActExecutor(
             provider=self.session.provider,
             tool_runtime=self.session.tools,
@@ -999,6 +1007,7 @@ class AgentRunner:
                 budget=budget,
                 structured_output=structured_output,
                 timeout_seconds=timeout_seconds,
+                stream=effective_stream,
                 native_tool_calls=effective_native_tool_calls,
             ),
         )
@@ -1042,6 +1051,7 @@ class AgentRunner:
                     prompt_manifest.get("metadata", {}).get("semantic_trim") or {}
                 ),
                 "native_tool_calls": self._native_tool_calls_for_request(request),
+                "stream": self._stream_for_request(request),
             },
         )
         return bundle.manifest()
@@ -1050,6 +1060,11 @@ class AgentRunner:
         if request.native_tool_calls is None:
             return self.session.native_tool_calls
         return bool(request.native_tool_calls)
+
+    def _stream_for_request(self, request: AgentRunRequest) -> bool:
+        if request.stream is None:
+            return self.session.stream
+        return bool(request.stream)
 
     def _journal_replay_manifest(self, run_id: str) -> dict[str, Any]:
         snapshot = getattr(self.session.harness, "snapshot", None)
@@ -1677,6 +1692,7 @@ def _run_request_from_resume(
         mcp_context_materials=request.mcp_context_materials,
         timeout_seconds=request.timeout_seconds,
         native_tool_calls=request.native_tool_calls,
+        stream=request.stream,
     )
 
 

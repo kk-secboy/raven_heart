@@ -315,6 +315,11 @@ before yielding a successful stream to callers. Completed streamed calls include
 the standard stream summary in provider call metadata. Trace evals can require
 streaming calls, required or forbidden stream event types, and maximum stream
 error counts while keeping streamed content out of the trace.
+Runner streaming is an SDK-level switch, not a runtime adapter:
+`AgentSession.stream` sets the default and `AgentRunRequest.stream` can override
+one run. The same ReAct loop, event log, journal model events, and trace
+metadata are used whether a runtime later exposes those events through SSE,
+WebSocket, polling, or logs.
 
 `EmbeddingProviderPort` and `EmbeddingProviderCenter` give semantic retrieval a
 separate provider-neutral boundary from chat/completion models. The core records
