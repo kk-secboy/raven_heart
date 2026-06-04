@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from agent_core.acceptance import run_agent_core_acceptance
 from agent_core.manifest import (
     AgentCoreSDKManifest,
+    FORBIDDEN_RUNTIME_DEPENDENCIES,
+    FORBIDDEN_RUNTIME_PACKAGES,
     agent_core_sdk_manifest,
     evaluate_agent_core_api_stability,
     evaluate_agent_core_readiness,
@@ -38,10 +42,69 @@ class AgentCoreValidationIssue:
 
 
 @dataclass(frozen=True)
+class AgentCoreRuntimeBoundaryHit:
+    """One forbidden runtime dependency or package found inside the SDK package."""
+
+    kind: str
+    name: str
+    path: str
+    line: int = 0
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-runtime-boundary-hit/v1",
+            "kind": self.kind,
+            "name": self.name,
+            "path": self.path,
+            "line": self.line,
+        }
+
+
+@dataclass(frozen=True)
+class AgentCoreRuntimeBoundaryReport:
+    """Prompt-safe audit proving the SDK package has no runtime adapter imports."""
+
+    status: str
+    scanned_module_count: int = 0
+    scanned_package_count: int = 0
+    forbidden_dependency_hits: tuple[AgentCoreRuntimeBoundaryHit, ...] = ()
+    forbidden_package_hits: tuple[AgentCoreRuntimeBoundaryHit, ...] = ()
+    package_root: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ready(self) -> bool:
+        return self.status == "ready"
+
+    @property
+    def hit_count(self) -> int:
+        return len(self.forbidden_dependency_hits) + len(self.forbidden_package_hits)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-runtime-boundary-report/v1",
+            "status": self.status,
+            "ready": self.ready,
+            "hit_count": self.hit_count,
+            "scanned_module_count": self.scanned_module_count,
+            "scanned_package_count": self.scanned_package_count,
+            "forbidden_dependency_hits": [
+                hit.manifest() for hit in self.forbidden_dependency_hits
+            ],
+            "forbidden_package_hits": [
+                hit.manifest() for hit in self.forbidden_package_hits
+            ],
+            "package_root": self.package_root,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class AgentCoreValidationReport:
     """Prompt-safe aggregate SDK validation report."""
 
     status: str
+    runtime_boundary: dict[str, Any] = field(default_factory=dict)
     readiness: dict[str, Any] = field(default_factory=dict)
     api_stability: dict[str, Any] = field(default_factory=dict)
     acceptance: dict[str, Any] = field(default_factory=dict)
@@ -66,6 +129,7 @@ class AgentCoreValidationReport:
             "issue_count": len(self.issues),
             "error_count": self.error_count,
             "issues": [issue.manifest() for issue in self.issues],
+            "runtime_boundary": dict(self.runtime_boundary),
             "readiness": dict(self.readiness),
             "api_stability": dict(self.api_stability),
             "acceptance": dict(self.acceptance),
@@ -85,8 +149,14 @@ class AgentCoreValidationSuite:
         self,
         *,
         sdk_manifest: AgentCoreSDKManifest | dict[str, Any] | None = None,
+        package_root: str | Path | None = None,
     ) -> AgentCoreValidationReport:
         manifest = sdk_manifest or agent_core_sdk_manifest()
+        runtime_boundary = evaluate_agent_core_runtime_boundary(
+            manifest,
+            package_root=package_root,
+            metadata={"validation_gate": "runtime_boundary", **dict(self.metadata)},
+        ).manifest()
         readiness = evaluate_agent_core_readiness(manifest).manifest()
         api_stability = evaluate_agent_core_api_stability(manifest).manifest()
         acceptance = (
@@ -106,6 +176,7 @@ class AgentCoreValidationSuite:
             )
         ).manifest()
         issues = _validation_issues(
+            runtime_boundary=runtime_boundary,
             readiness=readiness,
             api_stability=api_stability,
             acceptance=acceptance,
@@ -115,6 +186,7 @@ class AgentCoreValidationSuite:
         status = "blocked" if any(issue.severity == "error" for issue in issues) else "ready"
         return AgentCoreValidationReport(
             status=status,
+            runtime_boundary=runtime_boundary,
             readiness=readiness,
             api_stability=api_stability,
             acceptance=acceptance,
@@ -128,17 +200,107 @@ class AgentCoreValidationSuite:
 async def run_agent_core_validation(
     *,
     sdk_manifest: AgentCoreSDKManifest | dict[str, Any] | None = None,
+    package_root: str | Path | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentCoreValidationReport:
     """Run the default aggregate SDK validation suite."""
 
     return await AgentCoreValidationSuite(metadata=dict(metadata or {})).run(
-        sdk_manifest=sdk_manifest
+        sdk_manifest=sdk_manifest,
+        package_root=package_root,
+    )
+
+
+def evaluate_agent_core_runtime_boundary(
+    sdk_manifest: AgentCoreSDKManifest | dict[str, Any] | None = None,
+    *,
+    package_root: str | Path | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreRuntimeBoundaryReport:
+    """Audit the SDK package for forbidden runtime imports and adapter packages."""
+
+    manifest = (
+        (sdk_manifest or agent_core_sdk_manifest()).manifest()
+        if isinstance(sdk_manifest, AgentCoreSDKManifest) or sdk_manifest is None
+        else dict(sdk_manifest)
+    )
+    boundary = manifest.get("runtime_boundary") or {}
+    forbidden_dependencies = tuple(
+        str(item)
+        for item in boundary.get("forbidden_dependencies", FORBIDDEN_RUNTIME_DEPENDENCIES)
+        or ()
+    )
+    forbidden_packages = tuple(
+        str(item)
+        for item in boundary.get("forbidden_packages", FORBIDDEN_RUNTIME_PACKAGES)
+        or ()
+    )
+    root = Path(package_root) if package_root is not None else Path(__file__).resolve().parent
+    dependency_hits: list[AgentCoreRuntimeBoundaryHit] = []
+    scanned_module_count = 0
+    for path in sorted(root.rglob("*.py")) if root.exists() else ():
+        if "__pycache__" in path.parts:
+            continue
+        scanned_module_count += 1
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            dependency_hits.append(
+                AgentCoreRuntimeBoundaryHit(
+                    kind="syntax_error",
+                    name="python_syntax",
+                    path=_relative_path(path, root),
+                    line=int(exc.lineno or 0),
+                )
+            )
+            continue
+        for name, line in _import_names(tree):
+            if _matches_forbidden_name(name, forbidden_dependencies):
+                dependency_hits.append(
+                    AgentCoreRuntimeBoundaryHit(
+                        kind="forbidden_dependency",
+                        name=name,
+                        path=_relative_path(path, root),
+                        line=line,
+                    )
+                )
+
+    package_hits: list[AgentCoreRuntimeBoundaryHit] = []
+    scanned_package_count = 0
+    if root.exists():
+        for path in sorted(root.iterdir()):
+            if not path.is_dir() or path.name == "__pycache__":
+                continue
+            scanned_package_count += 1
+            if path.name in forbidden_packages:
+                package_hits.append(
+                    AgentCoreRuntimeBoundaryHit(
+                        kind="forbidden_package",
+                        name=path.name,
+                        path=_relative_path(path, root),
+                    )
+                )
+
+    status = "blocked" if dependency_hits or package_hits else "ready"
+    return AgentCoreRuntimeBoundaryReport(
+        status=status,
+        scanned_module_count=scanned_module_count,
+        scanned_package_count=scanned_package_count,
+        forbidden_dependency_hits=tuple(dependency_hits),
+        forbidden_package_hits=tuple(package_hits),
+        package_root=str(root),
+        metadata={
+            "sdk_manifest_schema": str(manifest.get("schema_version") or ""),
+            "forbidden_dependency_count": len(forbidden_dependencies),
+            "forbidden_package_count": len(forbidden_packages),
+            **dict(metadata or {}),
+        },
     )
 
 
 def _validation_issues(
     *,
+    runtime_boundary: dict[str, Any],
     readiness: dict[str, Any],
     api_stability: dict[str, Any],
     acceptance: dict[str, Any],
@@ -146,12 +308,52 @@ def _validation_issues(
     resume: dict[str, Any],
 ) -> tuple[AgentCoreValidationIssue, ...]:
     issues: list[AgentCoreValidationIssue] = []
+    _extend_boundary_issues(issues, runtime_boundary)
     _extend_report_issues(issues, source="readiness", report=readiness)
     _extend_api_stability_issues(issues, api_stability)
     _extend_report_issues(issues, source="acceptance", report=acceptance)
     _extend_report_issues(issues, source="recovery", report=recovery)
     _extend_report_issues(issues, source="resume", report=resume)
     return tuple(issues)
+
+
+def _extend_boundary_issues(
+    issues: list[AgentCoreValidationIssue],
+    report: dict[str, Any],
+) -> None:
+    if report.get("ready") is True:
+        return
+    for hit in report.get("forbidden_dependency_hits") or ():
+        if not isinstance(hit, dict):
+            continue
+        issues.append(
+            AgentCoreValidationIssue(
+                source="runtime_boundary",
+                code="forbidden_runtime_dependency",
+                message=f"Forbidden runtime dependency in SDK package: {hit.get('name')}",
+                metadata=dict(hit),
+            )
+        )
+    for hit in report.get("forbidden_package_hits") or ():
+        if not isinstance(hit, dict):
+            continue
+        issues.append(
+            AgentCoreValidationIssue(
+                source="runtime_boundary",
+                code="forbidden_runtime_package",
+                message=f"Forbidden runtime package in SDK package: {hit.get('name')}",
+                metadata=dict(hit),
+            )
+        )
+    if not any(issue.source == "runtime_boundary" for issue in issues):
+        issues.append(
+            AgentCoreValidationIssue(
+                source="runtime_boundary",
+                code="runtime_boundary_not_ready",
+                message="runtime boundary audit is not ready.",
+                metadata={"status": report.get("status")},
+            )
+        )
 
 
 def _extend_report_issues(
@@ -174,6 +376,28 @@ def _extend_report_issues(
                 metadata=dict(issue.get("metadata") or {}),
             )
         )
+
+
+def _import_names(tree: ast.AST) -> tuple[tuple[str, int], ...]:
+    names: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend((alias.name, int(node.lineno)) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                names.append((node.module, int(node.lineno)))
+    return tuple(names)
+
+
+def _matches_forbidden_name(name: str, forbidden: tuple[str, ...]) -> bool:
+    return any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)
+
+
+def _relative_path(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
     if not any(issue.source == source for issue in issues):
         issues.append(
             AgentCoreValidationIssue(

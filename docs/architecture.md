@@ -52,6 +52,12 @@ stable set and blocks if a stable name is missing. This does not freeze every
 implementation detail before 1.0; it freezes the SDK entrypoints that Raven,
 code agents, and ops agents need for migration work.
 
+`AgentCoreRuntimeBoundaryReport` is the executable boundary audit. It scans the
+SDK package for forbidden runtime imports and forbidden adapter package
+directories declared by the manifest. `evaluate_agent_core_runtime_boundary()`
+therefore turns "runtime adapters stay out of core" from a documentation rule
+into a package-level validation gate.
+
 `AgentCoreAcceptanceHarness` is the next gate after manifest readiness. It runs a
 deterministic pure-core scenario through `AgentRunner`: a provider requests a
 tool call, `ToolCenter` routes it, memory recall injects context, the run writes
@@ -78,11 +84,12 @@ when `allow_terminal=False`. The SDK owns resume tokens, plans, prompt-safe
 resume manifests, and the acceptance report; runtimes own distributed worker
 selection, UI recovery flows, and product workflow state.
 
-`AgentCoreValidationSuite` is the aggregate package gate. It runs readiness, API
-stability, replacement acceptance, recovery acceptance, and resume acceptance,
-then returns one `AgentCoreValidationReport` with all subreports and blocking
-issues. This is the SDK-level check a runtime should pass before adapter
-implementation or product-specific migration tests begin.
+`AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
+boundary audit, readiness, API stability, replacement acceptance, recovery
+acceptance, and resume acceptance, then returns one `AgentCoreValidationReport`
+with all subreports and blocking issues. This is the SDK-level check a runtime
+should pass before adapter implementation or product-specific migration tests
+begin.
 
 ## Boundary Table
 

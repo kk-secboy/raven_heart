@@ -125,6 +125,12 @@ exports that may still change before 1.0. The report blocks if a stable API name
 is missing, which lets host runtimes pin migration checks before depending on
 `raven_heart` as their agent base.
 
+`agent_core.evaluate_agent_core_runtime_boundary()` audits the SDK package
+itself for forbidden runtime imports and adapter package directories. This is
+the self-check version of the boundary rule: it proves `agent_core` stayed pure
+before a host runtime starts wiring RavenStorm, OpenAI Agents SDK compatibility,
+Graphiti, FastAPI, or vendor clients outside this repository.
+
 `agent_core.run_agent_core_acceptance()` runs a deterministic pure-SDK
 acceptance scenario. It exercises readiness, ReAct, provider routing, ToolCenter,
 memory recall, context injection, journal persistence, event logging, tool
@@ -148,10 +154,10 @@ when `allow_terminal=False`. Runtime worker scheduling and user-facing recovery
 flows remain outside the SDK.
 
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
-readiness, API stability, replacement acceptance, recovery acceptance, and resume
-acceptance, then returns one `AgentCoreValidationReport`. This is the default
-package-level check a host runtime should pass before starting adapter-specific
-migration tests.
+runtime-boundary audit, readiness, API stability, replacement acceptance,
+recovery acceptance, and resume acceptance, then returns one
+`AgentCoreValidationReport`. This is the default package-level check a host
+runtime should pass before starting adapter-specific migration tests.
 
 ## Core Capabilities
 
@@ -877,6 +883,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK capability/boundary manifest | MVP implemented |
 | SDK replacement-readiness profile | MVP implemented |
 | SDK public API stability contract | MVP implemented |
+| SDK runtime boundary audit | MVP implemented |
 | SDK replacement acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | SDK resume acceptance harness | MVP implemented |

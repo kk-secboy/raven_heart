@@ -61,6 +61,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreResumeAcceptanceHarness",
         "AgentCoreResumeAcceptanceIssue",
         "AgentCoreResumeAcceptanceReport",
+        "AgentCoreRuntimeBoundaryHit",
+        "AgentCoreRuntimeBoundaryReport",
         "AgentCoreRuntimeBoundary",
         "AgentCoreSDKManifest",
         "AgentCoreValidationIssue",
@@ -286,6 +288,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "agent_core_sdk_manifest",
         "agent_core_replacement_readiness_profile",
         "evaluate_agent_core_api_stability",
+        "evaluate_agent_core_runtime_boundary",
         "evaluate_agent_core_readiness",
         "run_agent_core_acceptance",
         "run_agent_core_recovery_acceptance",
@@ -342,6 +345,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "prompt_context_semantics" in capability_names
     assert "memory_governance" in capability_names
     assert "api_stability_contract" in capability_names
+    assert "runtime_boundary_audit" in capability_names
     assert "trace_replay_eval" in capability_names
     assert "replacement_acceptance_harness" in capability_names
     assert "recovery_acceptance_harness" in capability_names
@@ -398,6 +402,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert manifest["error_count"] == 0
     assert "AgentRunner" in manifest["matched"]["public_api"]
     assert "api_stability_contract" in manifest["matched"]["capabilities"]
+    assert "runtime_boundary_audit" in manifest["matched"]["capabilities"]
     assert "prompt_context_semantics" in manifest["matched"]["capabilities"]
     assert "replacement_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]

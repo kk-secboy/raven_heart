@@ -435,9 +435,12 @@ from agent_core.trace import (
     TraceCorrelationIndex,
 )
 from agent_core.validation import (
+    AgentCoreRuntimeBoundaryHit,
+    AgentCoreRuntimeBoundaryReport,
     AgentCoreValidationIssue,
     AgentCoreValidationReport,
     AgentCoreValidationSuite,
+    evaluate_agent_core_runtime_boundary as _evaluate_agent_core_runtime_boundary,
     run_agent_core_validation as _run_agent_core_validation,
 )
 from agent_core.tools import (
@@ -500,6 +503,8 @@ __all__ = [
     "AgentCoreResumeAcceptanceHarness",
     "AgentCoreResumeAcceptanceIssue",
     "AgentCoreResumeAcceptanceReport",
+    "AgentCoreRuntimeBoundaryHit",
+    "AgentCoreRuntimeBoundaryReport",
     "AgentCoreRuntimeBoundary",
     "AgentCoreSDKManifest",
     "AgentCoreValidationIssue",
@@ -822,6 +827,7 @@ __all__ = [
     "agent_core_api_contract",
     "agent_core_replacement_readiness_profile",
     "evaluate_agent_core_api_stability",
+    "evaluate_agent_core_runtime_boundary",
     "evaluate_agent_core_readiness",
     "structured_output_feedback",
     "storage_backend_manifest",
@@ -926,6 +932,18 @@ def evaluate_agent_core_readiness(
     return _evaluate_agent_core_readiness(
         agent_core_sdk_manifest(package_version=package_version, metadata=metadata),
         profile=profile,
+    )
+
+
+def evaluate_agent_core_runtime_boundary(
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreRuntimeBoundaryReport:
+    """Audit the package root for forbidden runtime dependencies and packages."""
+
+    return _evaluate_agent_core_runtime_boundary(
+        agent_core_sdk_manifest(metadata=metadata),
+        metadata=metadata,
     )
 
 
