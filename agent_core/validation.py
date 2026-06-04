@@ -17,6 +17,7 @@ from agent_core.manifest import (
     evaluate_agent_core_api_stability,
     evaluate_agent_core_readiness,
 )
+from agent_core.provider_acceptance import run_agent_core_provider_acceptance
 from agent_core.recovery import run_agent_core_recovery_acceptance
 from agent_core.resume_acceptance import run_agent_core_resume_acceptance
 
@@ -110,6 +111,7 @@ class AgentCoreValidationReport:
     api_stability: dict[str, Any] = field(default_factory=dict)
     acceptance: dict[str, Any] = field(default_factory=dict)
     context_acceptance: dict[str, Any] = field(default_factory=dict)
+    provider_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
     issues: tuple[AgentCoreValidationIssue, ...] = ()
@@ -136,6 +138,7 @@ class AgentCoreValidationReport:
             "api_stability": dict(self.api_stability),
             "acceptance": dict(self.acceptance),
             "context_acceptance": dict(self.context_acceptance),
+            "provider_acceptance": dict(self.provider_acceptance),
             "recovery": dict(self.recovery),
             "resume": dict(self.resume),
             "metadata": dict(self.metadata),
@@ -173,6 +176,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "context_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        provider_acceptance = (
+            await run_agent_core_provider_acceptance(
+                metadata={"validation_gate": "provider_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         recovery = (
             await run_agent_core_recovery_acceptance(
                 metadata={"validation_gate": "recovery", **dict(self.metadata)}
@@ -189,6 +197,7 @@ class AgentCoreValidationSuite:
             api_stability=api_stability,
             acceptance=acceptance,
             context_acceptance=context_acceptance,
+            provider_acceptance=provider_acceptance,
             recovery=recovery,
             resume=resume,
         )
@@ -200,6 +209,7 @@ class AgentCoreValidationSuite:
             api_stability=api_stability,
             acceptance=acceptance,
             context_acceptance=context_acceptance,
+            provider_acceptance=provider_acceptance,
             recovery=recovery,
             resume=resume,
             issues=issues,
@@ -315,6 +325,7 @@ def _validation_issues(
     api_stability: dict[str, Any],
     acceptance: dict[str, Any],
     context_acceptance: dict[str, Any],
+    provider_acceptance: dict[str, Any],
     recovery: dict[str, Any],
     resume: dict[str, Any],
 ) -> tuple[AgentCoreValidationIssue, ...]:
@@ -324,6 +335,7 @@ def _validation_issues(
     _extend_api_stability_issues(issues, api_stability)
     _extend_report_issues(issues, source="acceptance", report=acceptance)
     _extend_report_issues(issues, source="context_acceptance", report=context_acceptance)
+    _extend_report_issues(issues, source="provider_acceptance", report=provider_acceptance)
     _extend_report_issues(issues, source="recovery", report=recovery)
     _extend_report_issues(issues, source="resume", report=resume)
     return tuple(issues)
@@ -388,6 +400,15 @@ def _extend_report_issues(
                 metadata=dict(issue.get("metadata") or {}),
             )
         )
+    if not any(issue.source == source for issue in issues):
+        issues.append(
+            AgentCoreValidationIssue(
+                source=source,
+                code=f"{source}_not_ready",
+                message=f"{source} gate is not ready.",
+                metadata={"status": report.get("status")},
+            )
+        )
 
 
 def _import_names(tree: ast.AST) -> tuple[tuple[str, int], ...]:
@@ -410,15 +431,6 @@ def _relative_path(path: Path, root: Path) -> str:
         return path.relative_to(root).as_posix()
     except ValueError:
         return path.as_posix()
-    if not any(issue.source == source for issue in issues):
-        issues.append(
-            AgentCoreValidationIssue(
-                source=source,
-                code=f"{source}_not_ready",
-                message=f"{source} gate is not ready.",
-                metadata={"status": report.get("status")},
-            )
-        )
 
 
 def _extend_api_stability_issues(

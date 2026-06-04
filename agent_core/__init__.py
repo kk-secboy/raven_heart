@@ -98,6 +98,12 @@ from agent_core.context_acceptance import (
     AgentCoreContextAcceptanceReport,
     run_agent_core_context_acceptance,
 )
+from agent_core.provider_acceptance import (
+    AgentCoreProviderAcceptanceHarness,
+    AgentCoreProviderAcceptanceIssue,
+    AgentCoreProviderAcceptanceReport,
+    run_agent_core_provider_acceptance,
+)
 from agent_core.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingCallRecord,
@@ -503,6 +509,9 @@ __all__ = [
     "AgentCoreContextAcceptanceHarness",
     "AgentCoreContextAcceptanceIssue",
     "AgentCoreContextAcceptanceReport",
+    "AgentCoreProviderAcceptanceHarness",
+    "AgentCoreProviderAcceptanceIssue",
+    "AgentCoreProviderAcceptanceReport",
     "AgentCoreReadinessIssue",
     "AgentCoreReadinessProfile",
     "AgentCoreReadinessReport",
@@ -888,6 +897,7 @@ __all__ = [
     "agent_core_sdk_manifest",
     "run_agent_core_acceptance",
     "run_agent_core_context_acceptance",
+    "run_agent_core_provider_acceptance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
     "run_agent_core_validation",

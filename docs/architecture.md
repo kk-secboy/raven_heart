@@ -76,6 +76,13 @@ budgeting, and trace eval. It proves the Yaklang-inspired context pipeline is a
 portable SDK behavior; runtime-specific stores, rankers, embeddings, domain
 prompts, and product policies remain outside core.
 
+`AgentCoreProviderAcceptanceHarness` is the provider-compatibility gate. It runs
+a deterministic matrix for text, multimodal, structured-output, native-tool,
+OpenAI-compatible codec, transport fallback, and streaming routes. It proves the
+SDK can choose providers by capability and preserve portable call manifests
+without embedding concrete HTTP clients, credentials, rate limits, or
+vendor-specific adapters in core.
+
 `AgentCoreRecoveryHarness` adds the recovery gate. It runs provider fallback and
 tool retry scenarios with deterministic failures, then returns an
 `AgentCoreRecoveryReport` containing retry counts, fallback use, attempt
@@ -94,10 +101,10 @@ selection, UI recovery flows, and product workflow state.
 
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, recovery acceptance, and resume acceptance, then returns one
-`AgentCoreValidationReport` with all subreports and blocking issues. This is the
-SDK-level check a runtime should pass before adapter implementation or
-product-specific migration tests begin.
+acceptance, provider acceptance, recovery acceptance, and resume acceptance,
+then returns one `AgentCoreValidationReport` with all subreports and blocking
+issues. This is the SDK-level check a runtime should pass before adapter
+implementation or product-specific migration tests begin.
 
 ## Boundary Table
 

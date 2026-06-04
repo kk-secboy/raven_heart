@@ -146,6 +146,13 @@ prompt budgets, semantic prompt trimming, provider-aware prompt budget, and
 trace eval. The report proves the portable context pipeline works before a
 runtime adds product-specific stores, ranking models, or domain prompt content.
 
+`agent_core.run_agent_core_provider_acceptance()` runs a deterministic provider
+compatibility matrix. It checks provider routing for text, multimodal,
+structured-output, and native-tool requests; OpenAI-compatible codec
+encode/decode; transport-backed provider fallback; streaming route selection;
+and prompt-safe call manifests. Concrete HTTP clients, credentials, rate limits,
+and vendor-specific adapters remain outside the SDK.
+
 `agent_core.run_agent_core_recovery_acceptance()` runs deterministic recovery
 checks for provider fallback and tool retry. The report proves that retryable
 provider failures are classified, retried, and recovered through fallback, and
@@ -162,9 +169,9 @@ flows remain outside the SDK.
 
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, recovery acceptance, and resume acceptance, then returns one
-`AgentCoreValidationReport`. This is the default package-level check a host
-runtime should pass before starting adapter-specific migration tests.
+acceptance, provider acceptance, recovery acceptance, and resume acceptance, then
+returns one `AgentCoreValidationReport`. This is the default package-level check
+a host runtime should pass before starting adapter-specific migration tests.
 
 ## Core Capabilities
 
@@ -893,6 +900,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK runtime boundary audit | MVP implemented |
 | SDK replacement acceptance harness | MVP implemented |
 | SDK context acceptance harness | MVP implemented |
+| SDK provider acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | SDK resume acceptance harness | MVP implemented |
 | SDK aggregate validation suite | MVP implemented |
