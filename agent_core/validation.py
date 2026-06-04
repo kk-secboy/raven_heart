@@ -13,6 +13,7 @@ from agent_core.context_acceptance import run_agent_core_context_acceptance
 from agent_core.coordination_acceptance import run_agent_core_coordination_acceptance
 from agent_core.durable_session_acceptance import run_agent_core_durable_session_acceptance
 from agent_core.event_acceptance import run_agent_core_event_acceptance
+from agent_core.eval_suite import run_agent_core_eval_suite_acceptance
 from agent_core.external_backend_acceptance import (
     run_agent_core_external_backend_acceptance,
 )
@@ -140,6 +141,7 @@ class AgentCoreValidationReport:
     packaging_acceptance: dict[str, Any] = field(default_factory=dict)
     provider_acceptance: dict[str, Any] = field(default_factory=dict)
     provider_conformance: dict[str, Any] = field(default_factory=dict)
+    eval_suite_acceptance: dict[str, Any] = field(default_factory=dict)
     storage_acceptance: dict[str, Any] = field(default_factory=dict)
     task_profile_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
@@ -181,6 +183,7 @@ class AgentCoreValidationReport:
             "packaging_acceptance": dict(self.packaging_acceptance),
             "provider_acceptance": dict(self.provider_acceptance),
             "provider_conformance": dict(self.provider_conformance),
+            "eval_suite_acceptance": dict(self.eval_suite_acceptance),
             "storage_acceptance": dict(self.storage_acceptance),
             "task_profile_acceptance": dict(self.task_profile_acceptance),
             "recovery": dict(self.recovery),
@@ -282,6 +285,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "provider_conformance", **dict(self.metadata)}
             )
         ).manifest()
+        eval_suite_acceptance = (
+            await run_agent_core_eval_suite_acceptance(
+                metadata={"validation_gate": "eval_suite_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         packaging_acceptance = (
             await run_agent_core_packaging_acceptance(
                 metadata={"validation_gate": "packaging_acceptance", **dict(self.metadata)}
@@ -326,6 +334,7 @@ class AgentCoreValidationSuite:
             packaging_acceptance=packaging_acceptance,
             provider_acceptance=provider_acceptance,
             provider_conformance=provider_conformance,
+            eval_suite_acceptance=eval_suite_acceptance,
             storage_acceptance=storage_acceptance,
             task_profile_acceptance=task_profile_acceptance,
             recovery=recovery,
@@ -352,6 +361,7 @@ class AgentCoreValidationSuite:
             packaging_acceptance=packaging_acceptance,
             provider_acceptance=provider_acceptance,
             provider_conformance=provider_conformance,
+            eval_suite_acceptance=eval_suite_acceptance,
             storage_acceptance=storage_acceptance,
             task_profile_acceptance=task_profile_acceptance,
             recovery=recovery,
@@ -482,6 +492,7 @@ def _validation_issues(
     packaging_acceptance: dict[str, Any],
     provider_acceptance: dict[str, Any],
     provider_conformance: dict[str, Any],
+    eval_suite_acceptance: dict[str, Any],
     storage_acceptance: dict[str, Any],
     task_profile_acceptance: dict[str, Any],
     recovery: dict[str, Any],
@@ -542,6 +553,11 @@ def _validation_issues(
     )
     _extend_report_issues(issues, source="provider_acceptance", report=provider_acceptance)
     _extend_report_issues(issues, source="provider_conformance", report=provider_conformance)
+    _extend_report_issues(
+        issues,
+        source="eval_suite_acceptance",
+        report=eval_suite_acceptance,
+    )
     _extend_report_issues(issues, source="storage_acceptance", report=storage_acceptance)
     _extend_report_issues(
         issues,

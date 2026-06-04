@@ -67,6 +67,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreDurableSessionAcceptanceHarness",
         "AgentCoreDurableSessionAcceptanceIssue",
         "AgentCoreDurableSessionAcceptanceReport",
+        "AgentCoreEvalSuiteAcceptanceHarness",
+        "AgentCoreEvalSuiteAcceptanceReport",
         "AgentCoreEventAcceptanceHarness",
         "AgentCoreEventAcceptanceIssue",
         "AgentCoreEventAcceptanceReport",
@@ -346,6 +348,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_context_acceptance",
         "run_agent_core_coordination_acceptance",
         "run_agent_core_durable_session_acceptance",
+        "run_agent_core_eval_suite_acceptance",
         "run_agent_core_event_acceptance",
         "run_agent_core_external_backend_acceptance",
         "run_agent_core_guardrail_acceptance",
@@ -365,10 +368,16 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "ToolReplayStorePort",
         "TraceCorrelationEntry",
         "TraceCorrelationIndex",
+        "TraceEvalCase",
+        "TraceEvalCaseReport",
         "TraceEvalHarness",
         "TraceEvalIssue",
         "TraceEvalReport",
         "TraceEvalSpec",
+        "TraceEvalSuite",
+        "TraceEvalSuiteIssue",
+        "TraceEvalSuiteReport",
+        "TraceEvalSuiteRunner",
         "TraceEvaluatorPort",
         "TraceReplayComparator",
         "TraceReplayDiffIssue",
@@ -428,6 +437,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "packaging_acceptance_harness" in capability_names
     assert "provider_acceptance_harness" in capability_names
     assert "provider_conformance_harness" in capability_names
+    assert "eval_suite_runner" in capability_names
     assert "storage_acceptance_harness" in capability_names
     assert "task_profile_acceptance_harness" in capability_names
     assert "recovery_acceptance_harness" in capability_names
@@ -501,6 +511,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "packaging_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_conformance_harness" in manifest["matched"]["capabilities"]
+    assert "eval_suite_runner" in manifest["matched"]["capabilities"]
     assert "storage_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "task_profile_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]

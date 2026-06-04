@@ -153,6 +153,14 @@ when API keys are available. The SDK owns the conformance contract, while HTTP
 clients, credentials, deployment routing, and rate-limit policy remain outside
 core.
 
+`TraceEvalSuiteRunner` is the generic regression-suite gate. It evaluates
+multiple `TraceEvalCase` objects, where each case binds one run ID to its own
+`TraceEvalSpec`, tags, and metadata, then returns one aggregate
+`TraceEvalSuiteReport`. Missing traces are reported as blocked suite cases
+instead of surfacing as host-runtime exceptions. The SDK owns the suite
+execution and report shape; runtimes own domain datasets, dashboards, baseline
+selection, and scoring policy.
+
 `AgentCoreStorageAcceptanceHarness` is the storage-portability gate. It verifies
 SDK built-in in-memory, SQLite, Markdown, and none backend manifests across
 store roles; SQLite and Markdown memory/context roundtrips; backend extraction
@@ -233,7 +241,7 @@ product-specific migration tests begin.
 | Memory governance contracts | Product retention policy, tenant rules, operator workflows |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
 | Run trace bundle | Durable trace export, observability pipeline, retention |
-| Trace replay/eval harness | Domain eval suites, dashboards, regression policy |
+| Trace replay/eval harness and generic eval suite runner | Domain datasets, dashboards, regression policy |
 | Manager run state and `AgentRunStorePort` | Product workflow DB, scheduling, distributed workers |
 | Multi-agent handoff protocol | Product queues, distributed workers, business orchestration |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
@@ -369,9 +377,10 @@ in-memory, SQLite, and Markdown stores support status, run-id, metadata, limit,
 and reverse-order filters through one contract; production PG/object-storage
 trace indexes can implement the same port without changing replay/eval code.
 
-`TraceReplayHarness`, `TraceReplayComparator`, and `TraceEvalHarness` turn run
-trace manifests into deterministic replay steps, baseline diff reports, and
-provider-neutral evaluation reports. Replay steps include resume selection,
+`TraceReplayHarness`, `TraceReplayComparator`, `TraceEvalHarness`, and
+`TraceEvalSuiteRunner` turn run trace manifests into deterministic replay steps,
+baseline diff reports, provider-neutral evaluation reports, and multi-case
+regression reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
 request-shape payloads, provider streaming calls using prompt-safe summaries,
 prompt budget, prompt bucket budget, semantic prompt trim, global prompt trim,

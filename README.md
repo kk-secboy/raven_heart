@@ -37,7 +37,7 @@ ops agents, research agents, and future automation systems.
 - Journal replay manifests and snapshot consistency audit.
 - Run trace bundle for provider/tool/approval/journal/event audit aggregation.
 - Run trace store port plus in-memory, SQLite, and Markdown trace stores.
-- Trace replay and evaluation harness for provider-neutral run and embedding audits.
+- Trace replay, evaluation harness, and multi-case eval suites for provider-neutral regression gates.
 - Manager run state store port plus in-memory, SQLite, and Markdown stores.
 - Sequenced event stream plus in-memory, SQLite, and Markdown event logs.
 - Planner protocol plus in-memory, SQLite, and Markdown plan state stores.
@@ -75,7 +75,7 @@ Those can be built later in RavenStorm or separate adapter repositories. Keeping
 | Skill registry | Skill distribution UX |
 | MCP center interfaces | MCP server deployment and secrets |
 | Memory and journal ports | Graphiti, RAG, durable product stores |
-| Trace replay/eval harness | Product-specific eval suites and dashboards |
+| Trace replay/eval harness and generic eval suite runner | Product datasets, dashboards, and domain scoring policy |
 | Manager run state store | Product workflow DB, scheduling, cross-process workers |
 | Planner protocol and plan state | Domain-specific planning strategy and product workflow |
 | Multi-agent handoff protocol | Product queues, distributed workers, business orchestration |
@@ -230,6 +230,13 @@ real provider adapter when credentials are available and check text completion,
 streaming, JSON mode, and native tool-call behavior through the same report
 shape. HTTP clients, API keys, deployment routing, and rate-limit handling stay
 outside `agent_core`.
+
+`agent_core.run_agent_core_eval_suite_acceptance()` runs deterministic multi-case
+trace eval suite checks. It proves `TraceEvalSuiteRunner` can bind different
+`TraceEvalCase` objects to different run IDs and `TraceEvalSpec` contracts,
+aggregate pass/fail status, and report missing traces as blocked cases instead
+of raising host-runtime errors. Domain datasets, regression dashboards, and
+business-specific scoring stay outside `agent_core`.
 
 `agent_core.run_agent_core_storage_acceptance()` runs deterministic storage
 backend portability checks. It verifies built-in in-memory/SQLite/Markdown/none
@@ -516,11 +523,13 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
+- `TraceEvalCase`, `TraceEvalSuite`, and `TraceEvalSuiteRunner` group multiple
+  run IDs and per-case specs into one provider-neutral regression report.
 
 The SDK owns trace replay shape, deterministic trace diffs, and generic
-run-level evaluation mechanics. Runtimes own domain-specific eval suites,
-baseline selection, product dashboards, scoring policy, and regression data
-retention.
+run-level evaluation mechanics. The SDK also owns the generic multi-case suite
+runner. Runtimes own domain-specific datasets, eval suites, baseline selection,
+product dashboards, scoring policy, and regression data retention.
 
 ### Human-In-Loop Approvals
 
@@ -1021,6 +1030,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK context acceptance harness | MVP implemented |
 | SDK provider acceptance harness | MVP implemented |
 | SDK provider conformance harness | MVP implemented |
+| SDK eval suite runner | MVP implemented |
 | SDK task profile acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | SDK durable session acceptance harness | MVP implemented |
