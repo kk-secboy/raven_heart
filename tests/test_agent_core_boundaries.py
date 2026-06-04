@@ -212,6 +212,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "StorageBackendSelection",
         "StorageBackendSpec",
         "StorageBackendTrace",
+        "storage_backend_catalog_from_components",
+        "storage_backend_manifests_from_components",
         "RuleBasedPolicy",
         "RuleBasedMemoryGovernance",
         "PersistentToolReplay",

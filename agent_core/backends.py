@@ -293,6 +293,51 @@ class StorageBackendCatalog:
         }
 
 
+def storage_backend_manifests_from_components(
+    *components: dict[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """Extract storage backend manifests from arbitrary SDK component manifests."""
+
+    found: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+
+    def add(manifest: dict[str, Any]) -> None:
+        key = (
+            str(manifest.get("role") or ""),
+            str(manifest.get("kind") or ""),
+            str(manifest.get("name") or ""),
+            str(manifest.get("namespace") or ""),
+            str(manifest.get("location") or ""),
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        found.append(dict(manifest))
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("schema_version") == "agent-core-storage-backend/v1":
+                add(value)
+                return
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                walk(item)
+
+    for component in components:
+        walk(component)
+    return tuple(found)
+
+
+def storage_backend_catalog_from_components(
+    *components: dict[str, Any],
+) -> StorageBackendCatalog:
+    """Build a backend catalog from component manifests without adapter imports."""
+
+    return StorageBackendCatalog(storage_backend_manifests_from_components(*components))
+
+
 def storage_backend_manifest(
     *,
     role: StorageBackendRole,

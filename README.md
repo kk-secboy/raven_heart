@@ -580,6 +580,11 @@ For multi-role startup checks, `StorageBackendCatalog.preflight()` returns a
 material, run traces, events, and artifacts. Trace replay/eval can require that
 report, assert it is ready, verify covered roles, cap blocking selections, and
 forbid rejection reasons such as missing capabilities.
+`storage_backend_manifests_from_components()` and
+`storage_backend_catalog_from_components()` can build the catalog directly from
+component manifests such as `MemoryCenter`, `ContextMaterialCenter`, and trace
+bundles. This lets runtimes publish PG/vector/graph stores through normal SDK
+manifests and still preflight them without importing adapter code.
 
 ### Planner
 

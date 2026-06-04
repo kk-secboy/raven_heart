@@ -98,6 +98,11 @@ For full startup checks, `StorageBackendCatalog.preflight()` returns a
 selected roles/kinds, missing roles, blocking reasons, and every per-role
 selection so Raven, code agents, or ops agents can prove their PG/vector/graph
 or SQLite/Markdown choices are ready before a run starts.
+`storage_backend_manifests_from_components()` extracts backend manifests from
+component manifests such as memory centers, context material centers, session
+manifests, or trace bundles. `storage_backend_catalog_from_components()` then
+turns those into a catalog, so runtime-owned external stores can participate in
+preflight through normal SDK manifests instead of adapter imports.
 
 `AgentJournalReplay` turns a journal snapshot into a replayable event manifest
 and reports consistency issues before a runtime depends on that state for UI,

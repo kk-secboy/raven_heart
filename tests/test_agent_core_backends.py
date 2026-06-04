@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import agent_core
 from agent_core import (
+    ContextMaterialCenter,
+    ExternalContextMaterialStore,
+    ExternalMemoryStore,
     InMemoryAgentRunStore,
     InMemoryApprovalStore,
     InMemoryArtifactStore,
@@ -24,6 +27,7 @@ from agent_core import (
     MarkdownPolicyDecisionStore,
     MarkdownRunTraceStore,
     MarkdownToolReplayStore,
+    MemoryCenter,
     NullApprovalStore,
     NullPolicyDecisionStore,
     NullRunTraceStore,
@@ -42,6 +46,8 @@ from agent_core import (
     StorageBackendPreflightReport,
     StorageBackendRequirement,
     StorageBackendSpec,
+    storage_backend_catalog_from_components,
+    storage_backend_manifests_from_components,
     storage_backend_manifest,
 )
 
@@ -285,9 +291,71 @@ def test_storage_backend_catalog_preflights_multi_role_runtime_backends() -> Non
     assert manifest["metadata"]["tenant"] == "tenant-a"
 
 
+def test_storage_backend_catalog_builds_from_external_store_component_manifests() -> None:
+    memory = ExternalMemoryStore(
+        InMemoryMemoryStore(),
+        name="tenant-memory",
+        backend_kind="postgres",
+        namespaces=("tenant-a",),
+        supports_vector=True,
+        supports_graph=True,
+        location="postgres://runtime-owned",
+    )
+    memory_center = MemoryCenter(default_store="tenant-memory")
+    memory_center.register_spec(memory.spec, memory)
+    context = ExternalContextMaterialStore(
+        InMemoryContextMaterialStore(),
+        name="tenant-context",
+        backend_kind="vector",
+        namespace="tenant-a",
+        supports_vector=True,
+        location="vector://runtime-owned",
+    )
+    context_center = ContextMaterialCenter(default_store="tenant-context")
+    context_center.register_spec(context.spec, context)
+
+    manifests = storage_backend_manifests_from_components(
+        memory_center.manifest(),
+        context_center.manifest(),
+    )
+    catalog = storage_backend_catalog_from_components(
+        memory_center.manifest(),
+        context_center.manifest(),
+    )
+    preflight = catalog.preflight(
+        (
+            StorageBackendRequirement(
+                role="memory",
+                allowed_kinds=("postgres", "vector"),
+                required_capabilities=("semantic", "vector", "graph"),
+                namespace="tenant-a",
+            ),
+            StorageBackendRequirement(
+                role="context_material",
+                allowed_kinds=("vector", "graph"),
+                required_capabilities=("semantic", "vector"),
+                namespace="tenant-a",
+            ),
+        )
+    ).manifest()
+
+    assert [manifest["role"] for manifest in manifests] == ["memory", "context_material"]
+    assert [manifest["kind"] for manifest in manifests] == ["postgres", "vector"]
+    assert catalog.manifest()["external_backend_count"] == 2
+    assert preflight["ready"] is True
+    assert preflight["selected_roles"] == ["memory", "context_material"]
+    assert preflight["selected_kinds"] == ["postgres", "vector"]
+    assert preflight["blocking_count"] == 0
+
+
 def test_agent_core_package_exports_storage_backend_contracts() -> None:
     assert agent_core.StorageBackendSpec is StorageBackendSpec
     assert agent_core.StorageBackendCatalog is StorageBackendCatalog
     assert agent_core.StorageBackendPreflightReport is StorageBackendPreflightReport
+    assert agent_core.storage_backend_catalog_from_components is storage_backend_catalog_from_components
+    assert (
+        agent_core.storage_backend_manifests_from_components
+        is storage_backend_manifests_from_components
+    )
     assert agent_core.storage_backend_manifest is storage_backend_manifest
     assert "StorageBackendKind" in agent_core.__all__

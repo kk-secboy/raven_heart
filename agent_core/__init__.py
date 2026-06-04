@@ -44,6 +44,8 @@ from agent_core.backends import (
     StorageBackendRole,
     StorageBackendSelection,
     StorageBackendSpec,
+    storage_backend_catalog_from_components,
+    storage_backend_manifests_from_components,
     storage_backend_manifest,
 )
 from agent_core.capabilities import (
@@ -677,6 +679,8 @@ __all__ = [
     "StorageBackendRole",
     "StorageBackendSelection",
     "StorageBackendSpec",
+    "storage_backend_catalog_from_components",
+    "storage_backend_manifests_from_components",
     "StorageBackendTrace",
     "StructuredOutputTrace",
     "agent_tool_spec_from_session",
