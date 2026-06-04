@@ -461,6 +461,9 @@ calling any concrete model client.
 - Server state refresh.
 - `refresh_inventory()` refreshes MCP tools, resources, and prompts in one
   auditable pass and returns per-server prompt-safe inventory manifests.
+- `MCPContextMaterialRequest` and `MCPCenter.context_materials()` turn MCP
+  resources/prompts into selector-ready `ContextMaterial` without making MCP a
+  product-specific runtime adapter.
 - `MCPCenterTrace` and trace eval contracts for required servers, refreshed
   servers, forbidden statuses, failed-server limits, and partial-refresh limits.
 - SDK-free stdio JSON-RPC connector.
@@ -727,6 +730,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Tool replay store | MVP implemented |
 | Skill center | MVP implemented |
 | MCP center | MVP implemented |
+| MCP context material export | MVP implemented |
 | Capability discovery | MVP implemented |
 | SQLite/Markdown memory | MVP implemented |
 | Memory backend routing/specs | MVP implemented |

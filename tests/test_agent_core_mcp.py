@@ -8,6 +8,7 @@ from agent_core.actions import ActionRegistry
 from agent_core.harness import AgentHarness
 from agent_core.mcp import (
     MCPCenter,
+    MCPContextMaterialRequest,
     MCPPromptContent,
     MCPPromptSpec,
     MCPResourceContent,
@@ -276,6 +277,42 @@ async def test_mcp_center_refreshes_searches_manifests_and_gets_prompts() -> Non
     assert search[0].name == "summarize"
     assert content.render() == "[user]\nsummarize service"
     assert manifest["prompts"][0]["prompt_id"] == "prompts:summarize"
+
+
+@pytest.mark.asyncio
+async def test_mcp_center_exports_resources_and_prompts_as_context_materials() -> None:
+    center = MCPCenter()
+    center.register_server(MCPServerSpec(name="fs", transport="stdio"))
+    center.register_connector("stdio", FakeMCPConnector())
+    await center.refresh_inventory()
+
+    result = await center.context_materials(
+        MCPContextMaterialRequest(
+            query="readme summarize",
+            prompt_arguments={"fs:summarize": {"target": "service"}},
+            max_resource_bytes=12,
+            role="mcp",
+            priority=3,
+            metadata={"request_id": "m1"},
+        )
+    )
+    manifest = result.manifest()
+
+    assert [material.name for material in result.materials] == [
+        "mcp_resource:file://README.md",
+        "mcp_prompt:fs:summarize",
+    ]
+    assert result.materials[0].role == "mcp"
+    assert result.materials[0].priority == 3
+    assert result.materials[0].metadata["kind"] == "resource"
+    assert result.materials[0].metadata["request_id"] == "m1"
+    assert len(result.materials[0].content.encode("utf-8")) <= 12
+    assert result.materials[1].content == "[user]\nsummarize service"
+    assert manifest["schema_version"] == "agent-core-mcp-context-material-result/v1"
+    assert manifest["material_count"] == 2
+    assert manifest["records"][0]["status"] == "included"
+    assert manifest["records"][0]["sha256"]
+    assert "fs:file://README.md" not in str(manifest)
 
 
 @pytest.mark.asyncio

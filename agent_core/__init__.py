@@ -174,6 +174,9 @@ from agent_core.memory import (
 )
 from agent_core.mcp import (
     MCPCenter,
+    MCPContextMaterialRecord,
+    MCPContextMaterialRequest,
+    MCPContextMaterialResult,
     MCPConnectorPort,
     MCPInventoryRefreshResult,
     MCPPromptContent,
@@ -530,6 +533,9 @@ __all__ = [
     "LoopGuardConfig",
     "LoopGuardDecision",
     "MCPCenter",
+    "MCPContextMaterialRecord",
+    "MCPContextMaterialRequest",
+    "MCPContextMaterialResult",
     "MCPConnectorPort",
     "MCPInventoryRefreshResult",
     "MCPPromptContent",

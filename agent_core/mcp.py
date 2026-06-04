@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from agent_core.search import SearchDocument, rank_documents
 from agent_core.tools import ToolInvocation, ToolResult, ToolRuntimePort, ToolSpec
+
+if TYPE_CHECKING:
+    from agent_core.context import ContextMaterial
 
 
 @dataclass(frozen=True)
@@ -225,6 +229,83 @@ class MCPPromptContent:
             "description": self.description,
             "message_count": len(self.messages),
             "metadata": self.metadata,
+        }
+
+
+@dataclass(frozen=True)
+class MCPContextMaterialRequest:
+    """Select MCP resources/prompts as candidate context material."""
+
+    query: str = ""
+    resource_uris: tuple[str, ...] = ()
+    prompt_ids: tuple[str, ...] = ()
+    prompt_arguments: dict[str, dict[str, Any]] = field(default_factory=dict)
+    include_resources: bool = True
+    include_prompts: bool = True
+    limit: int = 8
+    max_resource_bytes: int = 8192
+    max_prompt_bytes: int = 4096
+    role: str = "mcp"
+    priority: int = 1
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-mcp-context-material-request/v1",
+            "query_bytes": len(self.query.encode("utf-8")),
+            "resource_uris": list(self.resource_uris),
+            "prompt_ids": list(self.prompt_ids),
+            "prompt_argument_ids": sorted(str(key) for key in self.prompt_arguments),
+            "include_resources": self.include_resources,
+            "include_prompts": self.include_prompts,
+            "limit": self.limit,
+            "max_resource_bytes": self.max_resource_bytes,
+            "max_prompt_bytes": self.max_prompt_bytes,
+            "role": self.role,
+            "priority": self.priority,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class MCPContextMaterialRecord:
+    kind: str
+    name: str
+    server_name: str
+    status: str
+    content_bytes: int = 0
+    sha256: str = ""
+    error: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "name": self.name,
+            "server_name": self.server_name,
+            "status": self.status,
+            "content_bytes": self.content_bytes,
+            "sha256": self.sha256,
+            "error": self.error,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class MCPContextMaterialResult:
+    request: MCPContextMaterialRequest
+    materials: tuple["ContextMaterial", ...] = ()
+    records: tuple[MCPContextMaterialRecord, ...] = ()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-mcp-context-material-result/v1",
+            "material_count": len(self.materials),
+            "record_count": len(self.records),
+            "failed_count": sum(1 for record in self.records if record.status == "failed"),
+            "request": self.request.manifest(),
+            "materials": [material.manifest() for material in self.materials],
+            "records": [record.manifest() for record in self.records],
         }
 
 
@@ -606,6 +687,127 @@ class MCPCenter(ToolRuntimePort):
             return content
         raise TypeError("get_prompt must return MCPPromptContent")
 
+    async def context_materials(
+        self,
+        request: MCPContextMaterialRequest | None = None,
+    ) -> MCPContextMaterialResult:
+        """Read MCP resources/prompts into selector-ready context materials."""
+
+        request = request or MCPContextMaterialRequest()
+        from agent_core.context import ContextMaterial
+
+        materials: list[ContextMaterial] = []
+        records: list[MCPContextMaterialRecord] = []
+
+        if request.include_resources:
+            for resource in self._select_resource_material_specs(request):
+                try:
+                    content = await self.read_resource(resource.uri)
+                    text = content.text or (
+                        content.blob.decode("utf-8", errors="ignore") if content.blob else ""
+                    )
+                    text = _trim_text_to_bytes(text, request.max_resource_bytes)
+                    material = ContextMaterial(
+                        name=f"mcp_resource:{resource.uri}",
+                        content=text,
+                        role=request.role,
+                        priority=request.priority,
+                        metadata={
+                            "kind": "resource",
+                            "server_name": resource.server_name,
+                            "uri": resource.uri,
+                            "name": resource.name,
+                            "mime_type": content.mime_type or resource.mime_type,
+                            "tags": list(resource.tags),
+                            **dict(request.metadata),
+                        },
+                    )
+                    materials.append(material)
+                    records.append(_mcp_material_record("resource", material.name, resource.server_name, text))
+                except Exception as exc:
+                    records.append(
+                        MCPContextMaterialRecord(
+                            kind="resource",
+                            name=resource.uri,
+                            server_name=resource.server_name,
+                            status="failed",
+                            error=str(exc),
+                        )
+                    )
+
+        if request.include_prompts:
+            for prompt in self._select_prompt_material_specs(request):
+                prompt_id = prompt.prompt_id()
+                try:
+                    content = await self.get_prompt(prompt_id, request.prompt_arguments.get(prompt_id, {}))
+                    text = _trim_text_to_bytes(content.render(), request.max_prompt_bytes)
+                    material = ContextMaterial(
+                        name=f"mcp_prompt:{prompt_id}",
+                        content=text,
+                        role=request.role,
+                        priority=request.priority,
+                        metadata={
+                            "kind": "prompt",
+                            "server_name": prompt.server_name,
+                            "prompt_id": prompt_id,
+                            "name": prompt.name,
+                            "tags": list(prompt.tags),
+                            **dict(request.metadata),
+                        },
+                    )
+                    materials.append(material)
+                    records.append(_mcp_material_record("prompt", material.name, prompt.server_name, text))
+                except Exception as exc:
+                    records.append(
+                        MCPContextMaterialRecord(
+                            kind="prompt",
+                            name=prompt_id,
+                            server_name=prompt.server_name,
+                            status="failed",
+                            error=str(exc),
+                        )
+                    )
+
+        return MCPContextMaterialResult(
+            request=request,
+            materials=tuple(materials),
+            records=tuple(records),
+        )
+
+    def _select_resource_material_specs(
+        self,
+        request: MCPContextMaterialRequest,
+    ) -> tuple[MCPResourceSpec, ...]:
+        if request.resource_uris:
+            selected = []
+            for uri in request.resource_uris:
+                resource = self._resources.get(uri)
+                if resource is not None:
+                    selected.append(resource)
+            return tuple(selected)
+        if request.query:
+            return self.search_resources(request.query, limit=request.limit)
+        return self.resources()[: max(0, request.limit)]
+
+    def _select_prompt_material_specs(
+        self,
+        request: MCPContextMaterialRequest,
+    ) -> tuple[MCPPromptSpec, ...]:
+        if request.prompt_ids:
+            selected = []
+            for prompt_id in request.prompt_ids:
+                prompt = self._prompts.get(prompt_id)
+                if prompt is None:
+                    matches = [item for item in self._prompts.values() if item.name == prompt_id]
+                    if len(matches) == 1:
+                        prompt = matches[0]
+                if prompt is not None:
+                    selected.append(prompt)
+            return tuple(selected)
+        if request.query:
+            return self.search_prompts(request.query, limit=request.limit)
+        return self.prompts()[: max(0, request.limit)]
+
     def specs(self) -> tuple[ToolSpec, ...]:
         specs: list[ToolSpec] = []
         for tool in self._tools.values():
@@ -845,4 +1047,40 @@ class MCPCenter(ToolRuntimePort):
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _mcp_material_record(
+    kind: str,
+    name: str,
+    server_name: str,
+    content: str,
+) -> MCPContextMaterialRecord:
+    raw = content.encode("utf-8")
+    return MCPContextMaterialRecord(
+        kind=kind,
+        name=name,
+        server_name=server_name,
+        status="included",
+        content_bytes=len(raw),
+        sha256=hashlib.sha256(raw).hexdigest() if raw else "",
+    )
+
+
+def _trim_text_to_bytes(text: str, max_bytes: int) -> str:
+    limit = max(0, int(max_bytes))
+    raw = text.encode("utf-8")
+    if len(raw) <= limit:
+        return text
+    if limit <= 0:
+        return ""
+    marker = "\n[...mcp material trimmed...]\n"
+    marker_bytes = marker.encode("utf-8")
+    if limit <= len(marker_bytes):
+        return raw[:limit].decode("utf-8", errors="ignore")
+    keep = limit - len(marker_bytes)
+    head_bytes = max(1, keep // 2)
+    tail_bytes = max(0, keep - head_bytes)
+    head = raw[:head_bytes].decode("utf-8", errors="ignore")
+    tail = raw[-tail_bytes:].decode("utf-8", errors="ignore") if tail_bytes else ""
+    return f"{head}{marker}{tail}".strip()
 
