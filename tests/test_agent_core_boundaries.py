@@ -49,6 +49,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreAcceptanceHarness",
         "AgentCoreAcceptanceIssue",
         "AgentCoreAcceptanceReport",
+        "AgentCoreAPIContract",
+        "AgentCoreAPIStabilityReport",
         "AgentCoreCapability",
         "AgentCoreReadinessIssue",
         "AgentCoreReadinessProfile",
@@ -274,8 +276,10 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "StaticRunPreflightCheck",
         "default_agent_run_preflight_center",
         "default_agent_core_capabilities",
+        "agent_core_api_contract",
         "agent_core_sdk_manifest",
         "agent_core_replacement_readiness_profile",
+        "evaluate_agent_core_api_stability",
         "evaluate_agent_core_readiness",
         "run_agent_core_acceptance",
         "run_agent_core_recovery_acceptance",
@@ -321,12 +325,15 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert manifest["schema_version"] == "agent-core-sdk-manifest/v1"
     assert manifest["package"] == "raven-heart"
     assert manifest["public_api_count"] == len(set(agent_core.__all__))
+    assert manifest["api_contract"]["schema_version"] == "agent-core-api-contract/v1"
+    assert "AgentRunner" in manifest["api_contract"]["stable_api"]
     assert "AgentRunner" in manifest["public_api"]
     assert "harness_lifecycle" in capability_names
     assert "react_loop" in capability_names
     assert "llm_provider_center" in capability_names
     assert "prompt_context_semantics" in capability_names
     assert "memory_governance" in capability_names
+    assert "api_stability_contract" in capability_names
     assert "trace_replay_eval" in capability_names
     assert "replacement_acceptance_harness" in capability_names
     assert "recovery_acceptance_harness" in capability_names
@@ -380,6 +387,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert manifest["ready"] is True
     assert manifest["error_count"] == 0
     assert "AgentRunner" in manifest["matched"]["public_api"]
+    assert "api_stability_contract" in manifest["matched"]["capabilities"]
     assert "prompt_context_semantics" in manifest["matched"]["capabilities"]
     assert "replacement_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]
@@ -409,6 +417,42 @@ def test_agent_core_readiness_report_blocks_missing_required_contracts() -> None
     assert "required_capability_missing" in issue_codes
     assert "required_public_api_missing" in issue_codes
     assert {"react_loop", "ReActExecutor"} <= expected_values
+
+
+def test_agent_core_api_stability_report_tracks_stable_package_root() -> None:
+    import agent_core
+
+    contract = agent_core.agent_core_api_contract()
+    report = agent_core.evaluate_agent_core_api_stability()
+    manifest = report.manifest()
+
+    assert contract.manifest()["schema_version"] == "agent-core-api-contract/v1"
+    assert "AgentRunner" in contract.manifest()["stable_api"]
+    assert manifest["schema_version"] == "agent-core-api-stability-report/v1"
+    assert manifest["status"] == "ready"
+    assert manifest["ready"] is True
+    assert manifest["missing_stable_api"] == []
+    assert "AgentRunner" in manifest["present_stable_api"]
+    assert manifest["mvp_public_api_count"] > 0
+
+
+def test_agent_core_api_stability_report_blocks_missing_stable_api() -> None:
+    import agent_core
+    from agent_core.manifest import evaluate_agent_core_api_stability
+
+    sdk_manifest = agent_core.agent_core_sdk_manifest().manifest()
+    sdk_manifest["public_api"] = [
+        name for name in sdk_manifest["public_api"] if name != "AgentRunner"
+    ]
+
+    report = evaluate_agent_core_api_stability(
+        sdk_manifest,
+        contract=agent_core.AgentCoreAPIContract(),
+    )
+
+    assert report.ready is False
+    assert report.manifest()["status"] == "blocked"
+    assert report.manifest()["missing_stable_api"] == ["AgentRunner"]
 
 
 def test_repository_does_not_ship_runtime_adapter_packages() -> None:

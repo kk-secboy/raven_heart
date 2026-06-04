@@ -44,6 +44,14 @@ core-SDK readiness check; product wiring, RavenStorm adapter behavior,
 credentials, UI streams, and production data stores still need runtime-level
 acceptance tests outside this repository.
 
+`AgentCoreAPIContract` is the package-root compatibility gate. It declares the
+stable names a runtime may depend on for integration, separates the remaining
+exports as MVP surface, and documents the version policy.
+`evaluate_agent_core_api_stability()` checks a package manifest against that
+stable set and blocks if a stable name is missing. This does not freeze every
+implementation detail before 1.0; it freezes the SDK entrypoints that Raven,
+code agents, and ops agents need for migration work.
+
 `AgentCoreAcceptanceHarness` is the next gate after manifest readiness. It runs a
 deterministic pure-core scenario through `AgentRunner`: a provider requests a
 tool call, `ToolCenter` routes it, memory recall injects context, the run writes

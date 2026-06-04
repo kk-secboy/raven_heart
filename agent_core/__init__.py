@@ -174,15 +174,19 @@ from agent_core.lifecycle import (
     NullLifecycleHooks,
 )
 from agent_core.manifest import (
+    AgentCoreAPIContract,
+    AgentCoreAPIStabilityReport,
     AgentCoreCapability,
     AgentCoreReadinessIssue,
     AgentCoreReadinessProfile,
     AgentCoreReadinessReport,
     AgentCoreRuntimeBoundary,
     AgentCoreSDKManifest,
+    agent_core_api_contract as _build_agent_core_api_contract,
     agent_core_sdk_manifest as _build_agent_core_sdk_manifest,
     agent_core_replacement_readiness_profile,
     default_agent_core_capabilities,
+    evaluate_agent_core_api_stability as _evaluate_agent_core_api_stability,
     evaluate_agent_core_readiness as _evaluate_agent_core_readiness,
 )
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig, LoopGuardDecision
@@ -472,6 +476,8 @@ __all__ = [
     "AgentCoreAcceptanceHarness",
     "AgentCoreAcceptanceIssue",
     "AgentCoreAcceptanceReport",
+    "AgentCoreAPIContract",
+    "AgentCoreAPIStabilityReport",
     "AgentCoreCapability",
     "AgentCoreReadinessIssue",
     "AgentCoreReadinessProfile",
@@ -795,7 +801,9 @@ __all__ = [
     "StructuredOutputValidatorPort",
     "default_agent_run_preflight_center",
     "default_agent_core_capabilities",
+    "agent_core_api_contract",
     "agent_core_replacement_readiness_profile",
+    "evaluate_agent_core_api_stability",
     "evaluate_agent_core_readiness",
     "structured_output_feedback",
     "storage_backend_manifest",
@@ -861,6 +869,29 @@ def agent_core_sdk_manifest(
         public_api=tuple(__all__),
         package_version=package_version,
         metadata=metadata,
+    )
+
+
+def agent_core_api_contract(
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreAPIContract:
+    """Return the package-root public API stability contract."""
+
+    return _build_agent_core_api_contract(tuple(__all__), metadata=metadata)
+
+
+def evaluate_agent_core_api_stability(
+    *,
+    package_version: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    contract: AgentCoreAPIContract | None = None,
+) -> AgentCoreAPIStabilityReport:
+    """Evaluate the current package root against the stable API contract."""
+
+    return _evaluate_agent_core_api_stability(
+        agent_core_sdk_manifest(package_version=package_version, metadata=metadata),
+        contract=contract,
     )
 
 

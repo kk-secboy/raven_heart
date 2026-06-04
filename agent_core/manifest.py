@@ -81,6 +81,73 @@ RUNTIME_OWNED_CONCERNS: tuple[str, ...] = (
     "API routes, UI streams, metrics, and deployment",
     "runtime adapters for RavenStorm or other hosts",
 )
+STABLE_PUBLIC_API: tuple[str, ...] = (
+    "AgentRunner",
+    "AgentSession",
+    "AgentRunRequest",
+    "AgentRunOutcome",
+    "AgentSessionManager",
+    "AgentHarness",
+    "ReActExecutor",
+    "ReActConfig",
+    "ReActResult",
+    "LLMProviderPort",
+    "LLMProviderCenter",
+    "LLMRequest",
+    "LLMResponse",
+    "LLMMessage",
+    "LLMProviderSpec",
+    "LLMRetryPolicy",
+    "ToolRuntimePort",
+    "ToolRegistry",
+    "ToolCenter",
+    "ToolSpec",
+    "ToolInvocation",
+    "ToolResult",
+    "ToolRetryPolicy",
+    "SkillRegistry",
+    "SkillsContext",
+    "SkillSpec",
+    "MCPCenter",
+    "MCPConnectorPort",
+    "MemoryPort",
+    "MemoryCenter",
+    "MemoryQuery",
+    "MemoryRecord",
+    "MemoryWrite",
+    "MemoryStoreSpec",
+    "ContextMaterialCenter",
+    "ContextMaterialStorePort",
+    "ContextInjectionPolicy",
+    "PromptIR",
+    "PromptBucket",
+    "PromptBucketBudgetPolicy",
+    "PromptSemanticReducerPort",
+    "StorageBackendSpec",
+    "StorageBackendRequirement",
+    "StorageBackendCatalog",
+    "StorageBackendPreflightReport",
+    "PolicyDecision",
+    "PolicyDecisionStorePort",
+    "ApprovalCenter",
+    "ApprovalStorePort",
+    "AgentRunTraceBundle",
+    "RunTraceStorePort",
+    "TraceEvalSpec",
+    "TraceEvalHarness",
+    "TraceReplayHarness",
+    "AgentCoreSDKManifest",
+    "AgentCoreReadinessProfile",
+    "AgentCoreReadinessReport",
+    "AgentCoreAcceptanceHarness",
+    "AgentCoreAcceptanceReport",
+    "AgentCoreRecoveryHarness",
+    "AgentCoreRecoveryReport",
+    "agent_core_sdk_manifest",
+    "evaluate_agent_core_readiness",
+    "run_agent_core_acceptance",
+    "run_agent_core_recovery_acceptance",
+)
 
 
 @dataclass(frozen=True)
@@ -172,6 +239,68 @@ class AgentCoreSDKManifest:
             "runtime_boundary": self.runtime_boundary.manifest(),
             "public_api_count": len(self.public_api),
             "public_api": list(self.public_api),
+            "api_contract": agent_core_api_contract(self.public_api).manifest(),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentCoreAPIContract:
+    """Machine-readable public API stability contract."""
+
+    stable_api: tuple[str, ...] = STABLE_PUBLIC_API
+    mvp_api: tuple[str, ...] = ()
+    experimental_api: tuple[str, ...] = ()
+    deprecated_api: tuple[str, ...] = ()
+    version_policy: str = (
+        "Stable API names should not be removed or change manifest shape without "
+        "a minor-version migration note; MVP names may still evolve before 1.0."
+    )
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-api-contract/v1",
+            "stable_api_count": len(self.stable_api),
+            "mvp_api_count": len(self.mvp_api),
+            "experimental_api_count": len(self.experimental_api),
+            "deprecated_api_count": len(self.deprecated_api),
+            "stable_api": list(self.stable_api),
+            "mvp_api": list(self.mvp_api),
+            "experimental_api": list(self.experimental_api),
+            "deprecated_api": list(self.deprecated_api),
+            "version_policy": self.version_policy,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentCoreAPIStabilityReport:
+    """Report for checking a package manifest against the stable public API."""
+
+    status: SDKReadinessStatus
+    missing_stable_api: tuple[str, ...] = ()
+    present_stable_api: tuple[str, ...] = ()
+    deprecated_public_api: tuple[str, ...] = ()
+    mvp_public_api: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ready(self) -> bool:
+        return self.status == "ready"
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-api-stability-report/v1",
+            "status": self.status,
+            "ready": self.ready,
+            "missing_stable_api_count": len(self.missing_stable_api),
+            "deprecated_public_api_count": len(self.deprecated_public_api),
+            "mvp_public_api_count": len(self.mvp_public_api),
+            "missing_stable_api": list(self.missing_stable_api),
+            "present_stable_api": list(self.present_stable_api),
+            "deprecated_public_api": list(self.deprecated_public_api),
+            "mvp_public_api": list(self.mvp_public_api),
             "metadata": dict(self.metadata),
         }
 
@@ -425,6 +554,13 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
             ),
         ),
         AgentCoreCapability(
+            name="api_stability_contract",
+            layer="boundary",
+            status="stable_contract",
+            summary="Package-root public API stability contract and compatibility report.",
+            public_contracts=("AgentCoreAPIContract", "AgentCoreAPIStabilityReport"),
+        ),
+        AgentCoreCapability(
             name="policy_approval",
             layer="policy",
             summary="Policy decisions, approval queues, decision stores, and resume context.",
@@ -484,6 +620,7 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "prompt_context_semantics",
             "memory_governance",
             "storage_backend_contracts",
+            "api_stability_contract",
             "policy_approval",
             "trace_replay_eval",
             "replacement_acceptance_harness",
@@ -515,6 +652,10 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "TraceReplayHarness",
             "TraceEvalHarness",
             "AgentCoreSDKManifest",
+            "AgentCoreAPIContract",
+            "AgentCoreAPIStabilityReport",
+            "agent_core_api_contract",
+            "evaluate_agent_core_api_stability",
             "AgentCoreAcceptanceHarness",
             "AgentCoreAcceptanceReport",
             "run_agent_core_acceptance",
@@ -528,6 +669,60 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
         required_forbidden_dependencies=FORBIDDEN_RUNTIME_DEPENDENCIES,
         required_forbidden_packages=FORBIDDEN_RUNTIME_PACKAGES,
         metadata={"runtime_adapters_in_scope": False},
+    )
+
+
+def agent_core_api_contract(
+    public_api: Sequence[str] = (),
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreAPIContract:
+    """Build the public API stability contract for a package-root export set."""
+
+    public = set(str(name) for name in public_api)
+    stable_set = set(STABLE_PUBLIC_API)
+    mvp = tuple(sorted(public - stable_set))
+    return AgentCoreAPIContract(
+        stable_api=STABLE_PUBLIC_API,
+        mvp_api=mvp,
+        metadata=dict(metadata or {}),
+    )
+
+
+def evaluate_agent_core_api_stability(
+    sdk_manifest: AgentCoreSDKManifest | dict[str, Any],
+    *,
+    contract: AgentCoreAPIContract | None = None,
+) -> AgentCoreAPIStabilityReport:
+    """Check that a package manifest still exposes the stable public API."""
+
+    manifest = (
+        sdk_manifest.manifest()
+        if isinstance(sdk_manifest, AgentCoreSDKManifest)
+        else sdk_manifest
+    )
+    public_api = {str(name) for name in manifest.get("public_api", ())}
+    api_contract = contract or AgentCoreAPIContract()
+    stable = tuple(api_contract.stable_api)
+    deprecated = tuple(api_contract.deprecated_api)
+    missing = tuple(name for name in stable if name not in public_api)
+    present = tuple(name for name in stable if name in public_api)
+    deprecated_public = tuple(name for name in deprecated if name in public_api)
+    stable_set = set(stable)
+    deprecated_set = set(deprecated)
+    mvp_public = tuple(sorted(public_api - stable_set - deprecated_set))
+    status: SDKReadinessStatus = "blocked" if missing else "ready"
+    return AgentCoreAPIStabilityReport(
+        status=status,
+        missing_stable_api=missing,
+        present_stable_api=present,
+        deprecated_public_api=deprecated_public,
+        mvp_public_api=mvp_public,
+        metadata={
+            "sdk_manifest_schema": str(manifest.get("schema_version") or ""),
+            "package": str(manifest.get("package") or ""),
+            "version": str(manifest.get("version") or ""),
+        },
     )
 
 

@@ -118,6 +118,13 @@ contracts, storage backend roles/kinds, and runtime-boundary declarations. It
 does not validate RavenStorm-specific wiring, credentials, UI behavior, or
 production adapters; those remain runtime acceptance tests.
 
+`agent_core.agent_core_api_contract()` and
+`agent_core.evaluate_agent_core_api_stability()` define the package-root API
+stability gate. The contract separates stable integration entrypoints from MVP
+exports that may still change before 1.0. The report blocks if a stable API name
+is missing, which lets host runtimes pin migration checks before depending on
+`raven_heart` as their agent base.
+
 `agent_core.run_agent_core_acceptance()` runs a deterministic pure-SDK
 acceptance scenario. It exercises readiness, ReAct, provider routing, ToolCenter,
 memory recall, context injection, journal persistence, event logging, tool
@@ -856,6 +863,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Run failure summary trace/eval | MVP implemented |
 | SDK capability/boundary manifest | MVP implemented |
 | SDK replacement-readiness profile | MVP implemented |
+| SDK public API stability contract | MVP implemented |
 | SDK replacement acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | Run trace query | MVP implemented |
