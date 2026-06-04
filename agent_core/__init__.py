@@ -78,6 +78,8 @@ from agent_core.context import (
     DefaultContextMaterialSelector,
     ExternalContextMaterialStore,
     InMemoryContextMaterialStore,
+    MarkdownContextMaterialStore,
+    SQLiteContextMaterialStore,
 )
 from agent_core.embeddings import (
     DeterministicEmbeddingProvider,
@@ -490,6 +492,8 @@ __all__ = [
     "DefaultContextMaterialSelector",
     "ExternalContextMaterialStore",
     "InMemoryContextMaterialStore",
+    "MarkdownContextMaterialStore",
+    "SQLiteContextMaterialStore",
     "DefaultPromptSemanticReducer",
     "DeterministicEmbeddingProvider",
     "EmbeddingCallRecord",

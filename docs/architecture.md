@@ -49,6 +49,7 @@ Core ships lightweight implementations so the SDK can run by itself:
 | Data area | Port | Built-in implementations | Runtime implementations |
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | PG, vector DB, graph/RAG, product knowledge |
+| Context material | `ContextMaterialStorePort` | In-memory, SQLite, Markdown | PG, vector DB, graph/RAG, product APIs |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | PG, object storage, workflow DB, audit event log |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | PG, object storage, workflow replay DB |
 | Policy decisions | `PolicyDecisionStorePort` | Null, in-memory, SQLite, Markdown | PG, SIEM/audit log, workflow DB |
@@ -383,13 +384,14 @@ requiring a Postgres, vector DB, or graph driver inside `agent_core`.
 
 `ContextMaterialStorePort` is the matching candidate-context boundary for
 semantic prompt shaping. `ContextMaterialCenter` can route queries across SDK
-stores and runtime-owned SQLite, Markdown, PG, vector, graph, or product API
+stores and runtime-owned PG, vector, graph, or product API
 stores through `ContextMaterialStoreSpec`, `ContextMaterialQuery`,
-`ContextMaterialRoute`, and `ContextMaterialSearchPlan`. The SDK ships an
-in-memory store and `ExternalContextMaterialStore` for prompt-safe call audit;
-concrete durable drivers remain outside core. `AgentRunRequest.context_material_query`
-lets `AgentRunner` collect those candidates explicitly and pass them through
-the existing selector/trimming/injection pipeline.
+`ContextMaterialRoute`, and `ContextMaterialSearchPlan`. The SDK ships
+in-memory, SQLite, and Markdown stores plus `ExternalContextMaterialStore` for
+prompt-safe call audit; production PG/vector/graph/product drivers remain
+outside core. `AgentRunRequest.context_material_query` lets `AgentRunner`
+collect those candidates explicitly and pass them through the existing
+selector/trimming/injection pipeline.
 
 `ReActExecutor` emits monotonic `AgentEvent.sequence` values. Lightweight users
 can capture them with `ListEventSink`; inspectable or local durable runs can use

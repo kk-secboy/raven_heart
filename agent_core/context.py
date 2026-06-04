@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import sqlite3
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from agent_core.backends import StorageBackendKind, storage_backend_manifest
@@ -312,6 +316,193 @@ class InMemoryContextMaterialStore(ContextMaterialStorePort):
             "material_count": len(self.materials),
             "materials": [material.manifest() for material in self.materials],
         }
+
+
+class SQLiteContextMaterialStore(ContextMaterialStorePort):
+    """SQLite-backed candidate context material store for lightweight SDK runs."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init()
+
+    async def search(self, query: ContextMaterialQuery) -> tuple[ContextMaterial, ...]:
+        query = query.normalized()
+        route = ContextMaterialRoute.from_query(query)
+        terms = _selection_terms(query.query)
+        selected = [
+            material
+            for material in self._materials()
+            if _material_matches_query(material, query, route)
+        ]
+        ranked = sorted(
+            selected,
+            key=lambda item: (-_context_material_score(item, terms), item.name),
+        )
+        return tuple(ranked[: query.limit])
+
+    async def write(self, material: ContextMaterial) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                INSERT INTO context_materials(name, content, role, priority, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    material.name,
+                    material.content,
+                    material.role,
+                    material.priority,
+                    json.dumps(material.metadata, ensure_ascii=False, sort_keys=True),
+                    _utc_now_iso(),
+                ),
+            )
+            conn.commit()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-sqlite-context-material-store/v1",
+            "backend_kind": "sqlite",
+            "backend": storage_backend_manifest(
+                role="context_material",
+                kind="sqlite",
+                location=str(self.path),
+                capabilities=("keyword", "semantic"),
+            ),
+            "path": str(self.path),
+            "material_count": len(self._materials()),
+        }
+
+    def _init(self) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS context_materials (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'dynamic',
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+    def _materials(self) -> tuple[ContextMaterial, ...]:
+        with sqlite3.connect(self.path) as conn:
+            rows = conn.execute(
+                """
+                SELECT name, content, role, priority, metadata_json, created_at
+                FROM context_materials
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        materials: list[ContextMaterial] = []
+        for name, content, role, priority, metadata_json, created_at in rows:
+            try:
+                metadata = json.loads(metadata_json)
+            except json.JSONDecodeError:
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            materials.append(
+                ContextMaterial(
+                    name=str(name),
+                    content=str(content),
+                    role=str(role or "dynamic"),
+                    priority=int(priority or 0),
+                    metadata={**metadata, "created_at": str(created_at)},
+                )
+            )
+        return tuple(materials)
+
+
+class MarkdownContextMaterialStore(ContextMaterialStorePort):
+    """Markdown-backed candidate context material store.
+
+    Entries written by this store are parsed individually. Other markdown files
+    under the root are indexed as whole-document context material.
+    """
+
+    def __init__(self, root: str | Path, *, filename: str = "context_materials.md") -> None:
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.path = self.root / filename
+
+    async def search(self, query: ContextMaterialQuery) -> tuple[ContextMaterial, ...]:
+        query = query.normalized()
+        route = ContextMaterialRoute.from_query(query)
+        terms = _selection_terms(query.query)
+        selected = [
+            material
+            for material in self._materials()
+            if _material_matches_query(material, query, route)
+        ]
+        ranked = sorted(
+            selected,
+            key=lambda item: (-_context_material_score(item, terms), item.name),
+        )
+        return tuple(ranked[: query.limit])
+
+    async def write(self, material: ContextMaterial) -> None:
+        payload = {
+            "name": material.name,
+            "role": material.role,
+            "priority": material.priority,
+            "metadata": material.metadata,
+            "created_at": _utc_now_iso(),
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "\n<!-- context-material "
+                + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                + " -->\n"
+            )
+            handle.write(material.content.strip() + "\n")
+            handle.write("<!-- /context-material -->\n")
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-markdown-context-material-store/v1",
+            "backend_kind": "markdown",
+            "backend": storage_backend_manifest(
+                role="context_material",
+                kind="markdown",
+                location=str(self.path),
+                capabilities=("keyword", "semantic"),
+            ),
+            "root": str(self.root),
+            "path": str(self.path),
+            "material_count": len(self._materials()),
+        }
+
+    def _materials(self) -> tuple[ContextMaterial, ...]:
+        materials: list[ContextMaterial] = []
+        parsed_paths: set[Path] = set()
+        for path in sorted(self.root.rglob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            entries = _parse_markdown_context_materials(text)
+            if entries:
+                parsed_paths.add(path)
+                materials.extend(entries)
+        for path in sorted(self.root.rglob("*.md")):
+            if path in parsed_paths:
+                continue
+            text = path.read_text(encoding="utf-8").strip()
+            if not text:
+                continue
+            materials.append(
+                ContextMaterial(
+                    name=path.stem,
+                    content=text,
+                    role="dynamic",
+                    priority=0,
+                    metadata={"path": str(path), "source": "markdown_document"},
+                )
+            )
+        return tuple(materials)
 
 
 class ExternalContextMaterialStore(ContextMaterialStorePort):
@@ -1280,11 +1471,48 @@ def _metadata_tags(metadata: dict[str, Any]) -> set[str]:
         return set()
 
 
+_CONTEXT_MATERIAL_ENTRY_RE = re.compile(
+    r"<!--\s*context-material\s+({.*?})\s*-->\s*(.*?)\s*<!--\s*/context-material\s*-->",
+    re.DOTALL,
+)
+
+
+def _parse_markdown_context_materials(text: str) -> tuple[ContextMaterial, ...]:
+    materials: list[ContextMaterial] = []
+    for match in _CONTEXT_MATERIAL_ENTRY_RE.finditer(text):
+        try:
+            metadata = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        material_metadata = metadata.get("metadata", {})
+        if not isinstance(material_metadata, dict):
+            material_metadata = {}
+        created_at = str(metadata.get("created_at") or "")
+        if created_at:
+            material_metadata = {**material_metadata, "created_at": created_at}
+        materials.append(
+            ContextMaterial(
+                name=str(metadata.get("name") or "context_material"),
+                content=match.group(2).strip(),
+                role=str(metadata.get("role") or "dynamic"),
+                priority=int(metadata.get("priority") or 0),
+                metadata=material_metadata,
+            )
+        )
+    return tuple(materials)
+
+
 def _infer_context_material_backend_kind(
     store: ContextMaterialStorePort,
 ) -> StorageBackendKind:
     if isinstance(store, InMemoryContextMaterialStore):
         return "in_memory"
+    if isinstance(store, SQLiteContextMaterialStore):
+        return "sqlite"
+    if isinstance(store, MarkdownContextMaterialStore):
+        return "markdown"
     manifest = getattr(store, "manifest", None)
     if callable(manifest):
         try:
@@ -1297,6 +1525,10 @@ def _infer_context_material_backend_kind(
             if kind:
                 return kind  # type: ignore[return-value]
     return "custom"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def _selection_terms(text: str) -> frozenset[str]:
