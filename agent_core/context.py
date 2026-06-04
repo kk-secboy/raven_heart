@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol
 
@@ -26,6 +28,273 @@ class ContextMaterial:
     role: str = "dynamic"
     priority: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def bytes(self) -> int:
+        return len(self.content.encode("utf-8"))
+
+    @property
+    def sha256(self) -> str:
+        if not self.content:
+            return ""
+        return hashlib.sha256(self.content.encode("utf-8")).hexdigest()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "role": self.role,
+            "priority": self.priority,
+            "bytes": self.bytes,
+            "sha256": self.sha256,
+            "metadata": dict(self.metadata),
+        }
+
+
+ContextMaterialSelectionStatus = Literal[
+    "selected",
+    "empty",
+    "target_denied",
+    "score_below_threshold",
+    "count_exceeded",
+    "budget_exceeded",
+]
+
+
+@dataclass(frozen=True)
+class ContextMaterialSelectionRequest:
+    """Provider-neutral request for selecting prompt-safe context material."""
+
+    task: str
+    materials: tuple[ContextMaterial, ...] = ()
+    max_materials: int | None = None
+    max_bytes: int | None = None
+    allowed_targets: tuple[PromptBucketRole, ...] = ()
+    min_score: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def normalized(self) -> "ContextMaterialSelectionRequest":
+        return ContextMaterialSelectionRequest(
+            task=str(self.task or ""),
+            materials=tuple(self.materials),
+            max_materials=None
+            if self.max_materials is None
+            else max(0, int(self.max_materials)),
+            max_bytes=None if self.max_bytes is None else max(0, int(self.max_bytes)),
+            allowed_targets=tuple(self.allowed_targets),
+            min_score=None if self.min_score is None else float(self.min_score),
+            metadata=dict(self.metadata),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        task_bytes = len(self.task.encode("utf-8"))
+        return {
+            "schema_version": "agent-core-context-material-selection-request/v1",
+            "task_bytes": task_bytes,
+            "task_sha256": hashlib.sha256(self.task.encode("utf-8")).hexdigest()
+            if self.task
+            else "",
+            "material_count": len(self.materials),
+            "max_materials": self.max_materials,
+            "max_bytes": self.max_bytes,
+            "allowed_targets": [target.value for target in self.allowed_targets],
+            "min_score": self.min_score,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ContextMaterialSelection:
+    material: ContextMaterial
+    target: PromptBucketRole
+    status: ContextMaterialSelectionStatus
+    score: float = 0.0
+    rank: int = 0
+    reason: str = ""
+
+    @property
+    def selected(self) -> bool:
+        return self.status == "selected"
+
+    def injection(self) -> ContextInjection | None:
+        if not self.selected:
+            return None
+        source = str(self.material.metadata.get("source") or self.material.role or "context")
+        return ContextInjection(
+            name=self.material.name,
+            content=self.material.content,
+            target=self.target,
+            source=source,
+            priority=self.material.priority,
+            metadata={
+                **self.material.metadata,
+                "context_material_selection": {
+                    "score": self.score,
+                    "rank": self.rank,
+                    "reason": self.reason,
+                    "target": self.target.value,
+                },
+            },
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "name": self.material.name,
+            "role": self.material.role,
+            "target": self.target.value,
+            "status": self.status,
+            "selected": self.selected,
+            "score": self.score,
+            "rank": self.rank,
+            "reason": self.reason,
+            "priority": self.material.priority,
+            "bytes": self.material.bytes,
+            "sha256": self.material.sha256,
+            "metadata": dict(self.material.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ContextMaterialSelectionResult:
+    request: ContextMaterialSelectionRequest
+    selections: tuple[ContextMaterialSelection, ...]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def injections(self) -> tuple[ContextInjection, ...]:
+        return tuple(
+            injection
+            for selection in self.selections
+            if (injection := selection.injection()) is not None
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        selected = tuple(item for item in self.selections if item.selected)
+        dropped = tuple(item for item in self.selections if not item.selected)
+        return {
+            "schema_version": "agent-core-context-material-selection-result/v1",
+            "request": self.request.manifest(),
+            "selection_count": len(self.selections),
+            "selected_count": len(selected),
+            "dropped_count": len(dropped),
+            "selected_bytes": sum(item.material.bytes for item in selected),
+            "statuses": _count_selection_statuses(self.selections),
+            "targets": _count_selection_targets(selected),
+            "selections": [selection.manifest() for selection in self.selections],
+            "metadata": dict(self.metadata),
+        }
+
+
+class ContextMaterialSelectorPort(Protocol):
+    def select(self, request: ContextMaterialSelectionRequest) -> ContextMaterialSelectionResult:
+        """Select context materials before prompt injection policy is applied."""
+
+
+class DefaultContextMaterialSelector:
+    """Deterministic semantic/priority selector for runtime-provided context."""
+
+    def select(self, request: ContextMaterialSelectionRequest) -> ContextMaterialSelectionResult:
+        request = request.normalized()
+        query_terms = _selection_terms(request.task)
+        allowed_targets = set(request.allowed_targets)
+        immediate: list[ContextMaterialSelection] = []
+        candidates: list[tuple[float, int, PromptBucketRole, ContextMaterial]] = []
+
+        for index, material in enumerate(request.materials):
+            target = _context_material_target(material.role)
+            if not material.content.strip():
+                immediate.append(
+                    ContextMaterialSelection(
+                        material=material,
+                        target=target,
+                        status="empty",
+                        rank=0,
+                        reason="empty_content",
+                    )
+                )
+                continue
+            if allowed_targets and target not in allowed_targets:
+                immediate.append(
+                    ContextMaterialSelection(
+                        material=material,
+                        target=target,
+                        status="target_denied",
+                        rank=0,
+                        reason="target_not_allowed",
+                    )
+                )
+                continue
+            score = _context_material_score(material, query_terms)
+            if request.min_score is not None and score < request.min_score:
+                immediate.append(
+                    ContextMaterialSelection(
+                        material=material,
+                        target=target,
+                        status="score_below_threshold",
+                        score=score,
+                        rank=0,
+                        reason="score_below_threshold",
+                    )
+                )
+                continue
+            candidates.append((score, index, target, material))
+
+        candidates.sort(
+            key=lambda item: (item[0], item[3].priority, -item[1], item[3].name),
+            reverse=True,
+        )
+        selected_count = 0
+        selected_bytes = 0
+        ranked: list[ContextMaterialSelection] = []
+        for rank, (score, _index, target, material) in enumerate(candidates, start=1):
+            if request.max_materials is not None and selected_count >= request.max_materials:
+                ranked.append(
+                    ContextMaterialSelection(
+                        material=material,
+                        target=target,
+                        status="count_exceeded",
+                        score=score,
+                        rank=rank,
+                        reason="max_materials_exceeded",
+                    )
+                )
+                continue
+            if request.max_bytes is not None and selected_bytes + material.bytes > request.max_bytes:
+                ranked.append(
+                    ContextMaterialSelection(
+                        material=material,
+                        target=target,
+                        status="budget_exceeded",
+                        score=score,
+                        rank=rank,
+                        reason="max_bytes_exceeded",
+                    )
+                )
+                continue
+            selected_count += 1
+            selected_bytes += material.bytes
+            ranked.append(
+                ContextMaterialSelection(
+                    material=material,
+                    target=target,
+                    status="selected",
+                    score=score,
+                    rank=rank,
+                    reason="semantic_priority_selected",
+                )
+            )
+
+        return ContextMaterialSelectionResult(
+            request=request,
+            selections=tuple(ranked + immediate),
+            metadata=self.manifest(),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-context-material-selector/v1",
+            "type": type(self).__name__,
+            "strategy": "deterministic_query_overlap_priority_budget",
+        }
 
 
 @dataclass(frozen=True)
@@ -339,6 +608,107 @@ class AgentPromptBuilder:
                 key=lambda item: (-item.priority, item.target.value, item.name),
             )
         )
+
+
+def _context_material_target(role: str) -> PromptBucketRole:
+    normalized = str(role or "").strip().lower().replace("-", "_")
+    direct = {item.value: item for item in PromptBucketRole}
+    if normalized in direct:
+        return direct[normalized]
+    aliases = {
+        "system": PromptBucketRole.HIGH_STATIC,
+        "guardrail": PromptBucketRole.HIGH_STATIC,
+        "policy": PromptBucketRole.HIGH_STATIC,
+        "tool": PromptBucketRole.FROZEN,
+        "tools": PromptBucketRole.FROZEN,
+        "capability": PromptBucketRole.FROZEN,
+        "capabilities": PromptBucketRole.FROZEN,
+        "mcp": PromptBucketRole.FROZEN,
+        "memory": PromptBucketRole.SEMI_DYNAMIC_1,
+        "recall": PromptBucketRole.SEMI_DYNAMIC_1,
+        "skill": PromptBucketRole.SEMI_DYNAMIC_1,
+        "skills": PromptBucketRole.SEMI_DYNAMIC_1,
+        "schema": PromptBucketRole.SEMI_DYNAMIC_2,
+        "example": PromptBucketRole.SEMI_DYNAMIC_2,
+        "contract": PromptBucketRole.SEMI_DYNAMIC_2,
+        "timeline": PromptBucketRole.TIMELINE_OPEN,
+        "workspace": PromptBucketRole.TIMELINE_OPEN,
+        "history": PromptBucketRole.TIMELINE_OPEN,
+        "observation": PromptBucketRole.TIMELINE_OPEN,
+        "runtime": PromptBucketRole.DYNAMIC,
+        "task": PromptBucketRole.DYNAMIC,
+        "dynamic": PromptBucketRole.DYNAMIC,
+    }
+    return aliases.get(normalized, PromptBucketRole.DYNAMIC)
+
+
+def _context_material_score(material: ContextMaterial, query_terms: frozenset[str]) -> float:
+    text_terms = _selection_terms(
+        " ".join(
+            (
+                material.name,
+                material.role,
+                material.content,
+                " ".join(str(item) for item in material.metadata.values()),
+            )
+        )
+    )
+    overlap = len(text_terms & query_terms) if query_terms else 0
+    density = overlap / max(1, len(text_terms))
+    role_bonus = _context_role_bonus(_context_material_target(material.role))
+    return round(float(material.priority) * 100.0 + overlap * 10.0 + density * 5.0 + role_bonus, 6)
+
+
+def _context_role_bonus(target: PromptBucketRole) -> float:
+    bonuses = {
+        PromptBucketRole.HIGH_STATIC: 0.5,
+        PromptBucketRole.FROZEN: 0.4,
+        PromptBucketRole.SEMI_DYNAMIC_1: 0.8,
+        PromptBucketRole.SEMI_DYNAMIC_2: 0.7,
+        PromptBucketRole.TIMELINE_OPEN: 0.9,
+        PromptBucketRole.DYNAMIC: 1.0,
+    }
+    return bonuses[target]
+
+
+def _selection_terms(text: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for token in re.findall(r"[a-zA-Z0-9_]{3,}", str(text or "").lower())
+        if token not in _CONTEXT_SELECTION_STOP_WORDS
+    )
+
+
+_CONTEXT_SELECTION_STOP_WORDS = frozenset(
+    {
+        "and",
+        "for",
+        "from",
+        "into",
+        "that",
+        "the",
+        "this",
+        "with",
+        "task",
+        "current",
+        "context",
+    }
+)
+
+
+def _count_selection_statuses(selections: tuple[ContextMaterialSelection, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for selection in selections:
+        counts[selection.status] = counts.get(selection.status, 0) + 1
+    return counts
+
+
+def _count_selection_targets(selections: tuple[ContextMaterialSelection, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for selection in selections:
+        target = selection.target.value
+        counts[target] = counts.get(target, 0) + 1
+    return counts
 
 
 def _trim_text_to_bytes(text: str, max_bytes: int, marker: str) -> str:

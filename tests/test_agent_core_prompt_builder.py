@@ -7,6 +7,9 @@ from agent_core.context import (
     AgentPromptBuilder,
     ContextInjection,
     ContextInjectionPolicy,
+    ContextMaterial,
+    ContextMaterialSelectionRequest,
+    DefaultContextMaterialSelector,
 )
 from agent_core.prompt import PromptBucketRole
 from agent_core.skills import (
@@ -163,6 +166,103 @@ def test_prompt_builder_applies_context_injection_policy() -> None:
     assert prompt.manifest()["metadata"]["context_injection_policy"][
         "schema_version"
     ] == "agent-core-context-injection-policy/v1"
+
+
+def test_context_material_selector_builds_prompt_injections_by_semantic_priority() -> None:
+    result = DefaultContextMaterialSelector().select(
+        ContextMaterialSelectionRequest(
+            task="inspect payment auth failure and csrf risk",
+            materials=(
+                ContextMaterial(
+                    name="old_note",
+                    content="legacy dns observation",
+                    role="memory",
+                    priority=1,
+                    metadata={"source": "memory"},
+                ),
+                ContextMaterial(
+                    name="auth_trace",
+                    content="payment auth callback failed csrf token validation",
+                    role="timeline",
+                    priority=3,
+                    metadata={"source": "trace"},
+                ),
+                ContextMaterial(
+                    name="schema",
+                    content='{"required":["risk"]}',
+                    role="schema",
+                    priority=2,
+                    metadata={"source": "runtime"},
+                ),
+            ),
+            max_materials=2,
+            max_bytes=512,
+        )
+    )
+    prompt = AgentPromptBuilder().build(
+        AgentContextPack(dynamic_task="inspect", injections=result.injections)
+    )
+    manifest = result.manifest()
+
+    assert manifest["schema_version"] == "agent-core-context-material-selection-result/v1"
+    assert manifest["selected_count"] == 2
+    assert manifest["dropped_count"] == 1
+    assert manifest["statuses"] == {"count_exceeded": 1, "selected": 2}
+    assert result.injections[0].name == "auth_trace"
+    assert result.injections[0].target == PromptBucketRole.TIMELINE_OPEN
+    assert result.injections[0].metadata["context_material_selection"]["rank"] == 1
+    assert "[context_injection:auth_trace source=trace]" in prompt.bucket(
+        PromptBucketRole.TIMELINE_OPEN
+    ).content
+    assert "[context_injection:schema source=runtime]" in prompt.bucket(
+        PromptBucketRole.SEMI_DYNAMIC_2
+    ).content
+    assert "old_note" not in prompt.render()
+
+
+def test_context_material_selector_reports_target_score_and_budget_drops() -> None:
+    result = DefaultContextMaterialSelector().select(
+        ContextMaterialSelectionRequest(
+            task="payment auth",
+            materials=(
+                ContextMaterial(name="empty", content="", role="memory"),
+                ContextMaterial(name="denied", content="must not enter static", role="system"),
+                ContextMaterial(name="low", content="unrelated note", role="memory"),
+                ContextMaterial(
+                    name="huge",
+                    content="payment auth " + ("x" * 200),
+                    role="timeline",
+                    priority=4,
+                ),
+                ContextMaterial(
+                    name="fit",
+                    content="payment auth retry",
+                    role="memory",
+                    priority=3,
+                ),
+            ),
+            allowed_targets=(PromptBucketRole.SEMI_DYNAMIC_1, PromptBucketRole.TIMELINE_OPEN),
+            min_score=1.0,
+            max_bytes=80,
+        )
+    )
+    by_name = {selection.material.name: selection for selection in result.selections}
+    manifest = result.manifest()
+
+    assert by_name["empty"].status == "empty"
+    assert by_name["denied"].status == "target_denied"
+    assert by_name["low"].status == "score_below_threshold"
+    assert by_name["huge"].status == "budget_exceeded"
+    assert by_name["fit"].status == "selected"
+    assert result.injections[0].name == "fit"
+    assert manifest["statuses"] == {
+        "budget_exceeded": 1,
+        "empty": 1,
+        "score_below_threshold": 1,
+        "selected": 1,
+        "target_denied": 1,
+    }
+    assert manifest["targets"] == {"semi_dynamic_1": 1}
 
 
 def test_skills_context_renders_loaded_and_available_sections() -> None:

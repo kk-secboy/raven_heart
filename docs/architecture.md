@@ -480,6 +480,16 @@ sources, target buckets, statuses, included sources, trimmed sources, and
 excluded sources, giving Yaklang-style context routing and auto-trimming a
 provider-neutral acceptance contract.
 
+`ContextMaterial` and `ContextMaterialSelectorPort` sit one step earlier than
+injection. Runtimes can gather candidate material from local memory, Markdown,
+PG, vector search, graph memory, tool caches, or product APIs, then hand those
+candidates to the SDK as provider-neutral material records. The built-in
+`DefaultContextMaterialSelector` ranks candidates by deterministic task-term
+overlap, role mapping, priority, max material count, and byte budget, returning
+`ContextInjection` objects plus a manifest of selected and dropped candidates.
+The manifest stores names, roles, targets, scores, byte counts, and hashes rather
+than raw hidden context bodies.
+
 `ContextInjectionPolicy` is the SDK-level guardrail applied before prompt
 assembly. It can restrict target buckets, trim each injected block, cap total
 injection bytes, and emit per-injection decisions into the prompt manifest. This

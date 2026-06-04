@@ -588,6 +588,15 @@ path today. `AgentRunner` also injects memory recall through this path when
 memory is enabled; operator hints and runtime-specific context can use the same
 SDK-level mechanism later.
 
+`ContextMaterial`, `ContextMaterialSelectionRequest`, and
+`DefaultContextMaterialSelector` provide the earlier selection step for
+runtime-provided candidate context. A runtime can collect candidates from
+SQLite, Markdown, PG, vector search, graph memory, tools, or product APIs, then
+let the SDK rank them by deterministic task-term overlap plus priority and
+budget. The selector returns `ContextInjection` objects and a prompt-safe
+manifest with selected/dropped status, target buckets, scores, byte counts, and
+hashes.
+
 `ContextInjectionPolicy` governs those insertions before prompt assembly. It can
 limit allowed target buckets, trim oversized injected material, cap total
 injection bytes, and record included/excluded/trimmed decisions in the prompt
@@ -715,6 +724,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Prompt bucket budget policy | MVP implemented |
 | Runtime semantic prompt reducer | MVP implemented |
 | Runtime semantic prompt trace/eval | MVP implemented |
+| Context material selector | MVP implemented |
 | Context injection policy | MVP implemented |
 | Context reducer | runner-integrated MVP |
 | Runtime adapter code | intentionally excluded |
