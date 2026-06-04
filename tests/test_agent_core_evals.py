@@ -1311,6 +1311,48 @@ def test_trace_eval_reports_provider_route_plan_contract_failures() -> None:
     } <= {issue.code for issue in report.issues}
 
 
+def test_trace_eval_validates_provider_error_classification_contracts() -> None:
+    trace = _trace_manifest()
+    trace["provider"]["calls"][0] = {
+        **trace["provider"]["calls"][0],
+        "status": "failed",
+        "error": "provider failed",
+        "retryable": True,
+        "error_classification": {
+            "schema_version": "agent-core-error-classification/v1",
+            "stage": "provider",
+            "kind": "provider_failed",
+            "status": "failed",
+            "retryable": True,
+            "message": "provider failed",
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_provider_error_classification=True,
+            required_provider_error_kinds=("provider_failed",),
+            forbidden_provider_error_kinds=("unknown",),
+        ),
+    )
+    failed = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_provider_error_kinds=("timeout",),
+            forbidden_provider_error_kinds=("provider_failed",),
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["provider_error_classification_count"] == 1
+    assert report.summary["provider_error_kinds"] == ["provider_failed"]
+    assert {
+        "missing_provider_error_kind",
+        "forbidden_provider_error_kind",
+    } <= {issue.code for issue in failed.issues}
+
+
 def test_trace_eval_validates_provider_route_preflight_contracts() -> None:
     trace = {
         **_trace_manifest(),
@@ -1968,6 +2010,69 @@ def test_trace_eval_reports_tool_execution_contract_failures() -> None:
         "missing_tool_retry",
         "tool_attempts_below_minimum",
     } <= codes
+
+
+def test_trace_eval_validates_tool_error_classification_contracts() -> None:
+    trace = {
+        **_trace_manifest(),
+        "event_log": {
+            "event_count": 1,
+            "events": [
+                {
+                    "type": "tool_finished",
+                    "run_id": "run-1",
+                    "payload": {
+                        "tool_name": "lookup",
+                        "call_id": "call-1",
+                        "execution": {
+                            "schema_version": "agent-core-tool-execution-summary/v1",
+                            "tool_name": "lookup",
+                            "call_id": "call-1",
+                            "attempt_count": 1,
+                            "retried": False,
+                            "final_status": "failed",
+                            "final_ok": False,
+                            "attempt_statuses": ["schema_invalid"],
+                            "retryable_attempts": [],
+                            "error_classification": {
+                                "schema_version": "agent-core-error-classification/v1",
+                                "stage": "tool",
+                                "kind": "schema_invalid",
+                                "status": "schema_invalid",
+                                "retryable": False,
+                                "message": "$.query is required",
+                            },
+                        },
+                    },
+                }
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_tool_execution=True,
+            require_tool_error_classification=True,
+            required_tool_error_kinds=("schema_invalid",),
+            forbidden_tool_error_kinds=("unknown",),
+        ),
+    )
+    failed = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_tool_error_kinds=("exception",),
+            forbidden_tool_error_kinds=("schema_invalid",),
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["tool_error_classification_count"] == 1
+    assert report.summary["tool_error_kinds"] == ["schema_invalid"]
+    assert {
+        "missing_tool_error_kind",
+        "forbidden_tool_error_kind",
+    } <= {issue.code for issue in failed.issues}
 
 
 def test_trace_eval_reports_tool_schema_validation_contract_failures() -> None:

@@ -178,7 +178,8 @@ checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, provider request-shape plans and
 output-token ceilings, provider route preflight readiness/candidates/reasons,
-provider-native tool-result presence/status/execution,
+provider/tool error classification kinds, provider-native tool-result
+presence/status/execution,
 required events, required tools,
 cost ceilings, event ordering, journal integrity, preflight status/issue-code constraints,
 resume-plan presence,

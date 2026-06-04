@@ -93,6 +93,9 @@ class TraceEvalSpec:
     required_provider_tool_result_names: tuple[str, ...] = ()
     required_provider_tool_result_statuses: tuple[str, ...] = ()
     max_provider_tool_result_failures: int | None = None
+    require_provider_error_classification: bool = False
+    required_provider_error_kinds: tuple[str, ...] = ()
+    forbidden_provider_error_kinds: tuple[str, ...] = ()
     require_provider_route_plan: bool = False
     required_provider_route_candidate_names: tuple[str, ...] = ()
     required_provider_route_selected_names: tuple[str, ...] = ()
@@ -176,6 +179,9 @@ class TraceEvalSpec:
     required_tool_execution_ok_names: tuple[str, ...] = ()
     required_tool_retry_names: tuple[str, ...] = ()
     forbidden_tool_retry_names: tuple[str, ...] = ()
+    require_tool_error_classification: bool = False
+    required_tool_error_kinds: tuple[str, ...] = ()
+    forbidden_tool_error_kinds: tuple[str, ...] = ()
     require_tool_schema_validation: bool = False
     required_tool_schema_validation_names: tuple[str, ...] = ()
     required_tool_schema_valid_names: tuple[str, ...] = ()
@@ -314,6 +320,11 @@ class TraceEvalSpec:
                 self.required_provider_tool_result_statuses
             ),
             "max_provider_tool_result_failures": self.max_provider_tool_result_failures,
+            "require_provider_error_classification": (
+                self.require_provider_error_classification
+            ),
+            "required_provider_error_kinds": list(self.required_provider_error_kinds),
+            "forbidden_provider_error_kinds": list(self.forbidden_provider_error_kinds),
             "require_provider_route_plan": self.require_provider_route_plan,
             "required_provider_route_candidate_names": list(
                 self.required_provider_route_candidate_names
@@ -423,6 +434,9 @@ class TraceEvalSpec:
             "required_tool_execution_ok_names": list(self.required_tool_execution_ok_names),
             "required_tool_retry_names": list(self.required_tool_retry_names),
             "forbidden_tool_retry_names": list(self.forbidden_tool_retry_names),
+            "require_tool_error_classification": self.require_tool_error_classification,
+            "required_tool_error_kinds": list(self.required_tool_error_kinds),
+            "forbidden_tool_error_kinds": list(self.forbidden_tool_error_kinds),
             "require_tool_schema_validation": self.require_tool_schema_validation,
             "required_tool_schema_validation_names": list(
                 self.required_tool_schema_validation_names
@@ -934,6 +948,13 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         )
         provider_tool_results_with_execution = tuple(
             result for result in provider_tool_results if isinstance(result.get("tool_execution"), dict)
+        )
+        provider_error_classifications = _provider_error_classifications(
+            provider_call_records
+        )
+        provider_error_kinds = _error_classification_values(
+            provider_error_classifications,
+            "kind",
         )
         provider_route_plans = _provider_route_plans(provider_call_records)
         provider_route_candidates = _provider_route_candidates(provider_route_plans)
@@ -1494,6 +1515,32 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_provider_error_classification and not provider_error_classifications:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_error_classification_missing",
+                    "provider error classification is required",
+                )
+            )
+        for kind in spec.required_provider_error_kinds:
+            if kind not in provider_error_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_error_kind",
+                        f"required provider error kind missing: {kind}",
+                    )
+                )
+        for kind in spec.forbidden_provider_error_kinds:
+            if kind in provider_error_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_provider_error_kind",
+                        f"forbidden provider error kind present: {kind}",
+                    )
+                )
         if spec.require_provider_route_plan and not provider_route_plans:
             issues.append(
                 TraceEvalIssue(
@@ -2540,6 +2587,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             )
 
         tool_executions = _tool_execution_summaries(trace)
+        tool_error_classifications = _tool_error_classifications(tool_executions)
+        tool_error_kinds = _error_classification_values(
+            tool_error_classifications,
+            "kind",
+        )
         tool_schema_validations = _tool_schema_validations(tool_executions)
         invalid_tool_schema_validations = tuple(
             validation for validation in tool_schema_validations if validation.get("ok") is False
@@ -2564,6 +2616,32 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     "tool execution summary is required",
                 )
             )
+        if spec.require_tool_error_classification and not tool_error_classifications:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "tool_error_classification_missing",
+                    "tool error classification is required",
+                )
+            )
+        for kind in spec.required_tool_error_kinds:
+            if kind not in tool_error_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_tool_error_kind",
+                        f"required tool error kind missing: {kind}",
+                    )
+                )
+        for kind in spec.forbidden_tool_error_kinds:
+            if kind in tool_error_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_tool_error_kind",
+                        f"forbidden tool error kind present: {kind}",
+                    )
+                )
 
         event_types = set(replay.event_types())
         for event_type in spec.required_event_types:
@@ -3318,6 +3396,8 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "provider_tool_result_execution_count": len(
                     provider_tool_results_with_execution
                 ),
+                "provider_error_classification_count": len(provider_error_classifications),
+                "provider_error_kinds": sorted(provider_error_kinds),
                 "provider_route_plan_count": len(provider_route_plans),
                 "provider_route_candidate_names": sorted(provider_route_candidate_names),
                 "provider_route_selected_names": sorted(provider_route_selected_names),
@@ -3364,6 +3444,8 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     (int(execution.get("attempt_count") or 0) for execution in tool_executions),
                     default=0,
                 ),
+                "tool_error_classification_count": len(tool_error_classifications),
+                "tool_error_kinds": sorted(tool_error_kinds),
                 "tool_schema_validation_count": len(tool_schema_validations),
                 "tool_schema_invalid_count": len(invalid_tool_schema_validations),
                 "tool_schema_validated_names": sorted(tool_schema_validated_names),
@@ -4370,6 +4452,36 @@ def _provider_stream_error_count(
         if summary.get("error") or "error" in set(summary.get("event_types") or ())
     )
     return failed_streamed_calls + summary_errors
+
+
+def _provider_error_classifications(
+    calls: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    classifications: list[dict[str, Any]] = []
+    for call in calls:
+        classification = call.get("error_classification")
+        if not isinstance(classification, dict) or not classification:
+            continue
+        classifications.append(
+            {
+                **dict(classification),
+                "provider_name": str(call.get("provider_name") or ""),
+                "model": str(call.get("model") or ""),
+                "status": str(classification.get("status") or call.get("status") or ""),
+            }
+        )
+    return tuple(classifications)
+
+
+def _error_classification_values(
+    classifications: tuple[dict[str, Any], ...],
+    key: str,
+) -> set[str]:
+    return {
+        str(classification.get(key) or "")
+        for classification in classifications
+        if classification.get(key)
+    }
 
 
 def _provider_tool_calls(
@@ -5627,6 +5739,9 @@ def _normalize_tool_execution_summary(
     schema_validation = summary.get("schema_validation")
     if isinstance(schema_validation, dict):
         normalized["schema_validation"] = dict(schema_validation)
+    error_classification = summary.get("error_classification")
+    if isinstance(error_classification, dict):
+        normalized["error_classification"] = dict(error_classification)
     return normalized
 
 
@@ -5639,6 +5754,25 @@ def _tool_execution_key(summary: dict[str, Any]) -> str:
             str(summary.get("final_status") or ""),
         )
     )
+
+
+def _tool_error_classifications(
+    summaries: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    classifications: list[dict[str, Any]] = []
+    for summary in summaries:
+        classification = summary.get("error_classification")
+        if not isinstance(classification, dict) or not classification:
+            continue
+        classifications.append(
+            {
+                **dict(classification),
+                "tool_name": str(summary.get("tool_name") or ""),
+                "call_id": str(summary.get("call_id") or ""),
+                "final_status": str(summary.get("final_status") or ""),
+            }
+        )
+    return tuple(classifications)
 
 
 def _tool_execution_by_name(

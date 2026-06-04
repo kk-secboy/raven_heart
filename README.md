@@ -296,6 +296,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   iteration limits, provider call limits, required provider names/models,
   required provider model capabilities, provider stream event contracts,
   provider-native tool-call presence and tool-call names,
+  provider/tool error classification kinds,
   provider route plans and provider route preflight readiness,
   embedding call limits, required embedding providers/models/dimensions,
   required events, required tools, preflight presence/status/issue-code constraints,
