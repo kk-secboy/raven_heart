@@ -200,6 +200,14 @@ audit records, failure summaries, and trace eval. Product-specific safety
 policies, operator escalation, and domain eval suites remain runtime
 responsibilities.
 
+`agent_core.run_agent_core_interaction_acceptance()` runs deterministic mixed
+interaction checks. It verifies one `AgentRunner` task can use streaming provider
+calls, receive a streamed provider-native tool call, execute the tool through the
+SDK runtime, send the tool result back as a provider-neutral tool message, finish
+with structured JSON output, emit event-stream records, and pass trace eval for
+the combined stream/tool/structured contract. Concrete provider credentials,
+runtime SSE/WebSocket delivery, and UI presentation remain outside the SDK.
+
 `agent_core.run_agent_core_lifecycle_acceptance()` runs deterministic
 scheduling/lifecycle checks. It verifies single-process capacity queueing and
 dequeue, queued-run cancellation before capacity claim, active-run cancellation,

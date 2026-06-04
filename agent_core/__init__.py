@@ -165,6 +165,12 @@ from agent_core.guardrail_acceptance import (
     AgentCoreGuardrailAcceptanceReport,
     run_agent_core_guardrail_acceptance,
 )
+from agent_core.interaction_acceptance import (
+    AgentCoreInteractionAcceptanceHarness,
+    AgentCoreInteractionAcceptanceIssue,
+    AgentCoreInteractionAcceptanceReport,
+    run_agent_core_interaction_acceptance,
+)
 from agent_core.lifecycle_acceptance import (
     AgentCoreLifecycleAcceptanceHarness,
     AgentCoreLifecycleAcceptanceIssue,
@@ -693,6 +699,9 @@ __all__ = [
     "AgentCoreGuardrailAcceptanceHarness",
     "AgentCoreGuardrailAcceptanceIssue",
     "AgentCoreGuardrailAcceptanceReport",
+    "AgentCoreInteractionAcceptanceHarness",
+    "AgentCoreInteractionAcceptanceIssue",
+    "AgentCoreInteractionAcceptanceReport",
     "AgentCoreLifecycleAcceptanceHarness",
     "AgentCoreLifecycleAcceptanceIssue",
     "AgentCoreLifecycleAcceptanceReport",
@@ -1151,6 +1160,7 @@ __all__ = [
     "run_agent_core_event_acceptance",
     "run_agent_core_external_backend_acceptance",
     "run_agent_core_guardrail_acceptance",
+    "run_agent_core_interaction_acceptance",
     "run_agent_core_lifecycle_acceptance",
     "run_agent_core_native_tool_acceptance",
     "run_agent_core_orchestration_acceptance",

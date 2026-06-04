@@ -84,6 +84,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreGuardrailAcceptanceHarness",
         "AgentCoreGuardrailAcceptanceIssue",
         "AgentCoreGuardrailAcceptanceReport",
+        "AgentCoreInteractionAcceptanceHarness",
+        "AgentCoreInteractionAcceptanceIssue",
+        "AgentCoreInteractionAcceptanceReport",
         "AgentCoreLifecycleAcceptanceHarness",
         "AgentCoreLifecycleAcceptanceIssue",
         "AgentCoreLifecycleAcceptanceReport",
@@ -387,6 +390,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_event_acceptance",
         "run_agent_core_external_backend_acceptance",
         "run_agent_core_guardrail_acceptance",
+        "run_agent_core_interaction_acceptance",
         "run_agent_core_lifecycle_acceptance",
         "run_agent_core_native_tool_acceptance",
         "run_agent_core_orchestration_acceptance",
@@ -477,6 +481,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "event_acceptance_harness" in capability_names
     assert "external_backend_acceptance_harness" in capability_names
     assert "guardrail_acceptance_harness" in capability_names
+    assert "interaction_acceptance_harness" in capability_names
     assert "lifecycle_acceptance_harness" in capability_names
     assert "native_tool_acceptance_harness" in capability_names
     assert "packaging_acceptance_harness" in capability_names
