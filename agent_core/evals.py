@@ -88,6 +88,11 @@ class TraceEvalSpec:
     require_provider_tool_calls: bool = False
     required_provider_tool_call_names: tuple[str, ...] = ()
     max_provider_tool_calls: int | None = None
+    require_provider_tool_results: bool = False
+    require_provider_tool_result_execution: bool = False
+    required_provider_tool_result_names: tuple[str, ...] = ()
+    required_provider_tool_result_statuses: tuple[str, ...] = ()
+    max_provider_tool_result_failures: int | None = None
     require_provider_route_plan: bool = False
     required_provider_route_candidate_names: tuple[str, ...] = ()
     required_provider_route_selected_names: tuple[str, ...] = ()
@@ -289,6 +294,17 @@ class TraceEvalSpec:
             "require_provider_tool_calls": self.require_provider_tool_calls,
             "required_provider_tool_call_names": list(self.required_provider_tool_call_names),
             "max_provider_tool_calls": self.max_provider_tool_calls,
+            "require_provider_tool_results": self.require_provider_tool_results,
+            "require_provider_tool_result_execution": (
+                self.require_provider_tool_result_execution
+            ),
+            "required_provider_tool_result_names": list(
+                self.required_provider_tool_result_names
+            ),
+            "required_provider_tool_result_statuses": list(
+                self.required_provider_tool_result_statuses
+            ),
+            "max_provider_tool_result_failures": self.max_provider_tool_result_failures,
             "require_provider_route_plan": self.require_provider_route_plan,
             "required_provider_route_candidate_names": list(
                 self.required_provider_route_candidate_names
@@ -679,6 +695,17 @@ class TraceReplayHarness:
                     payload=_payload(item),
                 )
             )
+        for item in _provider_tool_results(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="provider_tool_result",
+                    event_type="provider_tool_result_recorded",
+                    run_id=str(item.get("run_id") or run_id),
+                    turn_id=str(item.get("turn_id") or ""),
+                    payload=dict(item),
+                )
+            )
         for item in _event_log_events(trace):
             steps.append(
                 TraceReplayStep(
@@ -844,6 +871,23 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         )
         provider_tool_calls = _provider_tool_calls(provider_call_records, provider_stream_summaries)
         provider_tool_call_names = _provider_tool_call_names(provider_tool_calls)
+        provider_tool_results = _provider_tool_results(trace)
+        provider_tool_result_names = _provider_tool_result_values(
+            provider_tool_results,
+            "tool_name",
+        )
+        provider_tool_result_statuses = _provider_tool_result_values(
+            provider_tool_results,
+            "status",
+        )
+        failed_provider_tool_results = tuple(
+            result
+            for result in provider_tool_results
+            if result.get("ok") is False or str(result.get("status") or "") != "completed"
+        )
+        provider_tool_results_with_execution = tuple(
+            result for result in provider_tool_results if isinstance(result.get("tool_execution"), dict)
+        )
         provider_route_plans = _provider_route_plans(provider_call_records)
         provider_route_candidates = _provider_route_candidates(provider_route_plans)
         provider_route_candidate_names = _provider_route_candidate_names(provider_route_candidates)
@@ -1328,6 +1372,58 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     metadata={
                         "actual": len(provider_tool_calls),
                         "limit": spec.max_provider_tool_calls,
+                    },
+                )
+            )
+        if spec.require_provider_tool_results and not provider_tool_results:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_tool_results_missing",
+                    "provider-native tool results are required",
+                )
+            )
+        if (
+            spec.require_provider_tool_result_execution
+            and not provider_tool_results_with_execution
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_tool_result_execution_missing",
+                    "provider-native tool result execution summary is required",
+                )
+            )
+        for tool_name in spec.required_provider_tool_result_names:
+            if tool_name not in provider_tool_result_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_tool_result",
+                        f"required provider-native tool result missing: {tool_name}",
+                    )
+                )
+        for status in spec.required_provider_tool_result_statuses:
+            if status not in provider_tool_result_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_tool_result_status",
+                        f"required provider-native tool result status missing: {status}",
+                    )
+                )
+        if (
+            spec.max_provider_tool_result_failures is not None
+            and len(failed_provider_tool_results) > spec.max_provider_tool_result_failures
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_tool_result_failure_limit_exceeded",
+                    "provider-native tool result failure count exceeded limit",
+                    metadata={
+                        "actual": len(failed_provider_tool_results),
+                        "limit": spec.max_provider_tool_result_failures,
                     },
                 )
             )
@@ -3058,6 +3154,13 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "provider_stream_error_count": provider_stream_error_count,
                 "provider_tool_call_count": len(provider_tool_calls),
                 "provider_tool_call_names": sorted(provider_tool_call_names),
+                "provider_tool_result_count": len(provider_tool_results),
+                "provider_tool_result_names": sorted(provider_tool_result_names),
+                "provider_tool_result_statuses": sorted(provider_tool_result_statuses),
+                "provider_tool_result_failure_count": len(failed_provider_tool_results),
+                "provider_tool_result_execution_count": len(
+                    provider_tool_results_with_execution
+                ),
                 "provider_route_plan_count": len(provider_route_plans),
                 "provider_route_candidate_names": sorted(provider_route_candidate_names),
                 "provider_route_selected_names": sorted(provider_route_selected_names),
@@ -4119,6 +4222,50 @@ def _tool_call_manifests(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]
 
 def _provider_tool_call_names(tool_calls: tuple[dict[str, Any], ...]) -> set[str]:
     return {str(item.get("tool_name") or "") for item in tool_calls if item.get("tool_name")}
+
+
+def _provider_tool_results(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    results: list[dict[str, Any]] = []
+    for event in _journal_events(trace):
+        if str(event.get("event_type") or "") != "tool_call":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        provider_tool_call = metadata.get("provider_tool_call")
+        if not isinstance(provider_tool_call, dict):
+            continue
+        tool_execution = metadata.get("tool_execution")
+        status = str(payload.get("status") or "")
+        result = {
+            "schema_version": "agent-core-provider-tool-result/v1",
+            "run_id": str(event.get("run_id") or payload.get("run_id") or ""),
+            "turn_id": str(event.get("turn_id") or payload.get("turn_id") or ""),
+            "tool_name": str(payload.get("tool_name") or provider_tool_call.get("tool_name") or ""),
+            "call_id": str(payload.get("call_id") or provider_tool_call.get("call_id") or ""),
+            "status": status,
+            "ok": status == "completed",
+            "error": str(payload.get("error") or ""),
+            "provider_tool_call": dict(provider_tool_call),
+        }
+        if isinstance(tool_execution, dict):
+            result["tool_execution"] = _normalize_tool_execution_summary(
+                tool_execution,
+                fallback_tool_name=str(result["tool_name"]),
+                fallback_call_id=str(result["call_id"]),
+            )
+        results.append(result)
+    return tuple(results)
+
+
+def _provider_tool_result_values(
+    results: tuple[dict[str, Any], ...],
+    key: str,
+) -> set[str]:
+    return {str(item.get(key) or "") for item in results if item.get(key)}
 
 
 def _provider_request_shape_plan(call: dict[str, Any]) -> dict[str, Any]:

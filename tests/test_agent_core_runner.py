@@ -301,6 +301,13 @@ async def test_agent_runner_can_enable_provider_native_tool_calls_per_request() 
     assert tools.invocations[0].arguments == {"query": "target"}
     assert outcome.trace_manifest["metadata"]["native_tool_calls"] is True
     assert center.calls[0].metadata["response"]["tool_call_count"] == 1
+    tool_events = [
+        event
+        for event in outcome.trace_manifest["journal_replay"]["events"]
+        if event["event_type"] == "tool_call"
+    ]
+    assert tool_events[0]["payload"]["metadata"]["provider_tool_call"]["call_id"] == "call-1"
+    assert tool_events[0]["payload"]["metadata"]["tool_execution"]["final_ok"] is True
 
 
 @pytest.mark.asyncio

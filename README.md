@@ -272,7 +272,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   skill-load/resource-view, handoff decision, approval request/decision,
   artifact-store, structured-output validation/repair, provider-call,
   provider request-shape payloads, provider-stream, embedding-call, and
-  lifecycle-hook steps.
+  lifecycle-hook steps. Provider-native tool results are replayed as explicit
+  derived steps when journal tool-call records carry `provider_tool_call`
+  metadata.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
@@ -293,8 +295,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   excluded injection source constraints, context material selection constraints,
   memory governance constraints, prompt
   budget constraints, bucket budget constraints, runtime semantic prompt trim
-  constraints, provider request-shape constraints, and global prompt trim
-  constraints.
+  constraints, provider request-shape constraints, provider-native tool result
+  constraints, and global prompt trim constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
@@ -429,6 +431,9 @@ selection.
 loop: the executor sends `ToolSpec`-derived contracts, executes returned
 `LLMToolCall` items through the same policy/replay/tool boundary, and appends
 provider-neutral tool result messages for the next model turn.
+Journal records keep the originating `provider_tool_call` together with the
+prompt-safe tool result metadata, so replay/eval can prove provider-native tool
+calls were actually executed and returned to the model loop.
 Content parts follow the same rule: the SDK can describe text, image, audio,
 file, binary, and JSON parts, while runtimes own file access, uploads, URL
 signing, object storage, and vendor-specific multipart payloads.

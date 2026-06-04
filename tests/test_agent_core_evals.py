@@ -1088,6 +1088,129 @@ def test_trace_eval_validates_provider_native_tool_call_contracts() -> None:
     }
 
 
+def test_trace_eval_validates_provider_native_tool_result_contracts() -> None:
+    trace = {
+        **_trace_manifest(),
+        "journal_replay": {
+            "ok": True,
+            "events": [
+                {
+                    "sequence": 1,
+                    "event_type": "tool_call",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "payload": {
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "call_id": "call-1",
+                        "tool_name": "lookup",
+                        "status": "completed",
+                        "error": "",
+                        "metadata": {
+                            "provider_tool_call": {
+                                "schema_version": "agent-core-llm-tool-call/v1",
+                                "tool_name": "lookup",
+                                "call_id": "call-1",
+                                "argument_keys": ["target"],
+                                "arguments_sha256": "hash",
+                                "metadata": {},
+                            },
+                            "tool_execution": {
+                                "schema_version": "agent-core-tool-execution-summary/v1",
+                                "tool_name": "lookup",
+                                "call_id": "call-1",
+                                "attempt_count": 1,
+                                "retried": False,
+                                "final_status": "completed",
+                                "final_ok": True,
+                                "attempt_statuses": ["completed"],
+                                "retryable_attempts": [],
+                            },
+                        },
+                    },
+                }
+            ],
+        },
+    }
+
+    replay = TraceReplayHarness().replay(trace)
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_provider_tool_results=True,
+            require_provider_tool_result_execution=True,
+            required_provider_tool_result_names=("lookup",),
+            required_provider_tool_result_statuses=("completed",),
+            max_provider_tool_result_failures=0,
+        ),
+    )
+
+    assert "provider_tool_result_recorded" in replay.event_types()
+    result_step = next(
+        step for step in replay.steps if step.event_type == "provider_tool_result_recorded"
+    )
+    assert result_step.source == "provider_tool_result"
+    assert result_step.payload["tool_name"] == "lookup"
+    assert result_step.payload["provider_tool_call"]["call_id"] == "call-1"
+    assert report.ok
+    assert report.summary["provider_tool_result_count"] == 1
+    assert report.summary["provider_tool_result_names"] == ["lookup"]
+    assert report.summary["provider_tool_result_statuses"] == ["completed"]
+    assert report.summary["provider_tool_result_failure_count"] == 0
+    assert report.summary["provider_tool_result_execution_count"] == 1
+
+
+def test_trace_eval_reports_provider_native_tool_result_contract_failures() -> None:
+    missing = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(require_provider_tool_results=True),
+    )
+    failed_trace = {
+        **_trace_manifest(),
+        "journal_replay": {
+            "ok": True,
+            "events": [
+                {
+                    "event_type": "tool_call",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "payload": {
+                        "call_id": "call-1",
+                        "tool_name": "lookup",
+                        "status": "failed",
+                        "error": "boom",
+                        "metadata": {
+                            "provider_tool_call": {
+                                "tool_name": "lookup",
+                                "call_id": "call-1",
+                                "argument_keys": ["target"],
+                                "arguments_sha256": "hash",
+                            }
+                        },
+                    },
+                }
+            ],
+        },
+    }
+    failed = DefaultTraceEvaluator().evaluate(
+        failed_trace,
+        TraceEvalSpec(
+            require_provider_tool_result_execution=True,
+            required_provider_tool_result_names=("scan",),
+            required_provider_tool_result_statuses=("completed",),
+            max_provider_tool_result_failures=0,
+        ),
+    )
+
+    assert {issue.code for issue in missing.issues} == {"provider_tool_results_missing"}
+    assert {
+        "provider_tool_result_execution_missing",
+        "missing_provider_tool_result",
+        "missing_provider_tool_result_status",
+        "provider_tool_result_failure_limit_exceeded",
+    } <= {issue.code for issue in failed.issues}
+
+
 def test_trace_eval_validates_provider_route_plan_contracts() -> None:
     trace = _trace_manifest()
     trace["provider"]["calls"][0]["metadata"]["route_plan"] = {

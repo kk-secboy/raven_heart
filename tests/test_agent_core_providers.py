@@ -1223,4 +1223,6 @@ async def test_react_executor_can_execute_provider_native_tool_calls() -> None:
     assert provider.requests[1].messages[-1].metadata["provider_tool_call_id"] == "call-1"
     assert tools.invocations[0].call_id == "call-1"
     assert tools.invocations[0].arguments == {"target": "demo"}
+    assert harness.tool_calls[0]["metadata"]["provider_tool_call"]["call_id"] == "call-1"
+    assert harness.tool_calls[0]["metadata"]["tool_execution"]["final_ok"] is True
 

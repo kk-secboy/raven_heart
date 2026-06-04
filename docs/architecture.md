@@ -162,11 +162,13 @@ checkpoint loading, journal events, event-log entries, provider calls, provider
 request-shape payloads, provider streaming calls using prompt-safe summaries,
 prompt budget, prompt bucket budget, semantic prompt trim, global prompt trim,
 preflight reports, approval records, artifact records, structured output
-validation/repair records, handoff records, embedding calls, and lifecycle hook records. The core
+validation/repair records, handoff records, provider-native tool result
+records, embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, provider request-shape plans and
-output-token ceilings, required events, required tools,
+output-token ceilings, provider-native tool-result presence/status/execution,
+required events, required tools,
 cost ceilings, event ordering, journal integrity, preflight status/issue-code constraints,
 resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, handoff status/session constraints, tool execution presence,
@@ -323,6 +325,10 @@ calls through the same policy, approval, replay, retry, and tool-result
 compaction boundaries used by JSON ReAct actions, then appends provider-neutral
 `role=tool` messages for the next turn. This keeps OpenAI-compatible tool calls,
 Anthropic tool use, and local model function calling behind the same core loop.
+The journal keeps each provider-native tool result tied to the originating
+`provider_tool_call` manifest plus any `tool_execution` summary. Trace replay
+emits derived provider-tool-result steps, and evals can require result names,
+statuses, execution summaries, or failure ceilings.
 `AgentSession.native_tool_calls` and `AgentRunRequest.native_tool_calls` expose
 that mode at the runner boundary so consuming runtimes can enable it by default
 or roll it out per request without bypassing `AgentRunner`.
