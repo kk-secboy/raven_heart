@@ -26,6 +26,10 @@ from agent_core.context import (
     AgentPromptBuilder,
     ContextInjection,
     ContextInjectionPolicy,
+    ContextMaterial,
+    ContextMaterialSelectionRequest,
+    ContextMaterialSelectionResult,
+    ContextMaterialSelectorPort,
 )
 from agent_core.events import EventSinkPort
 from agent_core.errors import ResumeError
@@ -74,6 +78,7 @@ class AgentSession:
     memory: MemoryPort = field(default_factory=NullMemory)
     timeline: TimelineStore = field(default_factory=TimelineStore)
     context_reducer: ContextReducerPort | None = None
+    context_material_selector: ContextMaterialSelectorPort | None = None
     context_injection_policy: ContextInjectionPolicy = field(default_factory=ContextInjectionPolicy)
     prompt_bucket_budget_policy: PromptBucketBudgetPolicy | None = None
     prompt_semantic_reducer: PromptSemanticReducerPort | None = None
@@ -134,6 +139,9 @@ class AgentSession:
             "artifact_store": _component_manifest_sync(self.artifact_store),
             "native_tool_calls": self.native_tool_calls,
             "context_reducer": _context_reducer_manifest(self.context_reducer),
+            "context_material_selector": _context_material_selector_manifest(
+                self.context_material_selector
+            ),
             "context_injection_policy": self.context_injection_policy.manifest(),
             "prompt_bucket_budget_policy": _prompt_bucket_budget_policy_manifest(
                 self.prompt_bucket_budget_policy
@@ -155,6 +163,8 @@ class AgentRunRequest:
     resume_token: ResumeToken | None = None
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
+    context_materials: tuple[ContextMaterial, ...] = ()
+    context_material_selection: ContextMaterialSelectionRequest | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
 
@@ -170,6 +180,8 @@ class AgentResumeRequest:
     refresh: bool = False
     approval_resume: ApprovalResumeContext | None = None
     structured_output: StructuredOutputSpec | None = None
+    context_materials: tuple[ContextMaterial, ...] = ()
+    context_material_selection: ContextMaterialSelectionRequest | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
 
@@ -185,6 +197,8 @@ class AgentResumeRequest:
             "has_context": self.context is not None,
             "has_approval_resume": self.approval_resume is not None,
             "has_structured_output": self.structured_output is not None,
+            "context_material_count": len(self.context_materials),
+            "has_context_material_selection": self.context_material_selection is not None,
             "timeout_seconds": self.timeout_seconds,
             "native_tool_calls": self.native_tool_calls,
         }
@@ -205,6 +219,12 @@ class AgentRunOutcome:
 
 @dataclass(frozen=True)
 class AgentMemoryRecall:
+    injections: tuple[ContextInjection, ...] = ()
+    manifest: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AgentContextMaterialSelection:
     injections: tuple[ContextInjection, ...] = ()
     manifest: dict[str, Any] = field(default_factory=dict)
 
@@ -577,11 +597,13 @@ class AgentRunner:
             resume_manifest = await self._resume_manifest(run_request.resume_token)
             capability_discovery_manifest = self._capability_discovery_manifest(run_request)
             memory_recall = await self._memory_recall(run_request)
+            context_material_selection = await self._context_material_selection(run_request)
             timeline_reduction_manifest = await self._reduce_timeline_if_needed(run_request)
             context = self._context_for(
                 run_request,
                 resume_manifest=resume_manifest,
-                injections=memory_recall.injections,
+                injections=(*memory_recall.injections, *context_material_selection.injections),
+                context_material_selection_manifest=context_material_selection.manifest,
                 timeline_reduction_manifest=timeline_reduction_manifest,
             )
             prompt = self._prompt_builder().build(context)
@@ -700,6 +722,7 @@ class AgentRunner:
         *,
         resume_manifest: dict[str, Any] | None = None,
         injections: tuple[ContextInjection, ...] = (),
+        context_material_selection_manifest: dict[str, Any] | None = None,
         timeline_reduction_manifest: dict[str, Any] | None = None,
     ) -> AgentContextPack:
         base = request.context or AgentContextPack()
@@ -745,6 +768,9 @@ class AgentRunner:
             **request.metadata,
             "profile": self.session.profile.name,
         }
+        context_material_selection_manifest = context_material_selection_manifest or {}
+        if context_material_selection_manifest:
+            metadata["context_material_selection"] = context_material_selection_manifest
         if resume_manifest:
             metadata["resume"] = resume_manifest
         if approval_resume_manifest:
@@ -811,6 +837,33 @@ class AgentRunner:
 
     async def _memory_injections(self, request: AgentRunRequest) -> tuple[ContextInjection, ...]:
         return (await self._memory_recall(request)).injections
+
+    async def _context_material_selection(
+        self,
+        request: AgentRunRequest,
+    ) -> AgentContextMaterialSelection:
+        selector = self.session.context_material_selector
+        if selector is None:
+            return AgentContextMaterialSelection()
+        selection_request = _context_material_selection_request(request)
+        if not selection_request.materials:
+            return AgentContextMaterialSelection()
+        result = selector.select(selection_request)
+        if inspect.isawaitable(result):
+            result = await result
+        if not isinstance(result, ContextMaterialSelectionResult):
+            manifest = getattr(result, "manifest", None)
+            injections = tuple(getattr(result, "injections", ()))
+            return AgentContextMaterialSelection(
+                injections=tuple(
+                    item for item in injections if isinstance(item, ContextInjection)
+                ),
+                manifest=dict(manifest()) if callable(manifest) else {},
+            )
+        return AgentContextMaterialSelection(
+            injections=result.injections,
+            manifest=result.manifest(),
+        )
 
     async def _memory_recall(self, request: AgentRunRequest) -> AgentMemoryRecall:
         if not self.session.profile.capabilities.memory_enabled:
@@ -1430,6 +1483,45 @@ def _prompt_semantic_reducer_manifest(
     }
 
 
+def _context_material_selector_manifest(
+    selector: ContextMaterialSelectorPort | None,
+) -> dict[str, Any]:
+    if selector is None:
+        return {"enabled": False}
+    selector_manifest = getattr(selector, "manifest", None)
+    if callable(selector_manifest):
+        manifest = selector_manifest()
+        return {"enabled": True, **dict(manifest)}
+    return {
+        "enabled": True,
+        "type": type(selector).__name__,
+    }
+
+
+def _context_material_selection_request(
+    request: AgentRunRequest,
+) -> ContextMaterialSelectionRequest:
+    base = request.context_material_selection
+    if base is None:
+        return ContextMaterialSelectionRequest(
+            task=request.task,
+            materials=tuple(request.context_materials),
+            metadata={"request_metadata": dict(request.metadata)},
+        )
+    return ContextMaterialSelectionRequest(
+        task=base.task or request.task,
+        materials=tuple(base.materials or request.context_materials),
+        max_materials=base.max_materials,
+        max_bytes=base.max_bytes,
+        allowed_targets=tuple(base.allowed_targets),
+        min_score=base.min_score,
+        metadata={
+            **base.metadata,
+            "request_metadata": dict(request.metadata),
+        },
+    )
+
+
 def _approval_resume_manifest(resume: ApprovalResumeContext | None) -> dict[str, Any]:
     if resume is None or resume.empty:
         return {}
@@ -1518,6 +1610,8 @@ def _run_request_from_resume(
         resume_token=candidate.token,
         approval_resume=request.approval_resume,
         structured_output=request.structured_output,
+        context_materials=request.context_materials,
+        context_material_selection=request.context_material_selection,
         timeout_seconds=request.timeout_seconds,
         native_tool_calls=request.native_tool_calls,
     )

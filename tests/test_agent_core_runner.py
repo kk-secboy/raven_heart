@@ -6,7 +6,13 @@ import pytest
 
 from agent_core.approvals import ApprovalDecisionRecord, ApprovalResumeContext, InMemoryApprovalStore
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
-from agent_core.context import AgentContextPack, ContextInjectionPolicy
+from agent_core.context import (
+    AgentContextPack,
+    ContextInjectionPolicy,
+    ContextMaterial,
+    ContextMaterialSelectionRequest,
+    DefaultContextMaterialSelector,
+)
 from agent_core.errors import ResumeError
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.lifecycle import AgentLifecycleEvent, AgentLifecycleHookCenter
@@ -327,6 +333,71 @@ async def test_agent_runner_applies_context_injection_policy_to_memory_recall() 
     assert "[...context injection trimmed...]" in prompt_text
     assert outcome.session_manifest["context_injection_policy"]["max_injection_bytes"] == 120
     assert outcome.trace_manifest["prompt"]["metadata"]["context_injections"][0]["status"] == "trimmed"
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_selects_context_materials_before_prompt_build() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    session = AgentSession(
+        profile=AgentProfile(name="material-selector"),
+        provider=provider,
+        tools=MockToolRuntime(),
+        context_material_selector=DefaultContextMaterialSelector(),
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="investigate payment auth csrf failure",
+            context_material_selection=ContextMaterialSelectionRequest(
+                task="",
+                materials=(
+                    ContextMaterial(
+                        name="old_note",
+                        content="legacy dns observation",
+                        role="memory",
+                        priority=1,
+                        metadata={"source": "memory"},
+                    ),
+                    ContextMaterial(
+                        name="auth_trace",
+                        content="payment auth callback failed csrf token validation",
+                        role="timeline",
+                        priority=4,
+                        metadata={"source": "trace"},
+                    ),
+                    ContextMaterial(
+                        name="schema_hint",
+                        content='{"required":["risk"]}',
+                        role="schema",
+                        priority=3,
+                        metadata={"source": "runtime"},
+                    ),
+                ),
+                max_materials=2,
+                max_bytes=512,
+            ),
+        )
+    )
+    prompt_text = provider.requests[0].messages[0].content
+    selection = outcome.prompt_manifest["metadata"]["context_material_selection"]
+
+    assert outcome.result.status == "completed"
+    assert "payment auth callback failed csrf token validation" in prompt_text
+    assert '"required":["risk"]' in prompt_text
+    assert "legacy dns observation" not in prompt_text
+    assert selection["selected_count"] == 2
+    assert selection["dropped_count"] == 1
+    assert outcome.session_manifest["context_material_selector"]["enabled"] is True
+    assert outcome.trace_manifest["summary"]["context_material_selected_count"] == 2
+    assert outcome.trace_manifest["summary"]["context_material_dropped_count"] == 1
+    assert outcome.trace_manifest["context_material_selection"]["statuses"] == {
+        "count_exceeded": 1,
+        "selected": 2,
+    }
+    assert outcome.trace_manifest["context_injections"]["sources"] == {
+        "runtime": 1,
+        "trace": 1,
+    }
 
 
 @pytest.mark.asyncio

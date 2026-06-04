@@ -601,6 +601,9 @@ let the SDK rank them by deterministic task-term overlap plus priority and
 budget. The selector returns `ContextInjection` objects and a prompt-safe
 manifest with selected/dropped status, target buckets, scores, byte counts, and
 hashes.
+`AgentSession.context_material_selector` lets `AgentRunner` apply that selector
+automatically when `AgentRunRequest.context_materials` or
+`AgentRunRequest.context_material_selection` is provided.
 
 `ContextInjectionPolicy` governs those insertions before prompt assembly. It can
 limit allowed target buckets, trim oversized injected material, cap total
@@ -729,7 +732,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Prompt bucket budget policy | MVP implemented |
 | Runtime semantic prompt reducer | MVP implemented |
 | Runtime semantic prompt trace/eval | MVP implemented |
-| Context material selector | MVP implemented |
+| Context material selector | runner-integrated MVP |
 | Context material selection trace/eval | MVP implemented |
 | Context injection policy | MVP implemented |
 | Context reducer | runner-integrated MVP |

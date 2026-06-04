@@ -491,6 +491,9 @@ overlap, role mapping, priority, max material count, and byte budget, returning
 `ContextInjection` objects plus a manifest of selected and dropped candidates.
 The manifest stores names, roles, targets, scores, byte counts, and hashes rather
 than raw hidden context bodies.
+`AgentSession.context_material_selector` lets `AgentRunner` apply this step
+before prompt assembly when a request supplies context materials or an explicit
+selection request.
 `AgentRunTraceBundle`, `TraceReplayHarness`, and `DefaultTraceEvaluator` expose
 that manifest as a first-class trace contract, so suites can require selected
 materials, forbid drop statuses, cap dropped count, or cap selected bytes.
