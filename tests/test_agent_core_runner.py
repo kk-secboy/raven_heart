@@ -59,6 +59,8 @@ from agent_core.testing import MockLLMProvider, MockToolRuntime
 from agent_core.timeline import TimelineStore
 from agent_core.tools import ToolInvocation, ToolRegistry, ToolResult, ToolSpec
 from agent_core.policy import ApprovalRequest, PolicyRule, RuleBasedPolicy
+from agent_core.preflight import AgentRunPreflightRequirements
+from agent_core.trace import InMemoryRunTraceStore
 
 
 class _BlockingProvider:
@@ -143,6 +145,43 @@ class _ContextMCPConnector:
             name=name,
             messages=({"role": "user", "content": '{"required":["risk"]}'},),
         )
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_blocks_before_provider_when_preflight_fails() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    trace_store = InMemoryRunTraceStore()
+    session = AgentSession(
+        profile=AgentProfile(name="preflight"),
+        provider=provider,
+        tools=ToolRegistry(),
+        harness=InMemoryAgentJournal(),
+        trace_store=trace_store,
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="scan target",
+            preflight_requirements=AgentRunPreflightRequirements(
+                max_task_bytes=4,
+                required_tools=("scan",),
+            ),
+        )
+    )
+    saved = await trace_store.load(outcome.result.run_id)
+
+    assert outcome.result.status == "denied"
+    assert outcome.result.iterations == 0
+    assert provider.requests == []
+    assert outcome.preflight_manifest["status"] == "blocked"
+    assert outcome.trace_manifest["summary"]["has_preflight"] is True
+    assert outcome.trace_manifest["summary"]["preflight_blocked"] is True
+    assert outcome.trace_manifest["preflight"]["blocking_codes"] == [
+        "missing_tool",
+        "task_bytes_exceeded",
+    ]
+    assert saved is not None
+    assert saved["run"]["status"] == "denied"
 
 
 @pytest.mark.asyncio

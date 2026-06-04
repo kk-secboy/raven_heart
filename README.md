@@ -131,6 +131,12 @@ agent_core never imports runtime
   run-start/run-complete/run-fail hooks with prompt-safe audit records.
 - Lifecycle hooks default to non-fatal recording; `fail_fast=True` lets a
   runtime make hook failures block execution.
+- `AgentRunPreflightCenter` runs SDK/runtime preflight checks after optional
+  refresh and before resume, memory recall, prompt build, or provider calls.
+- `AgentRunPreflightRequirements` lets one request require actions, tools,
+  skills, MCP servers, memory availability, or task byte limits.
+- Blocked preflight reports return a denied `AgentRunOutcome` with traceable
+  issue codes and without entering the provider/tool loop.
 
 ### ReAct
 
@@ -256,7 +262,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 
 - `TraceReplayHarness` builds a deterministic replay timeline from journal,
   event-log, and provider call manifests, including resume-plan,
-  checkpoint-loaded, prompt-bucket-budget, prompt-semantic-trim,
+  checkpoint-loaded, preflight, prompt-bucket-budget, prompt-semantic-trim,
   prompt-trim, context-material-selection, MCP inventory/server,
   skill-load/resource-view, handoff decision, approval request/decision,
   artifact-store, structured-output validation/repair, provider-call,
@@ -268,7 +274,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   required provider model capabilities, provider stream event contracts,
   provider-native tool-call presence and tool-call names,
   embedding call limits, required embedding providers/models/dimensions,
-  required events, required tools, resume-plan presence, resume-plan readiness,
+  required events, required tools, preflight presence/status/issue-code constraints,
+  resume-plan presence, resume-plan readiness,
   expected checkpoint id, handoff status/session constraints, tool execution presence, tool retry, tool schema
   validation, minimum tool attempt counts, ToolCenter route/call audit
   constraints, agent-as-tool session/status constraints, MCP center inventory constraints, skill center constraints,
@@ -747,6 +754,8 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Trace observability manifests | MVP implemented |
 | Lifecycle hook contracts | MVP implemented |
 | Lifecycle hook trace/eval contracts | MVP implemented |
+| Run preflight guardrails | MVP implemented |
+| Run preflight trace/eval contracts | MVP implemented |
 | Agent-as-tool runtime | MVP implemented |
 | Agent-as-tool trace/eval contracts | MVP implemented |
 | Handoff trace/eval contracts | MVP implemented |

@@ -672,6 +672,28 @@ def test_storage_backend_trace_collects_and_deduplicates_component_backends() ->
     assert len(memory["sources"]) == 2
 
 
+def test_run_trace_bundle_summarizes_preflight_report() -> None:
+    manifest = AgentRunTraceBundle(
+        run_id="run-preflight",
+        status="denied",
+        preflight={
+            "schema_version": "agent-core-run-preflight-report/v1",
+            "status": "blocked",
+            "ok": False,
+            "issue_count": 2,
+            "blocking_count": 1,
+            "codes": ["empty_task", "missing_tool"],
+            "blocking_codes": ["missing_tool"],
+        },
+    ).manifest()
+
+    assert manifest["summary"]["has_preflight"] is True
+    assert manifest["summary"]["preflight_blocked"] is True
+    assert manifest["summary"]["preflight_issue_count"] == 2
+    assert manifest["summary"]["preflight_blocking_count"] == 1
+    assert manifest["preflight"]["blocking_codes"] == ["missing_tool"]
+
+
 def test_context_injection_trace_summarizes_prompt_injection_decisions() -> None:
     trace = ContextInjectionTrace.from_prompt(
         {

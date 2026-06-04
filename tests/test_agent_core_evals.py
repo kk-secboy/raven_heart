@@ -1498,6 +1498,86 @@ def test_trace_eval_reports_resume_contract_failures() -> None:
     } <= codes
 
 
+def test_trace_replay_and_eval_understand_preflight_reports() -> None:
+    trace = {
+        **_trace_manifest(),
+        "preflight": {
+            "schema_version": "agent-core-run-preflight-report/v1",
+            "status": "passed",
+            "ok": True,
+            "issue_count": 1,
+            "blocking_count": 0,
+            "codes": ["empty_task"],
+            "blocking_codes": [],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_preflight=True,
+            require_preflight_passed=True,
+            required_preflight_issue_codes=("empty_task",),
+            forbidden_preflight_issue_codes=("missing_tool",),
+            max_preflight_blocking_issues=0,
+            required_event_types=("preflight_passed",),
+        ),
+    )
+    replay = TraceReplayHarness().replay(trace)
+    preflight_steps = [step for step in replay.steps if step.source == "preflight"]
+
+    assert report.ok
+    assert report.summary["has_preflight"] is True
+    assert report.summary["preflight_status"] == "passed"
+    assert report.summary["preflight_issue_codes"] == ["empty_task"]
+    assert preflight_steps[0].event_type == "preflight_passed"
+
+
+def test_trace_eval_reports_preflight_contract_failures() -> None:
+    trace = {
+        **_trace_manifest(),
+        "preflight": {
+            "schema_version": "agent-core-run-preflight-report/v1",
+            "status": "blocked",
+            "ok": False,
+            "issue_count": 1,
+            "blocking_count": 1,
+            "codes": ["missing_tool"],
+            "blocking_codes": ["missing_tool"],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_preflight_passed=True,
+            required_preflight_issue_codes=("memory_required",),
+            forbidden_preflight_issue_codes=("missing_tool",),
+            max_preflight_blocking_issues=0,
+        ),
+    )
+    blocked = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(require_preflight=True, require_preflight_blocked=True),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "preflight"},
+        TraceEvalSpec(require_preflight=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert blocked.ok
+    assert not report.ok
+    assert {
+        "preflight_not_passed",
+        "missing_preflight_issue_code",
+        "forbidden_preflight_issue_code",
+        "preflight_blocking_issue_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"preflight_missing"}
+
+
 def test_trace_eval_validates_tool_execution_retry_contracts() -> None:
     trace = {
         **_trace_manifest(),

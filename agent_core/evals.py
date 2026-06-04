@@ -106,6 +106,12 @@ class TraceEvalSpec:
     require_resume_plan: bool = False
     require_resume_plan_ready: bool = False
     expected_resume_checkpoint_id: str = ""
+    require_preflight: bool = False
+    require_preflight_passed: bool = False
+    require_preflight_blocked: bool = False
+    required_preflight_issue_codes: tuple[str, ...] = ()
+    forbidden_preflight_issue_codes: tuple[str, ...] = ()
+    max_preflight_blocking_issues: int | None = None
     require_handoff: bool = False
     required_handoff_statuses: tuple[str, ...] = ()
     required_handoff_selected_sessions: tuple[str, ...] = ()
@@ -290,6 +296,12 @@ class TraceEvalSpec:
             "require_resume_plan": self.require_resume_plan,
             "require_resume_plan_ready": self.require_resume_plan_ready,
             "expected_resume_checkpoint_id": self.expected_resume_checkpoint_id,
+            "require_preflight": self.require_preflight,
+            "require_preflight_passed": self.require_preflight_passed,
+            "require_preflight_blocked": self.require_preflight_blocked,
+            "required_preflight_issue_codes": list(self.required_preflight_issue_codes),
+            "forbidden_preflight_issue_codes": list(self.forbidden_preflight_issue_codes),
+            "max_preflight_blocking_issues": self.max_preflight_blocking_issues,
             "require_handoff": self.require_handoff,
             "required_handoff_statuses": list(self.required_handoff_statuses),
             "required_handoff_selected_sessions": list(
@@ -603,6 +615,17 @@ class TraceReplayHarness:
                     payload=dict(resume),
                 )
             )
+        preflight = _preflight_trace(trace)
+        if preflight:
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="preflight",
+                    event_type=f"preflight_{preflight.get('status') or 'unknown'}",
+                    run_id=run_id,
+                    payload=dict(preflight),
+                )
+            )
         for item in _journal_events(trace):
             steps.append(
                 TraceReplayStep(
@@ -791,6 +814,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         lifecycle_hook_failure_count = _lifecycle_hook_failure_count(lifecycle_hook_records)
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
+        preflight = _preflight_trace(trace)
+        preflight_issue_codes = set(_manifest_values(preflight, "codes"))
+        preflight_blocking_codes = set(_manifest_values(preflight, "blocking_codes"))
+        preflight_status = str(preflight.get("status") or "")
+        preflight_blocking_count = _safe_int(preflight.get("blocking_count"))
         handoff_trace = _handoff_trace(trace)
         handoff_records = _handoff_records(handoff_trace)
         handoff_statuses = _handoff_values(handoff_records, "status")
@@ -1351,6 +1379,61 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         },
                     )
                 )
+        if spec.require_preflight and not preflight:
+            issues.append(
+                TraceEvalIssue("error", "preflight_missing", "preflight trace is required")
+            )
+        if spec.require_preflight_passed and preflight_status != "passed":
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "preflight_not_passed",
+                    "preflight is required to pass",
+                    metadata={"status": preflight_status},
+                )
+            )
+        if spec.require_preflight_blocked and preflight_status != "blocked":
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "preflight_not_blocked",
+                    "preflight is required to block the run",
+                    metadata={"status": preflight_status},
+                )
+            )
+        for code in spec.required_preflight_issue_codes:
+            if code not in preflight_issue_codes:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_preflight_issue_code",
+                        f"required preflight issue code missing: {code}",
+                    )
+                )
+        for code in spec.forbidden_preflight_issue_codes:
+            if code in preflight_issue_codes:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_preflight_issue_code",
+                        f"forbidden preflight issue code present: {code}",
+                    )
+                )
+        if (
+            spec.max_preflight_blocking_issues is not None
+            and preflight_blocking_count > spec.max_preflight_blocking_issues
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "preflight_blocking_issue_limit_exceeded",
+                    "preflight blocking issue count exceeded limit",
+                    metadata={
+                        "actual": preflight_blocking_count,
+                        "limit": spec.max_preflight_blocking_issues,
+                    },
+                )
+            )
         if spec.require_handoff and not handoff_trace:
             issues.append(TraceEvalIssue("error", "handoff_missing", "handoff trace is required"))
         for status_value in spec.required_handoff_statuses:
@@ -2812,6 +2895,11 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "resume_plan_ready": bool(resume_plan.get("ready")) if resume_plan else False,
                 "resume_checkpoint_id": str(resume.get("checkpoint_id") or ""),
                 "resume_plan_checkpoint_id": str(resume_plan.get("checkpoint_id") or ""),
+                "has_preflight": bool(preflight),
+                "preflight_status": preflight_status,
+                "preflight_issue_codes": sorted(preflight_issue_codes),
+                "preflight_blocking_codes": sorted(preflight_blocking_codes),
+                "preflight_blocking_count": preflight_blocking_count,
                 "has_handoff": bool(handoff_trace),
                 "handoff_record_count": len(handoff_records),
                 "handoff_statuses": sorted(handoff_statuses),
@@ -4300,6 +4388,11 @@ def _tool_center_call_values(calls: tuple[dict[str, Any], ...], key: str) -> set
 
 def _tool_center_route_values(route_plans: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in route_plans if item.get(key)}
+
+
+def _preflight_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("preflight")
+    return dict(manifest) if isinstance(manifest, dict) and manifest else {}
 
 
 def _agent_tool_trace(trace: dict[str, Any]) -> dict[str, Any]:

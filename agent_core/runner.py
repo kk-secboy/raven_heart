@@ -49,6 +49,13 @@ from agent_core.loop_guard import LoopGuard
 from agent_core.memory import MemoryHit, MemoryPort, MemoryQuery, NullMemory
 from agent_core.mcp import MCPCenter, MCPContextMaterialRequest
 from agent_core.policy import NullPolicyDecisionStore, PolicyDecisionStorePort, PolicyPort
+from agent_core.preflight import (
+    AgentRunPreflightCenter,
+    AgentRunPreflightReport,
+    AgentRunPreflightRequest,
+    AgentRunPreflightRequirements,
+    default_agent_run_preflight_center,
+)
 from agent_core.providers import LLMProviderPort
 from agent_core.prompt import (
     PromptBucketBudgetPolicy,
@@ -92,6 +99,7 @@ class AgentSession:
     tool_replay: ToolReplayPort = field(default_factory=NullToolReplay)
     trace_store: RunTraceStorePort = field(default_factory=NullRunTraceStore)
     lifecycle_hooks: AgentLifecycleHookCenter = field(default_factory=NullLifecycleHooks)
+    preflight: AgentRunPreflightCenter = field(default_factory=default_agent_run_preflight_center)
     action_verifier: ActionVerifierPort | None = None
     structured_output_validator: StructuredOutputValidatorPort | None = None
     loop_guard: LoopGuard | None = None
@@ -140,6 +148,7 @@ class AgentSession:
             "event_log": _component_manifest_sync(self.event_sink),
             "trace_store": _component_manifest_sync(self.trace_store),
             "lifecycle_hooks": self.lifecycle_hooks.manifest(),
+            "preflight": self.preflight.manifest(),
             "artifact_store": _component_manifest_sync(self.artifact_store),
             "native_tool_calls": self.native_tool_calls,
             "stream": self.stream,
@@ -173,6 +182,7 @@ class AgentRunRequest:
     context_material_query: ContextMaterialQuery | None = None
     context_material_selection: ContextMaterialSelectionRequest | None = None
     mcp_context_materials: MCPContextMaterialRequest | None = None
+    preflight_requirements: AgentRunPreflightRequirements | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
     stream: bool | None = None
@@ -193,6 +203,7 @@ class AgentResumeRequest:
     context_material_query: ContextMaterialQuery | None = None
     context_material_selection: ContextMaterialSelectionRequest | None = None
     mcp_context_materials: MCPContextMaterialRequest | None = None
+    preflight_requirements: AgentRunPreflightRequirements | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
     stream: bool | None = None
@@ -213,6 +224,7 @@ class AgentResumeRequest:
             "has_context_material_query": self.context_material_query is not None,
             "has_context_material_selection": self.context_material_selection is not None,
             "has_mcp_context_materials": self.mcp_context_materials is not None,
+            "has_preflight_requirements": self.preflight_requirements is not None,
             "timeout_seconds": self.timeout_seconds,
             "native_tool_calls": self.native_tool_calls,
             "stream": self.stream,
@@ -229,6 +241,7 @@ class AgentRunOutcome:
     timeline_reduction_manifest: dict[str, Any] = field(default_factory=dict)
     capability_discovery_manifest: dict[str, Any] = field(default_factory=dict)
     memory_search_manifest: dict[str, Any] = field(default_factory=dict)
+    preflight_manifest: dict[str, Any] = field(default_factory=dict)
     trace_manifest: dict[str, Any] = field(default_factory=dict)
 
 
@@ -609,6 +622,9 @@ class AgentRunner:
         try:
             if run_request.refresh:
                 await self.refresh()
+            preflight = await self._preflight(run_request)
+            if not preflight.ok:
+                return await self._preflight_blocked_outcome(run_request, preflight)
             resume_manifest = await self._resume_manifest(run_request.resume_token)
             capability_discovery_manifest = self._capability_discovery_manifest(run_request)
             memory_recall = await self._memory_recall(run_request)
@@ -657,6 +673,7 @@ class AgentRunner:
                 timeline_reduction_manifest=timeline_reduction_manifest,
                 capability_discovery_manifest=capability_discovery_manifest,
                 memory_search_manifest=memory_recall.manifest,
+                preflight_manifest=preflight.manifest(),
                 request=run_request,
             )
             await self.session.trace_store.save(trace_manifest)
@@ -669,6 +686,7 @@ class AgentRunner:
                 timeline_reduction_manifest=timeline_reduction_manifest,
                 capability_discovery_manifest=capability_discovery_manifest,
                 memory_search_manifest=memory_recall.manifest,
+                preflight_manifest=preflight.manifest(),
                 trace_manifest=trace_manifest,
             )
         except Exception as exc:
@@ -716,6 +734,67 @@ class AgentRunner:
 
     def _timeline_budget(self) -> TimelineBudget:
         return TimelineBudget(max_bytes=self.session.profile.budget.max_timeline_bytes)
+
+    async def _preflight(self, request: AgentRunRequest) -> AgentRunPreflightReport:
+        return await self.session.preflight.check(self._preflight_request(request))
+
+    def _preflight_request(self, request: AgentRunRequest) -> AgentRunPreflightRequest:
+        return AgentRunPreflightRequest(
+            task=request.task,
+            session_name=self.session.profile.name,
+            requirements=request.preflight_requirements or AgentRunPreflightRequirements(),
+            available_actions=tuple(spec.name for spec in self.session.actions.specs()),
+            available_tools=tuple(spec.name for spec in self.session.tools.specs() if spec.enabled),
+            available_skills=_available_skill_names(self.session.skills),
+            available_mcp_servers=_available_mcp_server_names(self.session.mcp),
+            memory_enabled=bool(self.session.profile.capabilities.memory_enabled),
+            metadata={"request_metadata": dict(request.metadata)},
+        )
+
+    async def _preflight_blocked_outcome(
+        self,
+        request: AgentRunRequest,
+        report: AgentRunPreflightReport,
+    ) -> AgentRunOutcome:
+        result = ReActResult(
+            run_id=uuid4().hex,
+            status="denied",
+            output="run blocked by preflight",
+            iterations=0,
+            metadata={"preflight": report.manifest()},
+        )
+        await self._emit_lifecycle_event(
+            AgentLifecycleEvent(
+                type="run_completed",
+                session_name=self.session.profile.name,
+                run_id=result.run_id,
+                task=request.task,
+                status=result.status,
+                metadata={"preflight": report.manifest()},
+            )
+        )
+        session_manifest = self.session.manifest()
+        trace_manifest = await self._trace_manifest(
+            result,
+            session_manifest=session_manifest,
+            prompt_manifest={},
+            resume_manifest={},
+            resume_plan_manifest=_request_resume_plan_manifest(request),
+            timeline_reduction_manifest={},
+            capability_discovery_manifest={},
+            memory_search_manifest={},
+            preflight_manifest=report.manifest(),
+            request=request,
+        )
+        await self.session.trace_store.save(trace_manifest)
+        return AgentRunOutcome(
+            result=result,
+            session_manifest=session_manifest,
+            prompt_manifest={},
+            resume_plan_manifest=_request_resume_plan_manifest(request),
+            preflight_manifest=report.manifest(),
+            trace_manifest=trace_manifest,
+        )
 
     async def _resume_manifest(self, token: ResumeToken | None) -> dict[str, Any]:
         if token is None:
@@ -1023,6 +1102,7 @@ class AgentRunner:
         timeline_reduction_manifest: dict[str, Any],
         capability_discovery_manifest: dict[str, Any],
         memory_search_manifest: dict[str, Any],
+        preflight_manifest: dict[str, Any],
         request: AgentRunRequest,
     ) -> dict[str, Any]:
         bundle = AgentRunTraceBundle(
@@ -1043,6 +1123,7 @@ class AgentRunner:
             timeline_reduction=timeline_reduction_manifest,
             capability_discovery=capability_discovery_manifest,
             memory_search=memory_search_manifest,
+            preflight=preflight_manifest,
             metadata={
                 "profile": self.session.profile.name,
                 "request_metadata": dict(request.metadata),
@@ -1598,6 +1679,23 @@ def _context_material_selection_request(
     )
 
 
+def _available_skill_names(skills: SkillsContext | None) -> tuple[str, ...]:
+    if skills is None:
+        return ()
+    names = {skill.name for skill in skills.loaded()}
+    registry = getattr(skills, "registry", None)
+    listing = getattr(registry, "list", None)
+    if callable(listing):
+        names.update(skill.name for skill in listing())
+    return tuple(sorted(names))
+
+
+def _available_mcp_server_names(mcp: MCPCenter | None) -> tuple[str, ...]:
+    if mcp is None:
+        return ()
+    return tuple(server.name for server in mcp.servers())
+
+
 def _approval_resume_manifest(resume: ApprovalResumeContext | None) -> dict[str, Any]:
     if resume is None or resume.empty:
         return {}
@@ -1690,6 +1788,7 @@ def _run_request_from_resume(
         context_material_query=request.context_material_query,
         context_material_selection=request.context_material_selection,
         mcp_context_materials=request.mcp_context_materials,
+        preflight_requirements=request.preflight_requirements,
         timeout_seconds=request.timeout_seconds,
         native_tool_calls=request.native_tool_calls,
         stream=request.stream,

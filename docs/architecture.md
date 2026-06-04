@@ -156,12 +156,13 @@ trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
 streaming calls using prompt-safe summaries, prompt bucket budget, semantic
-prompt trim, global prompt trim, approval records, artifact records, structured
-output validation/repair records, handoff records, embedding calls, and lifecycle hook records. The core
+prompt trim, global prompt trim, preflight reports, approval records, artifact
+records, structured output validation/repair records, handoff records,
+embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, required events, required tools,
-cost ceilings, event ordering, journal integrity,
+cost ceilings, event ordering, journal integrity, preflight status/issue-code constraints,
 resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, handoff status/session constraints, tool execution presence,
 tool retry, minimum tool attempt counts, ToolCenter selected mount/tool and
@@ -203,6 +204,12 @@ task hashes/byte counts and capture hook errors without breaking execution by
 default; runtimes can opt into fail-fast hooks when metrics, tenant gates, or
 audit systems must be mandatory. Concrete middleware stacks, metrics exporters,
 policy services, and UI notifications remain outside `agent_core`.
+`AgentRunPreflightCenter` is the earlier SDK guardrail bus. It runs after an
+optional capability refresh and before resume, memory recall, prompt shaping, or
+provider calls. Built-in checks validate request-local requirements such as
+task-byte limits, required tools/actions/skills/MCP servers, and memory
+availability. Runtime-owned tenant, RBAC, quota, ticket, or deployment gates can
+mount additional checks without changing `AgentRunner`.
 
 `HandoffSpec`, `HandoffRequest`, `HandoffRouter`, and `MultiAgentCoordinator`
 provide a provider-neutral multi-agent handoff contract. The core can advertise

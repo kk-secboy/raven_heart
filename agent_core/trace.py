@@ -748,6 +748,7 @@ class AgentRunTraceBundle:
     event_log: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
     resume_plan: dict[str, Any] = field(default_factory=dict)
+    preflight: dict[str, Any] = field(default_factory=dict)
     timeline_reduction: dict[str, Any] = field(default_factory=dict)
     capability_discovery: dict[str, Any] = field(default_factory=dict)
     memory_search: dict[str, Any] = field(default_factory=dict)
@@ -873,6 +874,10 @@ class AgentRunTraceBundle:
                 "correlation_entry_count": int(correlation.get("entry_count") or 0),
                 "has_resume": bool(self.resume),
                 "has_resume_plan": bool(self.resume_plan),
+                "has_preflight": bool(self.preflight),
+                "preflight_blocked": bool(self.preflight.get("status") == "blocked"),
+                "preflight_issue_count": int(self.preflight.get("issue_count") or 0),
+                "preflight_blocking_count": int(self.preflight.get("blocking_count") or 0),
                 "resume_plan_ready": bool(self.resume_plan.get("ready"))
                 if self.resume_plan
                 else False,
@@ -950,6 +955,7 @@ class AgentRunTraceBundle:
             "event_log": dict(self.event_log),
             "resume": dict(self.resume),
             "resume_plan": dict(self.resume_plan),
+            "preflight": dict(self.preflight),
             "timeline_reduction": dict(self.timeline_reduction),
             "capability_discovery": dict(self.capability_discovery),
             "memory_search": dict(self.memory_search),
