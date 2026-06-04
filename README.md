@@ -160,6 +160,8 @@ agent_core never imports runtime
 - `handoff_spec_from_session()` builds a handoff spec from an `AgentSession`.
 - `AgentToolRuntime` exposes managed agent sessions as `ToolRuntimePort`
   tools, so a parent ReAct agent can delegate through the normal tool loop.
+- `AgentToolTrace` summarizes those agent-as-tool calls by tool, target
+  session, child run id, status, iteration count, and prompt-safe byte counts.
 
 The SDK owns handoff contracts, routing decisions, and manifests. Runtimes own
 workflow queues, distributed workers, UI orchestration, retry policy, and
@@ -237,6 +239,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   without embedding skill bodies into the trace summary.
 - `HandoffTrace` summarizes multi-agent handoff decisions, selected sessions,
   source sessions, candidate counts, and denial/not-found status.
+- `AgentToolTrace` summarizes child-agent calls made through the normal tool
+  loop, including target sessions, child run ids, completion/failure counts,
+  and output/task byte counts.
 - `TraceCorrelationIndex` cross-references provider calls, tool replay records,
   policy decisions, approvals, event log entries, and journal replay events by
   run, turn, call id, approval id, decision id, and subject.
@@ -266,7 +271,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   required events, required tools, resume-plan presence, resume-plan readiness,
   expected checkpoint id, handoff status/session constraints, tool execution presence, tool retry, tool schema
   validation, minimum tool attempt counts, ToolCenter route/call audit
-  constraints, MCP center inventory constraints, skill center constraints,
+  constraints, agent-as-tool session/status constraints, MCP center inventory constraints, skill center constraints,
   approval status/subject constraints, artifact count/size/type constraints,
   structured output schema/repair/failure constraints, storage backend constraints,
   lifecycle hook constraints, event-log presence, event-log types, terminal
@@ -743,6 +748,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Lifecycle hook contracts | MVP implemented |
 | Lifecycle hook trace/eval contracts | MVP implemented |
 | Agent-as-tool runtime | MVP implemented |
+| Agent-as-tool trace/eval contracts | MVP implemented |
 | Handoff trace/eval contracts | MVP implemented |
 | Interrupt/cancel/timeout semantics | MVP implemented |
 | Tool center | MVP implemented |

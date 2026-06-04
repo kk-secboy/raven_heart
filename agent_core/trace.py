@@ -249,6 +249,46 @@ class HandoffTrace:
 
 
 @dataclass(frozen=True)
+class AgentToolTrace:
+    """Run-level inventory of managed agent sessions invoked as tools."""
+
+    records: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_tool_center(cls, tool_center: dict[str, Any]) -> "AgentToolTrace":
+        records: list[dict[str, Any]] = []
+        for call in _dict_items(tool_center.get("calls")):
+            metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
+            record = _agent_tool_trace_record(metadata)
+            if record:
+                records.append(record)
+                continue
+            result = call.get("result") if isinstance(call.get("result"), dict) else {}
+            result_metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+            record = _agent_tool_trace_record(result_metadata)
+            if record:
+                records.append(record)
+        return cls(records=tuple(records))
+
+    def manifest(self) -> dict[str, Any]:
+        records = tuple(dict(item) for item in self.records)
+        completed = tuple(item for item in records if item.get("status") == "completed")
+        failed = tuple(item for item in records if item.get("status") and item.get("status") != "completed")
+        return {
+            "schema_version": "agent-core-agent-tool-trace/v1",
+            "record_count": len(records),
+            "completed_count": len(completed),
+            "failed_count": len(failed),
+            "tools": _count_injection_field(records, "tool_name"),
+            "sessions": _count_injection_field(records, "session_name"),
+            "statuses": _count_injection_field(records, "status"),
+            "records": list(records),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class PlannerTrace:
     """Run-level summary of planner state and plan execution reports."""
 
@@ -720,6 +760,7 @@ class AgentRunTraceBundle:
     context_injections: dict[str, Any] = field(default_factory=dict)
     context_material_selection: dict[str, Any] = field(default_factory=dict)
     handoff_trace: dict[str, Any] = field(default_factory=dict)
+    agent_tool_trace: dict[str, Any] = field(default_factory=dict)
     memory_governance: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -745,6 +786,9 @@ class AgentRunTraceBundle:
         )
         handoff_trace = self.handoff_trace or HandoffTrace.from_prompt(self.prompt).manifest()
         tool_center = ToolCenterTrace.from_session(self.session)
+        agent_tool_trace = self.agent_tool_trace or AgentToolTrace.from_tool_center(
+            tool_center
+        ).manifest()
         mcp_center = self.mcp_center or MCPCenterTrace.from_session(self.session)
         skill_center = self.skill_center or SkillCenterTrace.from_session(self.session)
         approval_trace = self.approval_trace or ApprovalTrace.from_approvals(
@@ -861,6 +905,11 @@ class AgentRunTraceBundle:
                 "handoff_selected_count": int(handoff_trace.get("selected_count") or 0),
                 "handoff_denied_count": int(handoff_trace.get("denied_count") or 0),
                 "handoff_not_found_count": int(handoff_trace.get("not_found_count") or 0),
+                "agent_tool_record_count": int(agent_tool_trace.get("record_count") or 0),
+                "agent_tool_completed_count": int(
+                    agent_tool_trace.get("completed_count") or 0
+                ),
+                "agent_tool_failed_count": int(agent_tool_trace.get("failed_count") or 0),
                 "memory_governance_decision_count": int(
                     memory_governance.get("decision_count") or 0
                 ),
@@ -908,6 +957,7 @@ class AgentRunTraceBundle:
             "context_injections": dict(context_injections),
             "context_material_selection": dict(context_material_selection),
             "handoff_trace": dict(handoff_trace),
+            "agent_tool_trace": dict(agent_tool_trace),
             "memory_governance": dict(memory_governance),
             "prompt_bucket_budget": dict(prompt_bucket_budget),
             "prompt_semantic_trim": dict(prompt_semantic_trim),
@@ -1105,6 +1155,36 @@ def _handoff_trace_record(record: dict[str, Any]) -> dict[str, Any]:
             if candidate.get("session_name")
         ],
         "metadata": dict(record.get("metadata") if isinstance(record.get("metadata"), dict) else {}),
+    }
+
+
+def _agent_tool_trace_record(record: dict[str, Any]) -> dict[str, Any]:
+    if record.get("schema_version") != "agent-core-agent-tool-call/v1":
+        return {}
+    tool = record.get("tool") if isinstance(record.get("tool"), dict) else {}
+    invocation = record.get("invocation") if isinstance(record.get("invocation"), dict) else {}
+    result = record.get("result") if isinstance(record.get("result"), dict) else {}
+    tool_name = str(tool.get("tool_name") or invocation.get("tool_name") or "")
+    session_name = str(tool.get("session_name") or "")
+    status = str(result.get("status") or "")
+    error = str(record.get("error") or "")
+    if not status:
+        status = "failed" if error else "unknown"
+    if not tool_name and not session_name:
+        return {}
+    return {
+        "tool_name": tool_name,
+        "session_name": session_name,
+        "status": status,
+        "run_id": str(result.get("run_id") or ""),
+        "trace_run_id": str(result.get("trace_run_id") or ""),
+        "iterations": _safe_int(result.get("iterations")),
+        "task_bytes": _safe_int(record.get("task_bytes")),
+        "output_bytes": _safe_int(result.get("output_bytes")),
+        "error": error,
+        "enabled": bool(tool.get("enabled", True)),
+        "tags": list(tool.get("tags") or ()),
+        "metadata": dict(tool.get("metadata") if isinstance(tool.get("metadata"), dict) else {}),
     }
 
 

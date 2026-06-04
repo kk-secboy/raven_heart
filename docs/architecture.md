@@ -214,7 +214,9 @@ orchestration, and domain delegation strategy.
 managed sessions into ordinary `ToolSpec` entries and invokes them through
 `AgentSessionManager`, so parent agents can delegate using the existing ReAct
 tool loop. Distributed worker pools, process isolation, queueing, and tenant
-routing still live outside core.
+routing still live outside core. `AgentToolTrace` and trace/eval constraints
+summarize those calls by tool name, target session, child run id, status, task
+bytes, output bytes, and failure count without importing runtime workers.
 
 `CapabilityCatalog.discover()` is the SDK-level discovery surface across
 actions, local tools, skills, MCP tools, MCP resources, MCP prompts, and MCP

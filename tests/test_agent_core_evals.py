@@ -1701,6 +1701,109 @@ def test_trace_eval_reports_tool_center_contract_failures() -> None:
     assert {issue.code for issue in missing.issues} == {"tool_center_missing"}
 
 
+def test_trace_replay_and_eval_understand_agent_tool_trace() -> None:
+    trace = {
+        **_trace_manifest(),
+        "agent_tool_trace": {
+            "schema_version": "agent-core-agent-tool-trace/v1",
+            "record_count": 1,
+            "completed_count": 1,
+            "failed_count": 0,
+            "tools": {"agent_code_reviewer": 1},
+            "sessions": {"code-reviewer": 1},
+            "statuses": {"completed": 1},
+            "records": [
+                {
+                    "tool_name": "agent_code_reviewer",
+                    "session_name": "code-reviewer",
+                    "status": "completed",
+                    "run_id": "child-run",
+                    "trace_run_id": "child-run",
+                    "iterations": 2,
+                    "task_bytes": 24,
+                    "output_bytes": 64,
+                    "error": "",
+                }
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_agent_tools=True,
+            required_agent_tool_names=("agent_code_reviewer",),
+            required_agent_tool_sessions=("code-reviewer",),
+            required_agent_tool_statuses=("completed",),
+            max_agent_tool_failures=0,
+            required_event_types=("agent_tool_completed",),
+        ),
+    )
+    replay = TraceReplayHarness().replay(trace)
+    agent_tool_steps = [step for step in replay.steps if step.source == "agent_tool_trace"]
+
+    assert report.ok
+    assert report.summary["has_agent_tool_trace"] is True
+    assert report.summary["agent_tool_record_count"] == 1
+    assert report.summary["agent_tool_failed_count"] == 0
+    assert report.summary["agent_tool_names"] == ["agent_code_reviewer"]
+    assert report.summary["agent_tool_sessions"] == ["code-reviewer"]
+    assert agent_tool_steps[0].event_type == "agent_tool_completed"
+    assert agent_tool_steps[0].payload["session_name"] == "code-reviewer"
+
+
+def test_trace_eval_reports_agent_tool_contract_failures() -> None:
+    trace = {
+        **_trace_manifest(),
+        "agent_tool_trace": {
+            "schema_version": "agent-core-agent-tool-trace/v1",
+            "record_count": 1,
+            "completed_count": 0,
+            "failed_count": 1,
+            "tools": {"agent_ops": 1},
+            "sessions": {"ops": 1},
+            "statuses": {"failed": 1},
+            "records": [
+                {
+                    "tool_name": "agent_ops",
+                    "session_name": "ops",
+                    "status": "failed",
+                    "run_id": "child-run",
+                    "iterations": 1,
+                    "task_bytes": 24,
+                    "output_bytes": 0,
+                    "error": "child failed",
+                }
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_agent_tool_names=("agent_code_reviewer",),
+            required_agent_tool_sessions=("code-reviewer",),
+            required_agent_tool_statuses=("completed",),
+            max_agent_tool_failures=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "agent_tool_trace"},
+        TraceEvalSpec(require_agent_tools=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_agent_tool_name",
+        "missing_agent_tool_session",
+        "missing_agent_tool_status",
+        "agent_tool_failure_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"agent_tools_missing"}
+
+
 def test_trace_eval_validates_approval_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),

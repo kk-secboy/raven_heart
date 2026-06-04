@@ -166,6 +166,11 @@ class TraceEvalSpec:
     required_tool_center_requested_tools: tuple[str, ...] = ()
     require_tool_center_ready_routes: bool = False
     max_tool_center_failed_calls: int | None = None
+    require_agent_tools: bool = False
+    required_agent_tool_names: tuple[str, ...] = ()
+    required_agent_tool_sessions: tuple[str, ...] = ()
+    required_agent_tool_statuses: tuple[str, ...] = ()
+    max_agent_tool_failures: int | None = None
     require_mcp_center: bool = False
     required_mcp_server_names: tuple[str, ...] = ()
     required_mcp_refreshed_servers: tuple[str, ...] = ()
@@ -361,6 +366,11 @@ class TraceEvalSpec:
             ),
             "require_tool_center_ready_routes": self.require_tool_center_ready_routes,
             "max_tool_center_failed_calls": self.max_tool_center_failed_calls,
+            "require_agent_tools": self.require_agent_tools,
+            "required_agent_tool_names": list(self.required_agent_tool_names),
+            "required_agent_tool_sessions": list(self.required_agent_tool_sessions),
+            "required_agent_tool_statuses": list(self.required_agent_tool_statuses),
+            "max_agent_tool_failures": self.max_agent_tool_failures,
             "require_mcp_center": self.require_mcp_center,
             "required_mcp_server_names": list(self.required_mcp_server_names),
             "required_mcp_refreshed_servers": list(self.required_mcp_refreshed_servers),
@@ -635,6 +645,16 @@ class TraceReplayHarness:
                     payload=dict(item.get("payload") or {}),
                 )
             )
+        for item in _agent_tool_replay_steps(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="agent_tool_trace",
+                    event_type=str(item.get("event_type") or ""),
+                    run_id=run_id,
+                    payload=dict(item.get("payload") or {}),
+                )
+            )
         for item in _prompt_shaping_replay_steps(trace):
             steps.append(
                 TraceReplayStep(
@@ -802,6 +822,16 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         )
         not_ready_tool_center_routes = tuple(
             plan for plan in tool_center_route_plans if plan.get("ready") is not True
+        )
+        agent_tool_trace = _agent_tool_trace(trace)
+        agent_tool_records = _agent_tool_records(agent_tool_trace)
+        agent_tool_names = _agent_tool_values(agent_tool_records, "tool_name")
+        agent_tool_sessions = _agent_tool_values(agent_tool_records, "session_name")
+        agent_tool_statuses = _agent_tool_values(agent_tool_records, "status")
+        failed_agent_tools = tuple(
+            record
+            for record in agent_tool_records
+            if str(record.get("status") or "") != "completed"
         )
         mcp_center = _mcp_center_trace(trace)
         mcp_servers = _mcp_server_records(mcp_center)
@@ -2528,6 +2558,56 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_agent_tools and not agent_tool_trace:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "agent_tools_missing",
+                    "agent-tool trace is required",
+                )
+            )
+        for tool_name in spec.required_agent_tool_names:
+            if tool_name not in agent_tool_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_agent_tool_name",
+                        f"required agent-tool name missing: {tool_name}",
+                    )
+                )
+        for session_name in spec.required_agent_tool_sessions:
+            if session_name not in agent_tool_sessions:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_agent_tool_session",
+                        f"required agent-tool session missing: {session_name}",
+                    )
+                )
+        for status_value in spec.required_agent_tool_statuses:
+            if status_value not in agent_tool_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_agent_tool_status",
+                        f"required agent-tool status missing: {status_value}",
+                    )
+                )
+        if (
+            spec.max_agent_tool_failures is not None
+            and len(failed_agent_tools) > spec.max_agent_tool_failures
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "agent_tool_failure_limit_exceeded",
+                    "agent-tool failed call count exceeded limit",
+                    metadata={
+                        "actual": len(failed_agent_tools),
+                        "limit": spec.max_agent_tool_failures,
+                    },
+                )
+            )
         if spec.require_mcp_center and not mcp_center:
             issues.append(
                 TraceEvalIssue(
@@ -2708,6 +2788,12 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "tool_center_selected_mounts": sorted(tool_center_selected_mounts),
                 "tool_center_selected_tools": sorted(tool_center_selected_tools),
                 "tool_center_requested_tools": sorted(tool_center_requested_tools),
+                "has_agent_tool_trace": bool(agent_tool_trace),
+                "agent_tool_record_count": len(agent_tool_records),
+                "agent_tool_failed_count": len(failed_agent_tools),
+                "agent_tool_names": sorted(agent_tool_names),
+                "agent_tool_sessions": sorted(agent_tool_sessions),
+                "agent_tool_statuses": sorted(agent_tool_statuses),
                 "has_mcp_center": bool(mcp_center),
                 "mcp_server_count": len(mcp_servers),
                 "mcp_server_names": sorted(mcp_server_names),
@@ -3192,6 +3278,28 @@ def _handoff_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
                     "target_session": str(record.get("target_session") or ""),
                     "candidate_count": _safe_int(record.get("candidate_count")),
                     "reason": str(record.get("reason") or ""),
+                },
+            }
+        )
+    return tuple(steps)
+
+
+def _agent_tool_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    steps: list[dict[str, Any]] = []
+    for record in _agent_tool_records(_agent_tool_trace(trace)):
+        status = str(record.get("status") or "unknown")
+        steps.append(
+            {
+                "event_type": f"agent_tool_{status}",
+                "payload": {
+                    "status": status,
+                    "tool_name": str(record.get("tool_name") or ""),
+                    "session_name": str(record.get("session_name") or ""),
+                    "run_id": str(record.get("run_id") or ""),
+                    "iterations": _safe_int(record.get("iterations")),
+                    "task_bytes": _safe_int(record.get("task_bytes")),
+                    "output_bytes": _safe_int(record.get("output_bytes")),
+                    "error": str(record.get("error") or ""),
                 },
             }
         )
@@ -4192,6 +4300,70 @@ def _tool_center_call_values(calls: tuple[dict[str, Any], ...], key: str) -> set
 
 def _tool_center_route_values(route_plans: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in route_plans if item.get(key)}
+
+
+def _agent_tool_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("agent_tool_trace")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    records: list[dict[str, Any]] = []
+    for call in _tool_center_calls(_tool_center_trace(trace)):
+        result = call.get("result") if isinstance(call.get("result"), dict) else {}
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        record = _agent_tool_record(metadata)
+        if record:
+            records.append(record)
+    if not records:
+        return {}
+    return _agent_tool_trace_from_records(tuple(records))
+
+
+def _agent_tool_trace_from_records(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    failed = tuple(record for record in records if str(record.get("status") or "") != "completed")
+    completed = tuple(record for record in records if str(record.get("status") or "") == "completed")
+    return {
+        "schema_version": "agent-core-agent-tool-trace/v1",
+        "record_count": len(records),
+        "completed_count": len(completed),
+        "failed_count": len(failed),
+        "tools": dict(Counter(str(item.get("tool_name") or "") for item in records if item.get("tool_name"))),
+        "sessions": dict(
+            Counter(str(item.get("session_name") or "") for item in records if item.get("session_name"))
+        ),
+        "statuses": dict(Counter(str(item.get("status") or "") for item in records if item.get("status"))),
+        "records": [dict(record) for record in records],
+    }
+
+
+def _agent_tool_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("records")))
+
+
+def _agent_tool_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(record.get(key) or "") for record in records if record.get(key)}
+
+
+def _agent_tool_record(record: dict[str, Any]) -> dict[str, Any]:
+    if record.get("schema_version") != "agent-core-agent-tool-call/v1":
+        return {}
+    tool = record.get("tool") if isinstance(record.get("tool"), dict) else {}
+    result = record.get("result") if isinstance(record.get("result"), dict) else {}
+    invocation = record.get("invocation") if isinstance(record.get("invocation"), dict) else {}
+    status = str(result.get("status") or "")
+    error = str(record.get("error") or "")
+    if not status:
+        status = "failed" if error else "unknown"
+    return {
+        "tool_name": str(tool.get("tool_name") or invocation.get("tool_name") or ""),
+        "session_name": str(tool.get("session_name") or ""),
+        "status": status,
+        "run_id": str(result.get("run_id") or ""),
+        "trace_run_id": str(result.get("trace_run_id") or ""),
+        "iterations": _safe_int(result.get("iterations")),
+        "task_bytes": _safe_int(record.get("task_bytes")),
+        "output_bytes": _safe_int(result.get("output_bytes")),
+        "error": error,
+    }
 
 
 def _mcp_center_trace(trace: dict[str, Any]) -> dict[str, Any]:

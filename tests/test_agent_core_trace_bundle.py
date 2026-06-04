@@ -21,6 +21,7 @@ from agent_core.tools import (
 )
 from agent_core.trace import (
     AgentRunTraceBundle,
+    AgentToolTrace,
     ApprovalTrace,
     ContextInjectionTrace,
     ContextMaterialSelectionTrace,
@@ -812,6 +813,110 @@ def test_handoff_trace_summarizes_prompt_handoff_decisions() -> None:
     assert trace["selected_sessions"] == {"code-reviewer": 1}
     assert trace["source_sessions"] == {"planner": 2}
     assert trace["records"][0]["candidate_sessions"] == ["code-reviewer"]
+
+
+def test_agent_tool_trace_summarizes_tool_center_agent_calls() -> None:
+    trace = AgentToolTrace.from_tool_center(
+        {
+            "calls": [
+                {
+                    "result": {
+                        "metadata": {
+                            "schema_version": "agent-core-agent-tool-call/v1",
+                            "tool": {
+                                "tool_name": "agent_code_reviewer",
+                                "session_name": "code-reviewer",
+                                "enabled": True,
+                                "tags": ["code", "agent_tool"],
+                            },
+                            "invocation": {"tool_name": "agent_code_reviewer"},
+                            "task_bytes": 12,
+                            "result": {
+                                "run_id": "child-run",
+                                "status": "completed",
+                                "iterations": 2,
+                                "output_bytes": 48,
+                                "trace_run_id": "child-run",
+                            },
+                        }
+                    }
+                },
+                {
+                    "result": {
+                        "metadata": {
+                            "schema_version": "agent-core-agent-tool-call/v1",
+                            "tool": {
+                                "tool_name": "agent_ops",
+                                "session_name": "ops",
+                            },
+                            "invocation": {"tool_name": "agent_ops"},
+                            "task_bytes": 10,
+                            "result": {"status": "failed"},
+                            "error": "child failed",
+                        }
+                    }
+                },
+            ]
+        }
+    ).manifest()
+
+    assert trace["schema_version"] == "agent-core-agent-tool-trace/v1"
+    assert trace["record_count"] == 2
+    assert trace["completed_count"] == 1
+    assert trace["failed_count"] == 1
+    assert trace["tools"] == {"agent_code_reviewer": 1, "agent_ops": 1}
+    assert trace["sessions"] == {"code-reviewer": 1, "ops": 1}
+    assert trace["statuses"] == {"completed": 1, "failed": 1}
+    assert trace["records"][0]["run_id"] == "child-run"
+
+
+def test_run_trace_bundle_includes_agent_tool_trace_from_tool_center() -> None:
+    bundle = AgentRunTraceBundle(
+        run_id="parent-run",
+        status="completed",
+        session={
+            "tools": {
+                "schema_version": "agent-core-tool-center/v1",
+                "calls": [
+                    {
+                        "requested_tool_name": "agent_code_reviewer",
+                        "status": "completed",
+                        "route_plan": {
+                            "schema_version": "agent-core-tool-route-plan/v1",
+                            "ready": True,
+                            "selected_mount": "agents",
+                            "selected_tool_name": "agent_code_reviewer",
+                        },
+                        "result": {
+                            "metadata": {
+                                "schema_version": "agent-core-agent-tool-call/v1",
+                                "tool": {
+                                    "tool_name": "agent_code_reviewer",
+                                    "session_name": "code-reviewer",
+                                },
+                                "invocation": {"tool_name": "agent_code_reviewer"},
+                                "task_bytes": 18,
+                                "result": {
+                                    "run_id": "child-run",
+                                    "status": "completed",
+                                    "iterations": 1,
+                                    "output_bytes": 32,
+                                    "trace_run_id": "child-run",
+                                },
+                            }
+                        },
+                    }
+                ],
+            }
+        },
+    ).manifest()
+
+    assert bundle["summary"]["tool_center_call_count"] == 1
+    assert bundle["summary"]["agent_tool_record_count"] == 1
+    assert bundle["summary"]["agent_tool_completed_count"] == 1
+    assert bundle["summary"]["agent_tool_failed_count"] == 0
+    assert bundle["agent_tool_trace"]["sessions"] == {"code-reviewer": 1}
+    assert bundle["agent_tool_trace"]["records"][0]["tool_name"] == "agent_code_reviewer"
 
 
 def test_memory_governance_trace_summarizes_session_memory_decisions() -> None:
