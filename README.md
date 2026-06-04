@@ -33,6 +33,7 @@ ops agents, research agents, and future automation systems.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Memory governance decisions for allow/rewrite/deny write auditing.
 - Unified storage backend manifests for core stores and runtime-owned backends.
+- Portable state bundle contracts for migration, archive, and recovery preflight.
 - External memory store wrapper for runtime-owned PG/vector/graph/product adapters.
 - Pluggable journal stores for harness checkpoint/resume persistence.
 - Journal replay manifests and snapshot consistency audit.
@@ -822,6 +823,13 @@ durability, inspectability, queryability, transaction support, and whether the
 backend is a core builtin. Runtime-owned PG, vector, graph, object-store, or
 product backends should export the same shape while living outside this
 repository.
+
+`AgentStateBundleBuilder` / `build_agent_state_bundle` turns generic SDK state
+manifests into a prompt-safe portable bundle for migration, archive, and
+recovery preflight. Bundle components record role, backend kind, schema version,
+byte counts, SHA-256 digests, redaction decisions, and a role-ordered restore
+plan. Concrete copying between SQLite, Markdown, PG, object storage, workflow DB,
+or product stores remains a runtime/adapter job.
 
 `StorageBackendCatalog` registers those manifests and preflights backend
 selection through `StorageBackendRequirement`. It can select by role, allowed

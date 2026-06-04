@@ -258,6 +258,7 @@ product-specific migration tests begin.
 | Memory center and `MemoryPort` | Graphiti, RAG, PG/vector/graph/product memory adapters |
 | Memory governance contracts | Product retention policy, tenant rules, operator workflows |
 | Harness journal, replay, and `AgentJournalStorePort` | PG/event-log/workflow persistence adapters |
+| Portable state bundle contracts | Concrete migration jobs, cross-tenant copy policy, external storage drivers |
 | Run trace bundle | Durable trace export, observability pipeline, retention |
 | Trace replay/eval harness and generic eval suite runner | Domain datasets, dashboards, regression policy |
 | Manager run state and `AgentRunStorePort` | Product workflow DB, scheduling, distributed workers |
@@ -334,6 +335,14 @@ component manifests such as memory centers, context material centers, session
 manifests, or trace bundles. `storage_backend_catalog_from_components()` then
 turns those into a catalog, so runtime-owned external stores can participate in
 preflight through normal SDK manifests instead of adapter imports.
+
+`AgentStateBundleBuilder` is the SDK state migration/archive boundary. It takes
+generic component manifests for roles such as journal, run state, memory, event
+log, run trace, policy, planner, tool replay, approval, or artifacts and returns
+a prompt-safe `AgentStateBundle` with redaction audit, payload digests, byte
+counts, required-role checks, and a role-ordered restore plan. Runtimes own the
+actual copy jobs, storage credentials, tenant isolation, retention policy, and
+PG/object-store/product adapters.
 
 `AgentJournalReplay` turns a journal snapshot into a replayable event manifest
 and reports consistency issues before a runtime depends on that state for UI,

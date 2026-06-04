@@ -122,6 +122,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreStorageAcceptanceHarness",
         "AgentCoreStorageAcceptanceIssue",
         "AgentCoreStorageAcceptanceReport",
+        "AgentCoreStateBundleAcceptanceHarness",
+        "AgentCoreStateBundleAcceptanceIssue",
+        "AgentCoreStateBundleAcceptanceReport",
         "AgentCoreTaskProfileAcceptanceHarness",
         "AgentCoreTaskProfileAcceptanceIssue",
         "AgentCoreTaskProfileAcceptanceReport",
@@ -133,6 +136,12 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreValidationSuite",
         "AgentSession",
         "AgentHarness",
+        "AgentStateBundle",
+        "AgentStateBundleBuilder",
+        "AgentStateBundleComponent",
+        "AgentStateBundleIssue",
+        "AgentStateBundlePolicy",
+        "AgentStateBundleRestorePlan",
         "AgentManagerCapacityError",
         "AgentManagerConcurrencyPolicy",
         "AgentPromptBudgetPlan",
@@ -360,6 +369,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "agent_core_sdk_manifest",
         "agent_core_replacement_readiness_profile",
         "build_context_window_report",
+        "build_agent_state_bundle",
         "evaluate_agent_core_api_lifecycle",
         "evaluate_agent_core_api_stability",
         "evaluate_agent_core_runtime_boundary",
@@ -387,6 +397,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_recovery_acceptance",
         "run_agent_core_resume_acceptance",
         "run_agent_core_storage_acceptance",
+        "run_agent_core_state_bundle_acceptance",
         "run_agent_core_task_profile_acceptance",
         "run_agent_core_trace_export_acceptance",
         "run_agent_core_validation",
@@ -452,6 +463,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "context_window_report" in capability_names
     assert "memory_governance" in capability_names
     assert "api_stability_contract" in capability_names
+    assert "state_bundle_contracts" in capability_names
     assert "api_lifecycle_policy" in capability_names
     assert "runtime_boundary_audit" in capability_names
     assert "trace_replay_eval" in capability_names
@@ -474,6 +486,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "redaction_contracts" in capability_names
     assert "trace_export_bundle" in capability_names
     assert "eval_suite_runner" in capability_names
+    assert "state_bundle_contracts" in capability_names
     assert "storage_acceptance_harness" in capability_names
     assert "task_profile_acceptance_harness" in capability_names
     assert "recovery_acceptance_harness" in capability_names
@@ -552,6 +565,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "redaction_contracts" in manifest["matched"]["capabilities"]
     assert "trace_export_bundle" in manifest["matched"]["capabilities"]
     assert "eval_suite_runner" in manifest["matched"]["capabilities"]
+    assert "state_bundle_contracts" in manifest["matched"]["capabilities"]
     assert "storage_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "task_profile_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]

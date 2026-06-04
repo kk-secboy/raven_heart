@@ -38,6 +38,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["redaction_acceptance"]["ready"] is True
     assert manifest["trace_export_acceptance"]["ready"] is True
     assert manifest["eval_suite_acceptance"]["ready"] is True
+    assert manifest["state_bundle_acceptance"]["ready"] is True
     assert manifest["storage_acceptance"]["ready"] is True
     assert manifest["task_profile_acceptance"]["ready"] is True
     assert manifest["recovery"]["ready"] is True
@@ -124,6 +125,8 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["eval_suite_acceptance"]["missing_case_report"]["status_counts"] == {
         "missing": 1
     }
+    assert manifest["state_bundle_acceptance"]["ready_bundle"]["component_count"] == 5
+    assert manifest["state_bundle_acceptance"]["leak_scan"]["leaked_count"] == 0
     assert manifest["storage_acceptance"]["preflight"]["ready"] is True
     assert manifest["task_profile_acceptance"]["matrix"]["completed_profiles"] == [
         "code",
@@ -184,6 +187,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "redaction_contracts" in readiness["matched"]["capabilities"]
     assert "trace_export_bundle" in readiness["matched"]["capabilities"]
     assert "eval_suite_runner" in readiness["matched"]["capabilities"]
+    assert "state_bundle_contracts" in readiness["matched"]["capabilities"]
     assert "storage_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "task_profile_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "validation_suite" in readiness["matched"]["capabilities"]
@@ -239,6 +243,11 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "TraceEvalSuiteRunner" in readiness["matched"]["public_api"]
     assert "AgentCoreEvalSuiteAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_eval_suite_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentStateBundle" in readiness["matched"]["public_api"]
+    assert "AgentStateBundleBuilder" in readiness["matched"]["public_api"]
+    assert "build_agent_state_bundle" in readiness["matched"]["public_api"]
+    assert "AgentCoreStateBundleAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_state_bundle_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreStorageAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_storage_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreTaskProfileAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -297,6 +306,11 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "TraceEvalSuiteRunner" in stability["present_stable_api"]
     assert "AgentCoreEvalSuiteAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_eval_suite_acceptance" in stability["present_stable_api"]
+    assert "AgentStateBundle" in stability["present_stable_api"]
+    assert "AgentStateBundleBuilder" in stability["present_stable_api"]
+    assert "build_agent_state_bundle" in stability["present_stable_api"]
+    assert "AgentCoreStateBundleAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_state_bundle_acceptance" in stability["present_stable_api"]
     assert "AgentCoreStorageAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_storage_acceptance" in stability["present_stable_api"]
     assert "AgentCoreTaskProfileAcceptanceHarness" in stability["present_stable_api"]

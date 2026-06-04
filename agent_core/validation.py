@@ -38,6 +38,7 @@ from agent_core.provider_conformance import run_agent_core_provider_conformance
 from agent_core.redaction_acceptance import run_agent_core_redaction_acceptance
 from agent_core.recovery import run_agent_core_recovery_acceptance
 from agent_core.resume_acceptance import run_agent_core_resume_acceptance
+from agent_core.state_bundle_acceptance import run_agent_core_state_bundle_acceptance
 from agent_core.storage_acceptance import run_agent_core_storage_acceptance
 from agent_core.task_profile_acceptance import run_agent_core_task_profile_acceptance
 from agent_core.trace_export_acceptance import run_agent_core_trace_export_acceptance
@@ -149,6 +150,7 @@ class AgentCoreValidationReport:
     provider_conformance: dict[str, Any] = field(default_factory=dict)
     redaction_acceptance: dict[str, Any] = field(default_factory=dict)
     eval_suite_acceptance: dict[str, Any] = field(default_factory=dict)
+    state_bundle_acceptance: dict[str, Any] = field(default_factory=dict)
     storage_acceptance: dict[str, Any] = field(default_factory=dict)
     task_profile_acceptance: dict[str, Any] = field(default_factory=dict)
     trace_export_acceptance: dict[str, Any] = field(default_factory=dict)
@@ -195,6 +197,7 @@ class AgentCoreValidationReport:
             "provider_conformance": dict(self.provider_conformance),
             "redaction_acceptance": dict(self.redaction_acceptance),
             "eval_suite_acceptance": dict(self.eval_suite_acceptance),
+            "state_bundle_acceptance": dict(self.state_bundle_acceptance),
             "storage_acceptance": dict(self.storage_acceptance),
             "task_profile_acceptance": dict(self.task_profile_acceptance),
             "trace_export_acceptance": dict(self.trace_export_acceptance),
@@ -320,6 +323,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "eval_suite_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        state_bundle_acceptance = (
+            await run_agent_core_state_bundle_acceptance(
+                metadata={"validation_gate": "state_bundle_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         packaging_acceptance = (
             await run_agent_core_packaging_acceptance(
                 metadata={"validation_gate": "packaging_acceptance", **dict(self.metadata)}
@@ -373,6 +381,7 @@ class AgentCoreValidationSuite:
             provider_conformance=provider_conformance,
             redaction_acceptance=redaction_acceptance,
             eval_suite_acceptance=eval_suite_acceptance,
+            state_bundle_acceptance=state_bundle_acceptance,
             storage_acceptance=storage_acceptance,
             task_profile_acceptance=task_profile_acceptance,
             trace_export_acceptance=trace_export_acceptance,
@@ -404,6 +413,7 @@ class AgentCoreValidationSuite:
             provider_conformance=provider_conformance,
             redaction_acceptance=redaction_acceptance,
             eval_suite_acceptance=eval_suite_acceptance,
+            state_bundle_acceptance=state_bundle_acceptance,
             storage_acceptance=storage_acceptance,
             task_profile_acceptance=task_profile_acceptance,
             trace_export_acceptance=trace_export_acceptance,
@@ -539,6 +549,7 @@ def _validation_issues(
     provider_conformance: dict[str, Any],
     redaction_acceptance: dict[str, Any],
     eval_suite_acceptance: dict[str, Any],
+    state_bundle_acceptance: dict[str, Any],
     storage_acceptance: dict[str, Any],
     task_profile_acceptance: dict[str, Any],
     trace_export_acceptance: dict[str, Any],
@@ -611,6 +622,11 @@ def _validation_issues(
         issues,
         source="eval_suite_acceptance",
         report=eval_suite_acceptance,
+    )
+    _extend_report_issues(
+        issues,
+        source="state_bundle_acceptance",
+        report=state_bundle_acceptance,
     )
     _extend_report_issues(issues, source="storage_acceptance", report=storage_acceptance)
     _extend_report_issues(
