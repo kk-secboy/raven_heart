@@ -15,6 +15,25 @@ from agent_core.harness import AgentJournalSnapshot, TERMINAL_RUN_STATUSES
 
 
 @dataclass(frozen=True)
+class RunTraceQuery:
+    run_ids: tuple[str, ...] = ()
+    statuses: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+    limit: int | None = None
+    reverse: bool = False
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-run-trace-query/v1",
+            "run_ids": list(self.run_ids),
+            "statuses": list(self.statuses),
+            "metadata": dict(self.metadata),
+            "limit": self.limit,
+            "reverse": self.reverse,
+        }
+
+
+@dataclass(frozen=True)
 class PromptTrace:
     run_id: str
     turn_id: str
@@ -1298,6 +1317,9 @@ class RunTraceStorePort(Protocol):
     async def records(self) -> tuple[dict[str, Any], ...]:
         """Return persisted run trace manifests."""
 
+    async def query(self, query: RunTraceQuery) -> tuple[dict[str, Any], ...]:
+        """Return persisted run trace manifests matching a portable query."""
+
 
 class NullRunTraceStore(RunTraceStorePort):
     async def save(self, manifest: dict[str, Any]) -> None:
@@ -1307,6 +1329,9 @@ class NullRunTraceStore(RunTraceStorePort):
         return None
 
     async def records(self) -> tuple[dict[str, Any], ...]:
+        return ()
+
+    async def query(self, query: RunTraceQuery) -> tuple[dict[str, Any], ...]:
         return ()
 
     def manifest(self) -> dict[str, Any]:
@@ -1337,6 +1362,9 @@ class InMemoryRunTraceStore(RunTraceStorePort):
 
     async def records(self) -> tuple[dict[str, Any], ...]:
         return tuple(dict(item) for item in sorted(self._records.values(), key=_trace_sort_key))
+
+    async def query(self, query: RunTraceQuery) -> tuple[dict[str, Any], ...]:
+        return _query_trace_records(await self.records(), query)
 
     def manifest(self) -> dict[str, Any]:
         records = tuple(sorted(self._records.values(), key=_trace_sort_key))
@@ -1405,6 +1433,9 @@ class SQLiteRunTraceStore(RunTraceStorePort):
                 records.append(dict(value))
         return tuple(records)
 
+    async def query(self, query: RunTraceQuery) -> tuple[dict[str, Any], ...]:
+        return _query_trace_records(await self.records(), query)
+
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-sqlite-run-trace-store/v1",
@@ -1412,7 +1443,7 @@ class SQLiteRunTraceStore(RunTraceStorePort):
                 role="run_trace",
                 kind="sqlite",
                 location=str(self.path),
-                capabilities=("save", "load", "records"),
+                capabilities=("save", "load", "records", "query"),
             ),
             "path": str(self.path),
         }
@@ -1469,6 +1500,9 @@ class MarkdownRunTraceStore(RunTraceStorePort):
                 records.append(dict(value))
         return tuple(sorted(records, key=_trace_sort_key))
 
+    async def query(self, query: RunTraceQuery) -> tuple[dict[str, Any], ...]:
+        return _query_trace_records(await self.records(), query)
+
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-markdown-run-trace-store/v1",
@@ -1476,7 +1510,7 @@ class MarkdownRunTraceStore(RunTraceStorePort):
                 role="run_trace",
                 kind="markdown",
                 location=str(self.path),
-                capabilities=("save", "load", "records"),
+                capabilities=("save", "load", "records", "query"),
             ),
             "path": str(self.path),
         }
@@ -1995,6 +2029,35 @@ def _trace_status(manifest: dict[str, Any]) -> str:
     if not isinstance(run, dict):
         return ""
     return str(run.get("status") or "")
+
+
+def _query_trace_records(
+    records: tuple[dict[str, Any], ...],
+    query: RunTraceQuery,
+) -> tuple[dict[str, Any], ...]:
+    run_ids = set(query.run_ids)
+    statuses = set(query.statuses)
+    filtered = [
+        dict(record)
+        for record in records
+        if (not run_ids or _run_id_from_trace_manifest(record) in run_ids)
+        and (not statuses or _trace_status(record) in statuses)
+        and _trace_metadata_matches(record, query.metadata)
+    ]
+    filtered = sorted(filtered, key=_trace_sort_key, reverse=query.reverse)
+    if query.limit is not None:
+        return tuple(filtered[: max(0, int(query.limit))])
+    return tuple(filtered)
+
+
+def _trace_metadata_matches(record: dict[str, Any], expected: dict[str, Any]) -> bool:
+    if not expected:
+        return True
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            return False
+    return True
 
 
 def _trace_sort_key(manifest: dict[str, Any]) -> tuple[str, str]:

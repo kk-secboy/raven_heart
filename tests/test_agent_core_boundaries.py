@@ -241,6 +241,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "ResumeIndex",
         "RetryHint",
         "RunTraceStorePort",
+        "RunTraceQuery",
         "RunInterrupt",
         "RunInterruptKind",
         "SchemaValidationIssue",

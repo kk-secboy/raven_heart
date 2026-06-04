@@ -31,6 +31,7 @@ from agent_core.trace import (
     MCPCenterTrace,
     MemoryGovernanceTrace,
     PlannerTrace,
+    RunTraceQuery,
     SQLiteRunTraceStore,
     SkillCenterTrace,
     StorageBackendTrace,
@@ -989,6 +990,46 @@ async def test_run_trace_stores_persist_bundle_manifests(tmp_path) -> None:
     assert sqlite.manifest()["schema_version"] == "agent-core-sqlite-run-trace-store/v1"
     assert markdown.manifest()["schema_version"] == "agent-core-markdown-run-trace-store/v1"
     assert "agent-core-run-trace-bundle" not in (tmp_path / "traces.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_run_trace_stores_query_by_status_metadata_and_limit(tmp_path) -> None:
+    records = (
+        AgentRunTraceBundle(
+            run_id="run-a",
+            status="completed",
+            metadata={"tenant": "alpha"},
+        ).manifest(),
+        AgentRunTraceBundle(
+            run_id="run-b",
+            status="failed",
+            metadata={"tenant": "alpha"},
+        ).manifest(),
+        AgentRunTraceBundle(
+            run_id="run-c",
+            status="completed",
+            metadata={"tenant": "beta"},
+        ).manifest(),
+    )
+    stores = (
+        InMemoryRunTraceStore(),
+        SQLiteRunTraceStore(tmp_path / "query-traces.sqlite"),
+        MarkdownRunTraceStore(tmp_path / "query-traces.md"),
+    )
+
+    for store in stores:
+        for record in records:
+            await store.save(record)
+
+        completed_alpha = await store.query(
+            RunTraceQuery(statuses=("completed",), metadata={"tenant": "alpha"})
+        )
+        latest_two = await store.query(RunTraceQuery(limit=2, reverse=True))
+        selected = await store.query(RunTraceQuery(run_ids=("run-b", "missing")))
+
+        assert [item["run"]["run_id"] for item in completed_alpha] == ["run-a"]
+        assert [item["run"]["run_id"] for item in latest_two] == ["run-c", "run-b"]
+        assert [item["run"]["run_id"] for item in selected] == ["run-b"]
 
 
 @pytest.mark.asyncio

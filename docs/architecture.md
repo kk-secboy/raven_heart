@@ -150,6 +150,10 @@ provider-neutral cross references across provider calls, tool replay records,
 policy decisions, approvals, event entries, and journal replay events by run,
 turn, call id, approval id, decision id, and subject. Runtime observability
 systems can ingest the index, but the SDK owns the correlation schema.
+`RunTraceQuery` is the matching retrieval surface for trace stores. The
+in-memory, SQLite, and Markdown stores support status, run-id, metadata, limit,
+and reverse-order filters through one contract; production PG/object-storage
+trace indexes can implement the same port without changing replay/eval code.
 
 `TraceReplayHarness`, `TraceReplayComparator`, and `TraceEvalHarness` turn run
 trace manifests into deterministic replay steps, baseline diff reports, and

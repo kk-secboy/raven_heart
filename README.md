@@ -253,6 +253,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   run, turn, call id, approval id, decision id, and subject.
 - `RunTraceStorePort` plus `InMemoryRunTraceStore`, `SQLiteRunTraceStore`, and
   `MarkdownRunTraceStore` for lightweight durable trace capture.
+- `RunTraceQuery` gives those stores one portable filter surface for status,
+  run ids, metadata equality, limits, and reverse ordering.
 - `AgentSession.trace_store` lets `AgentRunner` persist trace bundles
   automatically after a run completes.
 - Runtime code can persist the bundle in PG, object storage, logs, or a workflow
@@ -752,6 +754,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Schema validation contracts | MVP implemented |
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |
+| Run trace query | MVP implemented |
 | Lifecycle hook contracts | MVP implemented |
 | Lifecycle hook trace/eval contracts | MVP implemented |
 | Run preflight guardrails | MVP implemented |
