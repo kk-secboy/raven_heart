@@ -153,6 +153,58 @@ class StorageBackendSelection:
         }
 
 
+@dataclass(frozen=True)
+class StorageBackendPreflightReport:
+    """Prompt-safe multi-role backend readiness report."""
+
+    selections: tuple[StorageBackendSelection, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.selections) and all(selection.ready for selection in self.selections)
+
+    @property
+    def status(self) -> str:
+        return "ready" if self.ready else "blocked"
+
+    @property
+    def blocking_count(self) -> int:
+        return sum(1 for selection in self.selections if not selection.ready)
+
+    def manifest(self) -> dict[str, Any]:
+        selected = tuple(selection for selection in self.selections if selection.ready)
+        missing = tuple(selection for selection in self.selections if not selection.ready)
+        selected_backends = tuple(
+            selection.selected.backend
+            for selection in selected
+            if selection.selected is not None
+        )
+        return {
+            "schema_version": "agent-core-storage-backend-preflight/v1",
+            "status": self.status,
+            "ready": self.ready,
+            "requirement_count": len(self.selections),
+            "selection_count": len(selected),
+            "blocking_count": self.blocking_count,
+            "required_roles": [selection.requirement.role for selection in self.selections],
+            "selected_roles": [backend.role for backend in selected_backends],
+            "selected_kinds": [backend.kind for backend in selected_backends],
+            "missing_roles": [selection.requirement.role for selection in missing],
+            "blocking_reasons": sorted(
+                {
+                    reason
+                    for selection in missing
+                    for candidate in selection.candidates
+                    for reason in candidate.reason.split(",")
+                    if reason and reason != "matched"
+                }
+            ),
+            "selections": [selection.manifest() for selection in self.selections],
+            "metadata": dict(self.metadata),
+        }
+
+
 class StorageBackendCatalog:
     """Registry and selector for SDK and runtime-owned data backends."""
 
@@ -210,6 +262,17 @@ class StorageBackendCatalog:
         candidates = tuple(_evaluate_backend(backend, requirement) for backend in self.for_role(requirement.role))
         selected = _select_best_candidate(candidates)
         return StorageBackendSelection(requirement=requirement, candidates=candidates, selected=selected)
+
+    def preflight(
+        self,
+        requirements: tuple[StorageBackendRequirement, ...],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> StorageBackendPreflightReport:
+        return StorageBackendPreflightReport(
+            selections=tuple(self.select(requirement) for requirement in requirements),
+            metadata=dict(metadata or {}),
+        )
 
     def manifest(self) -> dict[str, Any]:
         roles: dict[str, int] = {}

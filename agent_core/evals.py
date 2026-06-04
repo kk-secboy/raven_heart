@@ -206,6 +206,11 @@ class TraceEvalSpec:
     forbidden_storage_backend_kinds: tuple[str, ...] = ()
     forbid_external_storage_backends: bool = False
     max_external_storage_backends: int | None = None
+    require_storage_backend_preflight: bool = False
+    require_storage_backend_preflight_ready: bool = False
+    required_storage_backend_preflight_roles: tuple[str, ...] = ()
+    forbidden_storage_backend_preflight_reasons: tuple[str, ...] = ()
+    max_storage_backend_preflight_blocking: int | None = None
     require_context_injections: bool = False
     required_context_injection_names: tuple[str, ...] = ()
     required_context_injection_sources: tuple[str, ...] = ()
@@ -450,6 +455,19 @@ class TraceEvalSpec:
             "forbidden_storage_backend_kinds": list(self.forbidden_storage_backend_kinds),
             "forbid_external_storage_backends": self.forbid_external_storage_backends,
             "max_external_storage_backends": self.max_external_storage_backends,
+            "require_storage_backend_preflight": self.require_storage_backend_preflight,
+            "require_storage_backend_preflight_ready": (
+                self.require_storage_backend_preflight_ready
+            ),
+            "required_storage_backend_preflight_roles": list(
+                self.required_storage_backend_preflight_roles
+            ),
+            "forbidden_storage_backend_preflight_reasons": list(
+                self.forbidden_storage_backend_preflight_reasons
+            ),
+            "max_storage_backend_preflight_blocking": (
+                self.max_storage_backend_preflight_blocking
+            ),
             "require_context_injections": self.require_context_injections,
             "required_context_injection_names": list(self.required_context_injection_names),
             "required_context_injection_sources": list(self.required_context_injection_sources),
@@ -682,6 +700,21 @@ class TraceReplayHarness:
                     event_type=f"preflight_{preflight.get('status') or 'unknown'}",
                     run_id=run_id,
                     payload=dict(preflight),
+                )
+            )
+        storage_backend_preflight = _storage_backend_preflight(trace)
+        if storage_backend_preflight:
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="storage_backend_preflight",
+                    event_type=(
+                        "storage_backend_preflight_ready"
+                        if storage_backend_preflight.get("ready") is True
+                        else "storage_backend_preflight_blocked"
+                    ),
+                    run_id=run_id,
+                    payload=dict(storage_backend_preflight),
                 )
             )
         for item in _journal_events(trace):
@@ -986,6 +1019,16 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         storage_backend_kinds = _storage_backend_values(storage_backends, "kind")
         external_storage_backends = tuple(
             backend for backend in storage_backends if backend.get("core_builtin") is False
+        )
+        storage_backend_preflight = _storage_backend_preflight(trace)
+        storage_backend_preflight_roles = _storage_backend_preflight_roles(
+            storage_backend_preflight
+        )
+        storage_backend_preflight_reasons = _storage_backend_preflight_reasons(
+            storage_backend_preflight
+        )
+        storage_backend_preflight_blocking_count = _safe_int(
+            storage_backend_preflight.get("blocking_count")
         )
         context_injections = _context_injections(trace)
         context_injection_names = _context_injection_values(context_injections, "name")
@@ -1780,6 +1823,59 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     metadata={
                         "actual": len(external_storage_backends),
                         "limit": spec.max_external_storage_backends,
+                    },
+                )
+            )
+        if spec.require_storage_backend_preflight and not storage_backend_preflight:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "storage_backend_preflight_missing",
+                    "storage backend preflight report is required",
+                )
+            )
+        if (
+            spec.require_storage_backend_preflight_ready
+            and storage_backend_preflight.get("ready") is not True
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "storage_backend_preflight_not_ready",
+                    "storage backend preflight is not ready",
+                )
+            )
+        for role in spec.required_storage_backend_preflight_roles:
+            if role not in storage_backend_preflight_roles:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_storage_backend_preflight_role",
+                        f"required storage backend preflight role missing: {role}",
+                    )
+                )
+        for reason in spec.forbidden_storage_backend_preflight_reasons:
+            if reason in storage_backend_preflight_reasons:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_storage_backend_preflight_reason",
+                        f"forbidden storage backend preflight reason present: {reason}",
+                    )
+                )
+        if (
+            spec.max_storage_backend_preflight_blocking is not None
+            and storage_backend_preflight_blocking_count
+            > spec.max_storage_backend_preflight_blocking
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "storage_backend_preflight_blocking_limit_exceeded",
+                    "storage backend preflight blocking count exceeded limit",
+                    metadata={
+                        "actual": storage_backend_preflight_blocking_count,
+                        "limit": spec.max_storage_backend_preflight_blocking,
                     },
                 )
             )
@@ -3250,6 +3346,17 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "storage_backend_roles": sorted(storage_backend_roles),
                 "storage_backend_kinds": sorted(storage_backend_kinds),
                 "external_storage_backend_count": len(external_storage_backends),
+                "has_storage_backend_preflight": bool(storage_backend_preflight),
+                "storage_backend_preflight_ready": (
+                    storage_backend_preflight.get("ready") is True
+                ),
+                "storage_backend_preflight_roles": sorted(storage_backend_preflight_roles),
+                "storage_backend_preflight_reasons": sorted(
+                    storage_backend_preflight_reasons
+                ),
+                "storage_backend_preflight_blocking_count": (
+                    storage_backend_preflight_blocking_count
+                ),
                 "context_injection_count": len(context_injections),
                 "context_injection_names": sorted(context_injection_names),
                 "context_injection_sources": sorted(context_injection_sources),
@@ -4425,6 +4532,47 @@ def _storage_backends(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 
 def _storage_backend_values(backends: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in backends if item.get(key)}
+
+
+def _storage_backend_preflight(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("storage_backend_preflight")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    storage_backends = trace.get("storage_backends")
+    if isinstance(storage_backends, dict):
+        manifest = storage_backends.get("preflight")
+        if isinstance(manifest, dict) and manifest:
+            return dict(manifest)
+    return {}
+
+
+def _storage_backend_preflight_roles(manifest: dict[str, Any]) -> set[str]:
+    roles = set(_manifest_values(manifest, "required_roles"))
+    roles.update(_manifest_values(manifest, "selected_roles"))
+    roles.update(_manifest_values(manifest, "missing_roles"))
+    return roles
+
+
+def _storage_backend_preflight_reasons(manifest: dict[str, Any]) -> set[str]:
+    reasons = set(_manifest_values(manifest, "blocking_reasons"))
+    selections = manifest.get("selections")
+    if isinstance(selections, (list, tuple)):
+        for selection in selections:
+            if not isinstance(selection, dict):
+                continue
+            candidates = selection.get("candidates")
+            if not isinstance(candidates, (list, tuple)):
+                continue
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                raw_reason = str(candidate.get("reason") or "")
+                reasons.update(
+                    reason
+                    for reason in raw_reason.split(",")
+                    if reason and reason != "matched"
+                )
+    return reasons
 
 
 def _context_injections(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:

@@ -39,6 +39,7 @@ from agent_core import (
     SQLiteRunTraceStore,
     SQLiteToolReplayStore,
     StorageBackendCatalog,
+    StorageBackendPreflightReport,
     StorageBackendRequirement,
     StorageBackendSpec,
     storage_backend_manifest,
@@ -218,8 +219,75 @@ def test_storage_backend_catalog_records_missing_selection_reasons() -> None:
     assert external["missing_capabilities"] == ["graph"]
 
 
+def test_storage_backend_catalog_preflights_multi_role_runtime_backends() -> None:
+    catalog = StorageBackendCatalog(
+        (
+            storage_backend_manifest(
+                role="memory",
+                kind="postgres",
+                name="tenant-memory",
+                namespace="tenant-a",
+                core_builtin=False,
+                capabilities=("keyword", "semantic", "vector"),
+            ),
+            storage_backend_manifest(
+                role="context_material",
+                kind="vector",
+                name="tenant-context",
+                namespace="tenant-a",
+                core_builtin=False,
+                capabilities=("semantic", "hybrid"),
+            ),
+            storage_backend_manifest(
+                role="run_trace",
+                kind="sqlite",
+                name="local-traces",
+            ),
+        )
+    )
+
+    report = catalog.preflight(
+        (
+            StorageBackendRequirement(
+                role="memory",
+                allowed_kinds=("postgres", "vector"),
+                required_capabilities=("semantic", "vector"),
+                namespace="tenant-a",
+                require_durable=True,
+                require_queryable=True,
+            ),
+            StorageBackendRequirement(
+                role="context_material",
+                allowed_kinds=("vector", "graph"),
+                required_capabilities=("semantic",),
+                namespace="tenant-a",
+            ),
+            StorageBackendRequirement(
+                role="run_trace",
+                allowed_kinds=("postgres",),
+                require_durable=True,
+            ),
+        ),
+        metadata={"tenant": "tenant-a"},
+    )
+    manifest = report.manifest()
+
+    assert isinstance(report, StorageBackendPreflightReport)
+    assert report.ready is False
+    assert manifest["schema_version"] == "agent-core-storage-backend-preflight/v1"
+    assert manifest["status"] == "blocked"
+    assert manifest["selection_count"] == 2
+    assert manifest["blocking_count"] == 1
+    assert manifest["selected_roles"] == ["memory", "context_material"]
+    assert manifest["selected_kinds"] == ["postgres", "vector"]
+    assert manifest["missing_roles"] == ["run_trace"]
+    assert "kind_not_allowed" in manifest["blocking_reasons"]
+    assert manifest["metadata"]["tenant"] == "tenant-a"
+
+
 def test_agent_core_package_exports_storage_backend_contracts() -> None:
     assert agent_core.StorageBackendSpec is StorageBackendSpec
     assert agent_core.StorageBackendCatalog is StorageBackendCatalog
+    assert agent_core.StorageBackendPreflightReport is StorageBackendPreflightReport
     assert agent_core.storage_backend_manifest is storage_backend_manifest
     assert "StorageBackendKind" in agent_core.__all__

@@ -289,6 +289,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   constraints, agent-as-tool session/status constraints, MCP center inventory constraints, skill center constraints,
   approval status/subject constraints, artifact count/size/type constraints,
   structured output schema/repair/failure constraints, storage backend constraints,
+  storage backend preflight readiness constraints,
   lifecycle hook constraints, event-log presence, event-log types, terminal
   events, event sequence monotonicity, duplicate sequence limits,
   context injection name/source/target/status constraints, included/trimmed/
@@ -574,6 +575,11 @@ and required capabilities, then return a prompt-safe `StorageBackendSelection`
 with every candidate and rejection reason. This is the SDK-level contract for
 SQLite/Markdown/PG/vector/graph choices; concrete drivers stay in runtime or
 adapter packages.
+For multi-role startup checks, `StorageBackendCatalog.preflight()` returns a
+`StorageBackendPreflightReport` across requirements such as memory, context
+material, run traces, events, and artifacts. Trace replay/eval can require that
+report, assert it is ready, verify covered roles, cap blocking selections, and
+forbid rejection reasons such as missing capabilities.
 
 ### Planner
 

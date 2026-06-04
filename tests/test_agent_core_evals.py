@@ -12,7 +12,11 @@ from agent_core.evals import (
     TraceReplayDiffSpec,
     TraceReplayHarness,
 )
-from agent_core.backends import storage_backend_manifest
+from agent_core.backends import (
+    StorageBackendCatalog,
+    StorageBackendRequirement,
+    storage_backend_manifest,
+)
 from agent_core.runner import AgentRunner, AgentSession
 from agent_core.providers import LLMModelCapabilities, LLMProviderCenter
 from agent_core.harness import InMemoryAgentJournal
@@ -2473,6 +2477,125 @@ def test_trace_eval_reports_storage_backend_contract_failures() -> None:
     } <= codes
     assert not missing.ok
     assert {issue.code for issue in missing.issues} == {"storage_backends_missing"}
+
+
+def test_trace_eval_validates_storage_backend_preflight_contracts() -> None:
+    catalog = StorageBackendCatalog(
+        (
+            storage_backend_manifest(
+                role="memory",
+                kind="postgres",
+                name="tenant-memory",
+                namespace="tenant-a",
+                core_builtin=False,
+                capabilities=("semantic", "vector"),
+            ),
+            storage_backend_manifest(
+                role="context_material",
+                kind="vector",
+                name="tenant-context",
+                namespace="tenant-a",
+                core_builtin=False,
+                capabilities=("semantic",),
+            ),
+        )
+    )
+    preflight = catalog.preflight(
+        (
+            StorageBackendRequirement(
+                role="memory",
+                allowed_kinds=("postgres", "vector"),
+                required_capabilities=("semantic", "vector"),
+                namespace="tenant-a",
+            ),
+            StorageBackendRequirement(
+                role="context_material",
+                allowed_kinds=("vector", "graph"),
+                required_capabilities=("semantic",),
+                namespace="tenant-a",
+            ),
+        )
+    ).manifest()
+    trace = {**_trace_manifest(), "storage_backend_preflight": preflight}
+
+    replay = TraceReplayHarness().replay(trace)
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_storage_backend_preflight=True,
+            require_storage_backend_preflight_ready=True,
+            required_storage_backend_preflight_roles=("memory", "context_material"),
+            forbidden_storage_backend_preflight_reasons=("missing_capabilities",),
+            max_storage_backend_preflight_blocking=0,
+        ),
+    )
+
+    assert report.ok
+    assert "storage_backend_preflight_ready" in replay.event_types()
+    assert report.summary["has_storage_backend_preflight"] is True
+    assert report.summary["storage_backend_preflight_ready"] is True
+    assert report.summary["storage_backend_preflight_roles"] == [
+        "context_material",
+        "memory",
+    ]
+    assert report.summary["storage_backend_preflight_blocking_count"] == 0
+    assert report.metadata["spec"]["require_storage_backend_preflight"] is True
+
+
+def test_trace_eval_reports_storage_backend_preflight_failures() -> None:
+    catalog = StorageBackendCatalog(
+        (
+            storage_backend_manifest(
+                role="memory",
+                kind="sqlite",
+                name="local-memory",
+                capabilities=("keyword",),
+            ),
+            storage_backend_manifest(
+                role="run_trace",
+                kind="sqlite",
+                name="local-traces",
+            ),
+        )
+    )
+    preflight = catalog.preflight(
+        (
+            StorageBackendRequirement(
+                role="memory",
+                allowed_kinds=("postgres", "vector"),
+                required_capabilities=("semantic",),
+            ),
+            StorageBackendRequirement(
+                role="run_trace",
+                allowed_kinds=("postgres",),
+                require_durable=True,
+            ),
+        )
+    ).manifest()
+    trace = {**_trace_manifest(), "storage_backend_preflight": preflight}
+    missing = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(require_storage_backend_preflight=True),
+    )
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_storage_backend_preflight_ready=True,
+            required_storage_backend_preflight_roles=("approval",),
+            forbidden_storage_backend_preflight_reasons=("missing_capabilities",),
+            max_storage_backend_preflight_blocking=0,
+        ),
+    )
+
+    assert {issue.code for issue in missing.issues} == {
+        "storage_backend_preflight_missing"
+    }
+    assert {
+        "storage_backend_preflight_not_ready",
+        "missing_storage_backend_preflight_role",
+        "forbidden_storage_backend_preflight_reason",
+        "storage_backend_preflight_blocking_limit_exceeded",
+    } <= {issue.code for issue in report.issues}
 
 
 def test_trace_eval_validates_handoff_contracts() -> None:

@@ -93,6 +93,11 @@ It registers built-in and runtime-owned backend manifests, evaluates
 can therefore preflight "memory must be tenant-a, durable, semantic, vector
 capable" without putting a PostgreSQL, graph, or vector client inside
 `agent_core`.
+For full startup checks, `StorageBackendCatalog.preflight()` returns a
+`StorageBackendPreflightReport` covering multiple required roles. It records
+selected roles/kinds, missing roles, blocking reasons, and every per-role
+selection so Raven, code agents, or ops agents can prove their PG/vector/graph
+or SQLite/Markdown choices are ready before a run starts.
 
 `AgentJournalReplay` turns a journal snapshot into a replayable event manifest
 and reports consistency issues before a runtime depends on that state for UI,
@@ -174,7 +179,8 @@ resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, handoff status/session constraints, tool execution presence,
 tool retry, minimum tool attempt counts, ToolCenter selected mount/tool and
 failed-call constraints, required storage backend roles/kinds,
-forbidden backend kinds, external-backend limits, event-log presence/types,
+forbidden backend kinds, external-backend limits, storage backend preflight
+readiness/roles/blocking reasons, event-log presence/types,
 terminal events, sequence monotonicity, duplicate sequence limits, lifecycle
 hook event/status/failure constraints, required context injection
 names/sources/targets/statuses, required included/trimmed/excluded injection
