@@ -161,6 +161,14 @@ audit shape and default acceptance checks; host runtimes own real retry budgets,
 rate-limit handling, circuit breakers, vendor-specific failover, and operator
 policy.
 
+`AgentCoreDurableSessionAcceptanceHarness` adds the integrated durable-session
+gate. It runs the same `AgentRunner` path through `AgentSessionManager` over
+SQLite stores and Markdown stores, then reopens those stores and verifies
+journal/checkpoint/trace, event log, tool replay, memory, context material,
+policy decisions, and manager run state can still be queried. The SDK owns this
+local durable contract and the external backend ports; runtimes own production
+PG/vector/graph/object-store/product implementations and operations.
+
 `AgentCoreResumeAcceptanceHarness` adds the checkpoint/resume gate. It creates a
 checkpoint, builds a `ResumePlan`, resumes through `AgentRunner.resume()`,
 checks prompt injection of the checkpoint state, runs trace eval for resume and
@@ -195,10 +203,10 @@ security tooling, domain prompts, and product workflows.
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
-acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
-lifecycle acceptance, native-tool acceptance, packaging acceptance, provider
-acceptance, storage acceptance, task-profile acceptance, recovery acceptance,
-and resume acceptance, then returns one
+acceptance, durable-session acceptance, event acceptance, external-backend
+acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
+packaging acceptance, provider acceptance, storage acceptance, task-profile
+acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.

@@ -110,6 +110,12 @@ from agent_core.coordination_acceptance import (
     AgentCoreCoordinationAcceptanceReport,
     run_agent_core_coordination_acceptance as _run_agent_core_coordination_acceptance,
 )
+from agent_core.durable_session_acceptance import (
+    AgentCoreDurableSessionAcceptanceHarness,
+    AgentCoreDurableSessionAcceptanceIssue,
+    AgentCoreDurableSessionAcceptanceReport,
+    run_agent_core_durable_session_acceptance,
+)
 from agent_core.event_acceptance import (
     AgentCoreEventAcceptanceHarness,
     AgentCoreEventAcceptanceIssue,
@@ -588,6 +594,9 @@ __all__ = [
     "AgentCoreCoordinationAcceptanceHarness",
     "AgentCoreCoordinationAcceptanceIssue",
     "AgentCoreCoordinationAcceptanceReport",
+    "AgentCoreDurableSessionAcceptanceHarness",
+    "AgentCoreDurableSessionAcceptanceIssue",
+    "AgentCoreDurableSessionAcceptanceReport",
     "AgentCoreEventAcceptanceHarness",
     "AgentCoreEventAcceptanceIssue",
     "AgentCoreEventAcceptanceReport",
@@ -1006,6 +1015,7 @@ __all__ = [
     "run_agent_core_approval_acceptance",
     "run_agent_core_context_acceptance",
     "run_agent_core_coordination_acceptance",
+    "run_agent_core_durable_session_acceptance",
     "run_agent_core_event_acceptance",
     "run_agent_core_external_backend_acceptance",
     "run_agent_core_guardrail_acceptance",

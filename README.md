@@ -239,6 +239,14 @@ that retryable tool failures record attempts and finish successfully. Host
 runtimes still own production retry budgets, rate-limit policy, circuit
 breakers, and provider-specific failover rules.
 
+`agent_core.run_agent_core_durable_session_acceptance()` runs deterministic
+durable-session checks. It executes the same `AgentRunner` session through
+`AgentSessionManager` twice, once with SQLite stores and once with Markdown
+stores, then reopens every store path and verifies journal/checkpoint/trace,
+event log, tool replay, memory, context material, policy decisions, and manager
+run state can be queried again. Production PG/vector/graph/object-store/product
+stores remain runtime-owned implementations of the same ports.
+
 `agent_core.run_agent_core_resume_acceptance()` runs deterministic
 checkpoint/resume checks. It creates a checkpoint, selects a resume plan,
 continues through `AgentRunner.resume()`, injects resumed state into the prompt,
@@ -263,10 +271,10 @@ product workflows remain runtime responsibilities.
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
-acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
-lifecycle acceptance, native-tool acceptance, packaging acceptance, provider
-acceptance, storage acceptance, task-profile acceptance, recovery acceptance,
-and resume acceptance, then returns one
+acceptance, durable-session acceptance, event acceptance, external-backend
+acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
+packaging acceptance, provider acceptance, storage acceptance, task-profile
+acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
 
@@ -1005,6 +1013,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK provider acceptance harness | MVP implemented |
 | SDK task profile acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
+| SDK durable session acceptance harness | MVP implemented |
 | SDK resume acceptance harness | MVP implemented |
 | SDK coordination acceptance harness | MVP implemented |
 | SDK event acceptance harness | MVP implemented |

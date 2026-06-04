@@ -24,6 +24,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["context_acceptance"]["ready"] is True
     assert manifest["orchestration_acceptance"]["ready"] is True
     assert manifest["coordination_acceptance"]["ready"] is True
+    assert manifest["durable_session_acceptance"]["ready"] is True
     assert manifest["event_acceptance"]["ready"] is True
     assert manifest["external_backend_acceptance"]["ready"] is True
     assert manifest["guardrail_acceptance"]["ready"] is True
@@ -51,6 +52,14 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["coordination_acceptance"]["handoff"]["decision"]["selected_session"] == "code-reviewer"
     assert manifest["coordination_acceptance"]["agent_tool"]["result"]["status"] == "completed"
     assert manifest["coordination_acceptance"]["trace_eval"]["ok"] is True
+    assert manifest["durable_session_acceptance"]["sqlite_roundtrip"]["reopened"][
+        "manager_completed_count"
+    ] == 1
+    assert manifest["durable_session_acceptance"]["markdown_roundtrip"]["reopened"][
+        "context_material_count"
+    ] == 1
+    assert manifest["durable_session_acceptance"]["trace_eval"]["sqlite"]["ok"] is True
+    assert manifest["durable_session_acceptance"]["trace_eval"]["markdown"]["ok"] is True
     assert manifest["event_acceptance"]["streaming_run"]["model_stream_event_count"] >= 1
     assert manifest["event_acceptance"]["manager_stream"]["after"]["terminal"] is True
     assert manifest["event_acceptance"]["trace_eval"]["ok"] is True
@@ -138,6 +147,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "coordination_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "durable_session_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "event_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "external_backend_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "guardrail_acceptance_harness" in readiness["matched"]["capabilities"]
@@ -161,6 +171,9 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_orchestration_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreCoordinationAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_coordination_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCoreDurableSessionAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "AgentCoreDurableSessionAcceptanceReport" in readiness["matched"]["public_api"]
+    assert "run_agent_core_durable_session_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreEventAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_event_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreExternalBackendAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -194,6 +207,9 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_orchestration_acceptance" in stability["present_stable_api"]
     assert "AgentCoreCoordinationAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_coordination_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreDurableSessionAcceptanceHarness" in stability["present_stable_api"]
+    assert "AgentCoreDurableSessionAcceptanceReport" in stability["present_stable_api"]
+    assert "run_agent_core_durable_session_acceptance" in stability["present_stable_api"]
     assert "AgentCoreEventAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_event_acceptance" in stability["present_stable_api"]
     assert "AgentCoreExternalBackendAcceptanceHarness" in stability["present_stable_api"]
