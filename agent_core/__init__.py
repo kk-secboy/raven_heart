@@ -164,6 +164,14 @@ from agent_core.provider_acceptance import (
     AgentCoreProviderAcceptanceReport,
     run_agent_core_provider_acceptance,
 )
+from agent_core.provider_conformance import (
+    AgentCoreProviderConformanceHarness,
+    AgentCoreProviderConformanceIssue,
+    AgentCoreProviderConformanceReport,
+    AgentCoreProviderConformanceSpec,
+    ProviderConformanceDeterministicProvider,
+    run_agent_core_provider_conformance,
+)
 from agent_core.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingCallRecord,
@@ -621,6 +629,10 @@ __all__ = [
     "AgentCoreProviderAcceptanceHarness",
     "AgentCoreProviderAcceptanceIssue",
     "AgentCoreProviderAcceptanceReport",
+    "AgentCoreProviderConformanceHarness",
+    "AgentCoreProviderConformanceIssue",
+    "AgentCoreProviderConformanceReport",
+    "AgentCoreProviderConformanceSpec",
     "AgentCoreReadinessIssue",
     "AgentCoreReadinessProfile",
     "AgentCoreReadinessReport",
@@ -937,6 +949,7 @@ __all__ = [
     "PersistentAgentJournal",
     "PersistentPlanner",
     "PersistentToolReplay",
+    "ProviderConformanceDeterministicProvider",
     "RuleBasedMemoryGovernance",
     "InMemoryPolicyDecisionStore",
     "MarkdownPolicyDecisionStore",
@@ -1024,6 +1037,7 @@ __all__ = [
     "run_agent_core_orchestration_acceptance",
     "run_agent_core_packaging_acceptance",
     "run_agent_core_provider_acceptance",
+    "run_agent_core_provider_conformance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
     "run_agent_core_storage_acceptance",

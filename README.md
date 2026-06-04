@@ -223,6 +223,14 @@ provider fallback; streaming route selection; and prompt-safe call manifests.
 Concrete HTTP clients, credentials, rate limits, and vendor-specific adapters
 remain outside the SDK.
 
+`agent_core.run_agent_core_provider_conformance()` runs provider-neutral
+conformance checks against one `LLMProviderPort`. With no provider argument it
+uses a deterministic no-network provider for SDK validation; runtimes can pass a
+real provider adapter when credentials are available and check text completion,
+streaming, JSON mode, and native tool-call behavior through the same report
+shape. HTTP clients, API keys, deployment routing, and rate-limit handling stay
+outside `agent_core`.
+
 `agent_core.run_agent_core_storage_acceptance()` runs deterministic storage
 backend portability checks. It verifies built-in in-memory/SQLite/Markdown/none
 backend manifests across SDK store roles, SQLite and Markdown memory/context
@@ -273,8 +281,9 @@ runtime-boundary audit, readiness, API stability, replacement acceptance, contex
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, durable-session acceptance, event acceptance, external-backend
 acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
-packaging acceptance, provider acceptance, storage acceptance, task-profile
-acceptance, recovery acceptance, and resume acceptance, then returns one
+packaging acceptance, provider acceptance, provider-conformance checks, storage
+acceptance, task-profile acceptance, recovery acceptance, and resume acceptance,
+then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
 
@@ -1011,6 +1020,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK replacement acceptance harness | MVP implemented |
 | SDK context acceptance harness | MVP implemented |
 | SDK provider acceptance harness | MVP implemented |
+| SDK provider conformance harness | MVP implemented |
 | SDK task profile acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | SDK durable session acceptance harness | MVP implemented |

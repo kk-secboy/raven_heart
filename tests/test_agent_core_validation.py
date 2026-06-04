@@ -32,6 +32,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["native_tool_acceptance"]["ready"] is True
     assert manifest["packaging_acceptance"]["ready"] is True
     assert manifest["provider_acceptance"]["ready"] is True
+    assert manifest["provider_conformance"]["ready"] is True
     assert manifest["storage_acceptance"]["ready"] is True
     assert manifest["task_profile_acceptance"]["ready"] is True
     assert manifest["recovery"]["ready"] is True
@@ -101,6 +102,8 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["packaging_acceptance"]["build_metadata"]["includes_agent_core"] is True
     assert manifest["packaging_acceptance"]["public_api"]["stability_ready"] is True
     assert manifest["provider_acceptance"]["route_matrix"]["selected"]["vision"] == "vision"
+    assert manifest["provider_conformance"]["tool_calls"]["tool_call_names"] == ["lookup"]
+    assert manifest["provider_conformance"]["json_mode"]["parsed_ok"] is True
     assert manifest["storage_acceptance"]["preflight"]["ready"] is True
     assert manifest["task_profile_acceptance"]["matrix"]["completed_profiles"] == [
         "code",
@@ -155,6 +158,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "native_tool_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "packaging_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "provider_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "provider_conformance_harness" in readiness["matched"]["capabilities"]
     assert "storage_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "task_profile_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "validation_suite" in readiness["matched"]["capabilities"]
@@ -188,6 +192,10 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_packaging_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreProviderAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_provider_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCoreProviderConformanceHarness" in readiness["matched"]["public_api"]
+    assert "AgentCoreProviderConformanceReport" in readiness["matched"]["public_api"]
+    assert "AgentCoreProviderConformanceSpec" in readiness["matched"]["public_api"]
+    assert "run_agent_core_provider_conformance" in readiness["matched"]["public_api"]
     assert "AgentCoreStorageAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_storage_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreTaskProfileAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -224,6 +232,10 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_packaging_acceptance" in stability["present_stable_api"]
     assert "AgentCoreProviderAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_provider_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreProviderConformanceHarness" in stability["present_stable_api"]
+    assert "AgentCoreProviderConformanceReport" in stability["present_stable_api"]
+    assert "AgentCoreProviderConformanceSpec" in stability["present_stable_api"]
+    assert "run_agent_core_provider_conformance" in stability["present_stable_api"]
     assert "AgentCoreStorageAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_storage_acceptance" in stability["present_stable_api"]
     assert "AgentCoreTaskProfileAcceptanceHarness" in stability["present_stable_api"]

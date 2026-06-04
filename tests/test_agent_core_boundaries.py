@@ -91,6 +91,10 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreProviderAcceptanceHarness",
         "AgentCoreProviderAcceptanceIssue",
         "AgentCoreProviderAcceptanceReport",
+        "AgentCoreProviderConformanceHarness",
+        "AgentCoreProviderConformanceIssue",
+        "AgentCoreProviderConformanceReport",
+        "AgentCoreProviderConformanceSpec",
         "AgentCoreReadinessIssue",
         "AgentCoreReadinessProfile",
         "AgentCoreReadinessReport",
@@ -257,6 +261,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "MarkdownJournalStore",
         "PersistentAgentJournal",
         "PersistentPlanner",
+        "ProviderConformanceDeterministicProvider",
         "AgentJournalReplay",
         "AgentReplayEvent",
         "ReplayIssue",
@@ -349,6 +354,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_orchestration_acceptance",
         "run_agent_core_packaging_acceptance",
         "run_agent_core_provider_acceptance",
+        "run_agent_core_provider_conformance",
         "run_agent_core_recovery_acceptance",
         "run_agent_core_resume_acceptance",
         "run_agent_core_storage_acceptance",
@@ -421,6 +427,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "native_tool_acceptance_harness" in capability_names
     assert "packaging_acceptance_harness" in capability_names
     assert "provider_acceptance_harness" in capability_names
+    assert "provider_conformance_harness" in capability_names
     assert "storage_acceptance_harness" in capability_names
     assert "task_profile_acceptance_harness" in capability_names
     assert "recovery_acceptance_harness" in capability_names
@@ -493,6 +500,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "native_tool_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "packaging_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "provider_conformance_harness" in manifest["matched"]["capabilities"]
     assert "storage_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "task_profile_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]

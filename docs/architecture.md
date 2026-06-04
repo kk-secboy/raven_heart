@@ -144,6 +144,15 @@ providers by capability and preserve portable call manifests without embedding
 concrete HTTP clients, credentials, rate limits, or vendor-specific adapters in
 core.
 
+`AgentCoreProviderConformanceHarness` is the adapter/provider conformance gate.
+It accepts any external `LLMProviderPort` implementation and checks text
+completion, streaming, JSON mode, and native tool-call behavior using
+provider-neutral requests and prompt-safe reports. The package-level default
+uses a deterministic no-network provider; host runtimes can pass real providers
+when API keys are available. The SDK owns the conformance contract, while HTTP
+clients, credentials, deployment routing, and rate-limit policy remain outside
+core.
+
 `AgentCoreStorageAcceptanceHarness` is the storage-portability gate. It verifies
 SDK built-in in-memory, SQLite, Markdown, and none backend manifests across
 store roles; SQLite and Markdown memory/context roundtrips; backend extraction
@@ -205,8 +214,9 @@ boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, durable-session acceptance, event acceptance, external-backend
 acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
-packaging acceptance, provider acceptance, storage acceptance, task-profile
-acceptance, recovery acceptance, and resume acceptance, then returns one
+packaging acceptance, provider acceptance, provider-conformance checks, storage
+acceptance, task-profile acceptance, recovery acceptance, and resume acceptance,
+then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.
