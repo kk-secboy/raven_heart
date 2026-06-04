@@ -11,6 +11,7 @@ from agent_core.acceptance import run_agent_core_acceptance
 from agent_core.approval_acceptance import run_agent_core_approval_acceptance
 from agent_core.budget_acceptance import run_agent_core_budget_acceptance
 from agent_core.context_acceptance import run_agent_core_context_acceptance
+from agent_core.context_window_acceptance import run_agent_core_context_window_acceptance
 from agent_core.coordination_acceptance import run_agent_core_coordination_acceptance
 from agent_core.durable_session_acceptance import run_agent_core_durable_session_acceptance
 from agent_core.event_acceptance import run_agent_core_event_acceptance
@@ -134,6 +135,7 @@ class AgentCoreValidationReport:
     approval_acceptance: dict[str, Any] = field(default_factory=dict)
     budget_acceptance: dict[str, Any] = field(default_factory=dict)
     context_acceptance: dict[str, Any] = field(default_factory=dict)
+    context_window_acceptance: dict[str, Any] = field(default_factory=dict)
     orchestration_acceptance: dict[str, Any] = field(default_factory=dict)
     coordination_acceptance: dict[str, Any] = field(default_factory=dict)
     durable_session_acceptance: dict[str, Any] = field(default_factory=dict)
@@ -179,6 +181,7 @@ class AgentCoreValidationReport:
             "approval_acceptance": dict(self.approval_acceptance),
             "budget_acceptance": dict(self.budget_acceptance),
             "context_acceptance": dict(self.context_acceptance),
+            "context_window_acceptance": dict(self.context_window_acceptance),
             "orchestration_acceptance": dict(self.orchestration_acceptance),
             "coordination_acceptance": dict(self.coordination_acceptance),
             "durable_session_acceptance": dict(self.durable_session_acceptance),
@@ -241,6 +244,14 @@ class AgentCoreValidationSuite:
         context_acceptance = (
             await run_agent_core_context_acceptance(
                 metadata={"validation_gate": "context_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
+        context_window_acceptance = (
+            await run_agent_core_context_window_acceptance(
+                metadata={
+                    "validation_gate": "context_window_acceptance",
+                    **dict(self.metadata),
+                }
             )
         ).manifest()
         orchestration_acceptance = (
@@ -348,6 +359,7 @@ class AgentCoreValidationSuite:
             approval_acceptance=approval_acceptance,
             budget_acceptance=budget_acceptance,
             context_acceptance=context_acceptance,
+            context_window_acceptance=context_window_acceptance,
             orchestration_acceptance=orchestration_acceptance,
             coordination_acceptance=coordination_acceptance,
             durable_session_acceptance=durable_session_acceptance,
@@ -378,6 +390,7 @@ class AgentCoreValidationSuite:
             approval_acceptance=approval_acceptance,
             budget_acceptance=budget_acceptance,
             context_acceptance=context_acceptance,
+            context_window_acceptance=context_window_acceptance,
             orchestration_acceptance=orchestration_acceptance,
             coordination_acceptance=coordination_acceptance,
             durable_session_acceptance=durable_session_acceptance,
@@ -512,6 +525,7 @@ def _validation_issues(
     approval_acceptance: dict[str, Any],
     budget_acceptance: dict[str, Any],
     context_acceptance: dict[str, Any],
+    context_window_acceptance: dict[str, Any],
     orchestration_acceptance: dict[str, Any],
     coordination_acceptance: dict[str, Any],
     durable_session_acceptance: dict[str, Any],
@@ -540,6 +554,11 @@ def _validation_issues(
     _extend_report_issues(issues, source="approval_acceptance", report=approval_acceptance)
     _extend_report_issues(issues, source="budget_acceptance", report=budget_acceptance)
     _extend_report_issues(issues, source="context_acceptance", report=context_acceptance)
+    _extend_report_issues(
+        issues,
+        source="context_window_acceptance",
+        report=context_window_acceptance,
+    )
     _extend_report_issues(
         issues,
         source="orchestration_acceptance",

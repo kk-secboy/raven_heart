@@ -23,6 +23,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["approval_acceptance"]["ready"] is True
     assert manifest["budget_acceptance"]["ready"] is True
     assert manifest["context_acceptance"]["ready"] is True
+    assert manifest["context_window_acceptance"]["ready"] is True
     assert manifest["orchestration_acceptance"]["ready"] is True
     assert manifest["coordination_acceptance"]["ready"] is True
     assert manifest["durable_session_acceptance"]["ready"] is True
@@ -53,6 +54,8 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["context_acceptance"]["context_summary"][
         "prompt_semantic_trimmed_count"
     ] == 1
+    assert manifest["context_window_acceptance"]["ready_report"]["trimmed_count"] == 2
+    assert manifest["context_window_acceptance"]["blocked_report"]["status"] == "blocked"
     assert manifest["orchestration_acceptance"]["capability_discovery"]["counts"][
         "mcp_resource"
     ] == 1
@@ -166,6 +169,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "approval_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "budget_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "context_window_report" in readiness["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "coordination_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "durable_session_acceptance_harness" in readiness["matched"]["capabilities"]
@@ -194,6 +198,11 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_budget_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreContextAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_context_acceptance" in readiness["matched"]["public_api"]
+    assert "ContextWindowBuilder" in readiness["matched"]["public_api"]
+    assert "ContextWindowReport" in readiness["matched"]["public_api"]
+    assert "build_context_window_report" in readiness["matched"]["public_api"]
+    assert "AgentCoreContextWindowAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_context_window_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreOrchestrationAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_orchestration_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreCoordinationAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -247,6 +256,11 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_budget_acceptance" in stability["present_stable_api"]
     assert "AgentCoreContextAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_context_acceptance" in stability["present_stable_api"]
+    assert "ContextWindowBuilder" in stability["present_stable_api"]
+    assert "ContextWindowReport" in stability["present_stable_api"]
+    assert "build_context_window_report" in stability["present_stable_api"]
+    assert "AgentCoreContextWindowAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_context_window_acceptance" in stability["present_stable_api"]
     assert "AgentCoreOrchestrationAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_orchestration_acceptance" in stability["present_stable_api"]
     assert "AgentCoreCoordinationAcceptanceHarness" in stability["present_stable_api"]

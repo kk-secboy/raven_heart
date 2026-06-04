@@ -64,6 +64,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreContextAcceptanceHarness",
         "AgentCoreContextAcceptanceIssue",
         "AgentCoreContextAcceptanceReport",
+        "AgentCoreContextWindowAcceptanceHarness",
+        "AgentCoreContextWindowAcceptanceIssue",
+        "AgentCoreContextWindowAcceptanceReport",
         "AgentCoreCoordinationAcceptanceHarness",
         "AgentCoreCoordinationAcceptanceIssue",
         "AgentCoreCoordinationAcceptanceReport",
@@ -183,6 +186,11 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "ContextMaterialStorePort",
         "ContextMaterialStoreSpec",
         "ContextReducerPort",
+        "ContextWindowBuilder",
+        "ContextWindowEntry",
+        "ContextWindowIssue",
+        "ContextWindowPolicy",
+        "ContextWindowReport",
         "DefaultLLMProviderCodec",
         "DefaultContextReducer",
         "DefaultContextMaterialSelector",
@@ -351,6 +359,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "agent_core_api_contract",
         "agent_core_sdk_manifest",
         "agent_core_replacement_readiness_profile",
+        "build_context_window_report",
         "evaluate_agent_core_api_lifecycle",
         "evaluate_agent_core_api_stability",
         "evaluate_agent_core_runtime_boundary",
@@ -361,6 +370,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_approval_acceptance",
         "run_agent_core_budget_acceptance",
         "run_agent_core_context_acceptance",
+        "run_agent_core_context_window_acceptance",
         "run_agent_core_coordination_acceptance",
         "run_agent_core_durable_session_acceptance",
         "run_agent_core_eval_suite_acceptance",
@@ -439,6 +449,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "react_loop" in capability_names
     assert "llm_provider_center" in capability_names
     assert "prompt_context_semantics" in capability_names
+    assert "context_window_report" in capability_names
     assert "memory_governance" in capability_names
     assert "api_stability_contract" in capability_names
     assert "api_lifecycle_policy" in capability_names
@@ -522,6 +533,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "api_lifecycle_policy" in manifest["matched"]["capabilities"]
     assert "runtime_boundary_audit" in manifest["matched"]["capabilities"]
     assert "prompt_context_semantics" in manifest["matched"]["capabilities"]
+    assert "context_window_report" in manifest["matched"]["capabilities"]
     assert "replacement_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "approval_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "context_acceptance_harness" in manifest["matched"]["capabilities"]

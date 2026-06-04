@@ -28,6 +28,7 @@ ops agents, research agents, and future automation systems.
 - Context material store center for SDK/runtime-owned candidate context backends.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - Context injection policy for bucket allow-lists, per-injection trimming, total injection budget, and audit manifests.
+- Context window reports for selected, injected, trimmed, and excluded context material.
 - Provider-neutral embedding request/response, provider routing, and semantic ranking contracts.
 - SQLite, Markdown, and in-memory stores for lightweight memory.
 - Memory governance decisions for allow/rewrite/deny write auditing.
@@ -940,6 +941,14 @@ limit allowed target buckets, trim oversized injected material, cap total
 injection bytes, and record included/excluded/trimmed decisions in the prompt
 manifest. `AgentSession.context_injection_policy` lets runners apply the same
 policy to resume, memory, approval, and runtime-provided injections.
+
+`ContextWindowBuilder` / `build_context_window_report` converts prompt or run
+trace manifests into one prompt-safe context window audit. It rolls up selected,
+dropped, injected, trimmed, and excluded context entries, bucket byte counts,
+semantic trim metadata, and bucket-budget metadata. `ContextWindowPolicy` can
+flag over-budget prompts, excessive exclusions/trims, or missing required
+context sources without depending on Raven, Graphiti, or a concrete runtime
+ranking model.
 
 ## Yaklang Influence
 

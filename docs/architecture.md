@@ -79,6 +79,10 @@ bucket-local prompt budgets, semantic prompt trimming, provider-aware prompt
 budgeting, and trace eval. It proves the Yaklang-inspired context pipeline is a
 portable SDK behavior; runtime-specific stores, rankers, embeddings, domain
 prompts, and product policies remain outside core.
+`AgentCoreContextWindowAcceptanceHarness` verifies the unified context window
+audit contract. It checks that selected, injected, trimmed, excluded,
+over-budget, and missing-source conditions become one prompt-safe report that
+can be consumed by Raven, code-agent, ops-agent, or security-agent runtimes.
 
 `AgentCoreApprovalAcceptanceHarness` is the policy/approval gate. It verifies
 that a policy rule can block a tool, create a prompt-safe pending approval
@@ -864,6 +868,14 @@ assembly. It can restrict target buckets, trim each injected block, cap total
 injection bytes, and emit per-injection decisions into the prompt manifest. This
 keeps resume, memory, approval, and runtime-supplied context on one auditable
 path without adding Raven-specific prompt content to core.
+
+`ContextWindowBuilder` derives `ContextWindowReport` from a prompt manifest or a
+run trace bundle. The report rolls up material selection, injection decisions,
+bucket byte counts, semantic trim, bucket budget, and global prompt trim into a
+single prompt-safe context window audit. `ContextWindowPolicy` can flag
+over-budget prompts, excessive context exclusions/trims, or missing required
+sources while keeping concrete ranking models and product-specific context
+stores outside `agent_core`.
 
 When memory is enabled on an `AgentSession`, `AgentRunner` recalls memory through
 `MemoryPort` and injects the rendered hits as `ContextInjection(source="memory")`.

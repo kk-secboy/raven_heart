@@ -110,6 +110,20 @@ from agent_core.context_acceptance import (
     AgentCoreContextAcceptanceReport,
     run_agent_core_context_acceptance,
 )
+from agent_core.context_window import (
+    ContextWindowBuilder,
+    ContextWindowEntry,
+    ContextWindowIssue,
+    ContextWindowPolicy,
+    ContextWindowReport,
+    build_context_window_report,
+)
+from agent_core.context_window_acceptance import (
+    AgentCoreContextWindowAcceptanceHarness,
+    AgentCoreContextWindowAcceptanceIssue,
+    AgentCoreContextWindowAcceptanceReport,
+    run_agent_core_context_window_acceptance,
+)
 from agent_core.coordination_acceptance import (
     AgentCoreCoordinationAcceptanceHarness,
     AgentCoreCoordinationAcceptanceIssue,
@@ -644,6 +658,9 @@ __all__ = [
     "AgentCoreContextAcceptanceHarness",
     "AgentCoreContextAcceptanceIssue",
     "AgentCoreContextAcceptanceReport",
+    "AgentCoreContextWindowAcceptanceHarness",
+    "AgentCoreContextWindowAcceptanceIssue",
+    "AgentCoreContextWindowAcceptanceReport",
     "AgentCoreCoordinationAcceptanceHarness",
     "AgentCoreCoordinationAcceptanceIssue",
     "AgentCoreCoordinationAcceptanceReport",
@@ -778,6 +795,11 @@ __all__ = [
     "ContextMaterialStorePort",
     "ContextMaterialStoreSpec",
     "ContextReducerPort",
+    "ContextWindowBuilder",
+    "ContextWindowEntry",
+    "ContextWindowIssue",
+    "ContextWindowPolicy",
+    "ContextWindowReport",
     "CostTrace",
     "InMemoryRunTraceStore",
     "MarkdownRunTraceStore",
@@ -1028,6 +1050,7 @@ __all__ = [
     "default_agent_core_capabilities",
     "agent_core_api_contract",
     "agent_core_replacement_readiness_profile",
+    "build_context_window_report",
     "evaluate_agent_core_api_stability",
     "evaluate_agent_core_api_lifecycle",
     "evaluate_agent_core_runtime_boundary",
@@ -1096,6 +1119,7 @@ __all__ = [
     "run_agent_core_approval_acceptance",
     "run_agent_core_budget_acceptance",
     "run_agent_core_context_acceptance",
+    "run_agent_core_context_window_acceptance",
     "run_agent_core_coordination_acceptance",
     "run_agent_core_durable_session_acceptance",
     "run_agent_core_eval_suite_acceptance",
