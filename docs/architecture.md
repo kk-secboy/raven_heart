@@ -109,6 +109,13 @@ events, and monotonic event sequencing. The SDK owns event schemas, cursor
 semantics, lightweight persistence, and trace contracts; runtimes own SSE,
 WebSocket, metrics, dashboards, and production observability sinks.
 
+`AgentCoreLifecycleAcceptanceHarness` is the scheduling/lifecycle gate. It
+verifies single-process capacity queueing and dequeue, queued-run cancellation
+before capacity claim, active-run cancellation, request timeouts, interrupt
+metadata, schedule snapshots, event logs, and trace eval. The SDK owns local
+manager semantics and prompt-safe reports; runtimes own distributed schedulers,
+leases, worker process control, UI controls, and operational policy.
+
 `AgentCoreProviderAcceptanceHarness` is the provider-compatibility gate. It runs
 a deterministic matrix for text, multimodal, structured-output, native-tool,
 OpenAI-compatible codec, transport fallback, and streaming routes. It proves the
@@ -144,8 +151,8 @@ selection, UI recovery flows, and product workflow state.
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
-acceptance, event acceptance, provider acceptance, storage acceptance, recovery
-acceptance, and resume acceptance, then returns one
+acceptance, event acceptance, lifecycle acceptance, provider acceptance, storage
+acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.
