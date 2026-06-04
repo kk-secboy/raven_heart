@@ -464,6 +464,9 @@ calling any concrete model client.
 - `MCPContextMaterialRequest` and `MCPCenter.context_materials()` turn MCP
   resources/prompts into selector-ready `ContextMaterial` without making MCP a
   product-specific runtime adapter.
+- `AgentRunRequest.mcp_context_materials` lets `AgentRunner` explicitly collect
+  MCP resources/prompts and send them through the normal context material
+  selector before prompt assembly.
 - `MCPCenterTrace` and trace eval contracts for required servers, refreshed
   servers, forbidden statuses, failed-server limits, and partial-refresh limits.
 - SDK-free stdio JSON-RPC connector.
@@ -616,6 +619,9 @@ hashes.
 `AgentSession.context_material_selector` lets `AgentRunner` apply that selector
 automatically when `AgentRunRequest.context_materials` or
 `AgentRunRequest.context_material_selection` is provided.
+`AgentRunRequest.mcp_context_materials` uses the same path for MCP
+resources/prompts: runner collection is opt-in, selector/budget policy remains
+SDK-owned, and concrete MCP process/auth/network lifecycle remains runtime-owned.
 
 `ContextInjectionPolicy` governs those insertions before prompt assembly. It can
 limit allowed target buckets, trim oversized injected material, cap total

@@ -45,7 +45,7 @@ from agent_core.harness import (
 from agent_core.lifecycle import AgentLifecycleEvent, AgentLifecycleHookCenter, NullLifecycleHooks
 from agent_core.loop_guard import LoopGuard
 from agent_core.memory import MemoryHit, MemoryPort, MemoryQuery, NullMemory
-from agent_core.mcp import MCPCenter
+from agent_core.mcp import MCPCenter, MCPContextMaterialRequest
 from agent_core.policy import NullPolicyDecisionStore, PolicyDecisionStorePort, PolicyPort
 from agent_core.providers import LLMProviderPort
 from agent_core.prompt import (
@@ -165,6 +165,7 @@ class AgentRunRequest:
     structured_output: StructuredOutputSpec | None = None
     context_materials: tuple[ContextMaterial, ...] = ()
     context_material_selection: ContextMaterialSelectionRequest | None = None
+    mcp_context_materials: MCPContextMaterialRequest | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
 
@@ -182,6 +183,7 @@ class AgentResumeRequest:
     structured_output: StructuredOutputSpec | None = None
     context_materials: tuple[ContextMaterial, ...] = ()
     context_material_selection: ContextMaterialSelectionRequest | None = None
+    mcp_context_materials: MCPContextMaterialRequest | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
 
@@ -199,6 +201,7 @@ class AgentResumeRequest:
             "has_structured_output": self.structured_output is not None,
             "context_material_count": len(self.context_materials),
             "has_context_material_selection": self.context_material_selection is not None,
+            "has_mcp_context_materials": self.mcp_context_materials is not None,
             "timeout_seconds": self.timeout_seconds,
             "native_tool_calls": self.native_tool_calls,
         }
@@ -845,7 +848,12 @@ class AgentRunner:
         selector = self.session.context_material_selector
         if selector is None:
             return AgentContextMaterialSelection()
-        selection_request = _context_material_selection_request(request)
+        mcp_materials, mcp_manifest = await self._mcp_context_materials(request)
+        selection_request = _context_material_selection_request(
+            request,
+            extra_materials=mcp_materials,
+            extra_metadata={"mcp_context_materials": mcp_manifest} if mcp_manifest else {},
+        )
         if not selection_request.materials:
             return AgentContextMaterialSelection()
         result = selector.select(selection_request)
@@ -864,6 +872,15 @@ class AgentRunner:
             injections=result.injections,
             manifest=result.manifest(),
         )
+
+    async def _mcp_context_materials(
+        self,
+        request: AgentRunRequest,
+    ) -> tuple[tuple[ContextMaterial, ...], dict[str, Any]]:
+        if request.mcp_context_materials is None or self.session.mcp is None:
+            return (), {}
+        result = await self.session.mcp.context_materials(request.mcp_context_materials)
+        return result.materials, result.manifest()
 
     async def _memory_recall(self, request: AgentRunRequest) -> AgentMemoryRecall:
         if not self.session.profile.capabilities.memory_enabled:
@@ -1500,24 +1517,32 @@ def _context_material_selector_manifest(
 
 def _context_material_selection_request(
     request: AgentRunRequest,
+    *,
+    extra_materials: tuple[ContextMaterial, ...] = (),
+    extra_metadata: dict[str, Any] | None = None,
 ) -> ContextMaterialSelectionRequest:
     base = request.context_material_selection
+    materials = (*tuple(request.context_materials), *tuple(extra_materials))
+    metadata = {
+        "request_metadata": dict(request.metadata),
+        **dict(extra_metadata or {}),
+    }
     if base is None:
         return ContextMaterialSelectionRequest(
             task=request.task,
-            materials=tuple(request.context_materials),
-            metadata={"request_metadata": dict(request.metadata)},
+            materials=materials,
+            metadata=metadata,
         )
     return ContextMaterialSelectionRequest(
         task=base.task or request.task,
-        materials=tuple(base.materials or request.context_materials),
+        materials=(*tuple(base.materials or request.context_materials), *tuple(extra_materials)),
         max_materials=base.max_materials,
         max_bytes=base.max_bytes,
         allowed_targets=tuple(base.allowed_targets),
         min_score=base.min_score,
         metadata={
             **base.metadata,
-            "request_metadata": dict(request.metadata),
+            **metadata,
         },
     )
 
@@ -1612,6 +1637,7 @@ def _run_request_from_resume(
         structured_output=request.structured_output,
         context_materials=request.context_materials,
         context_material_selection=request.context_material_selection,
+        mcp_context_materials=request.mcp_context_materials,
         timeout_seconds=request.timeout_seconds,
         native_tool_calls=request.native_tool_calls,
     )

@@ -17,7 +17,17 @@ from agent_core.errors import ResumeError
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.lifecycle import AgentLifecycleEvent, AgentLifecycleHookCenter
 from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
-from agent_core.mcp import MCPCenter, MCPServerSpec
+from agent_core.mcp import (
+    MCPCenter,
+    MCPContextMaterialRequest,
+    MCPPromptContent,
+    MCPPromptSpec,
+    MCPResourceContent,
+    MCPResourceSpec,
+    MCPServerSpec,
+    MCPToolReference,
+    MCPToolSpec,
+)
 from agent_core.providers import LLMProviderCenter
 from agent_core.providers import LLMRequest, LLMResponse, LLMToolCall
 from agent_core.prompt import (
@@ -69,6 +79,66 @@ class _RecordingLifecycleHook:
 class _FailingLifecycleHook:
     async def on_lifecycle_event(self, event: AgentLifecycleEvent) -> None:
         raise RuntimeError(f"hook failed: {event.type}")
+
+
+class _ContextMCPConnector:
+    async def list_tools(self, server: MCPServerSpec) -> tuple[MCPToolSpec, ...]:
+        return (
+            MCPToolSpec(
+                reference=MCPToolReference(server_name=server.name, tool_name="lookup"),
+                description="Lookup service",
+            ),
+        )
+
+    async def invoke_tool(
+        self,
+        server: MCPServerSpec,
+        tool_name: str,
+        arguments: dict,
+    ) -> ToolResult:
+        return ToolResult(call_id="mcp-call", tool_name=tool_name, content="ok")
+
+    async def list_resources(self, server: MCPServerSpec) -> tuple[MCPResourceSpec, ...]:
+        return (
+            MCPResourceSpec(
+                server_name=server.name,
+                uri="file://auth.md",
+                name="Auth Notes",
+                description="auth callback csrf failure notes",
+                mime_type="text/markdown",
+                tags=("auth",),
+            ),
+        )
+
+    async def read_resource(self, server: MCPServerSpec, uri: str) -> MCPResourceContent:
+        return MCPResourceContent(
+            server_name=server.name,
+            uri=uri,
+            text="payment auth callback failed csrf token validation",
+            mime_type="text/markdown",
+        )
+
+    async def list_prompts(self, server: MCPServerSpec) -> tuple[MCPPromptSpec, ...]:
+        return (
+            MCPPromptSpec(
+                server_name=server.name,
+                name="schema_hint",
+                description="risk schema hint",
+                tags=("schema",),
+            ),
+        )
+
+    async def get_prompt(
+        self,
+        server: MCPServerSpec,
+        name: str,
+        arguments: dict,
+    ) -> MCPPromptContent:
+        return MCPPromptContent(
+            server_name=server.name,
+            name=name,
+            messages=({"role": "user", "content": '{"required":["risk"]}'},),
+        )
 
 
 @pytest.mark.asyncio
@@ -398,6 +468,53 @@ async def test_agent_runner_selects_context_materials_before_prompt_build() -> N
         "runtime": 1,
         "trace": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_selects_mcp_context_materials_before_prompt_build() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    mcp = MCPCenter()
+    mcp.register_server(MCPServerSpec(name="ctx", transport="memory"))
+    mcp.register_connector("memory", _ContextMCPConnector())
+    session = AgentSession(
+        profile=AgentProfile(name="mcp-context", budget=RuntimeBudget(max_iterations=2)),
+        provider=provider,
+        tools=MockToolRuntime(),
+        mcp=mcp,
+        context_material_selector=DefaultContextMaterialSelector(),
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="investigate auth callback risk",
+            refresh=True,
+            mcp_context_materials=MCPContextMaterialRequest(
+                query="auth risk",
+                prompt_arguments={"ctx:schema_hint": {"target": "auth"}},
+                priority=4,
+                max_resource_bytes=256,
+                max_prompt_bytes=256,
+            ),
+            context_material_selection=ContextMaterialSelectionRequest(
+                task="",
+                max_materials=2,
+                max_bytes=1024,
+            ),
+        )
+    )
+    prompt_text = provider.requests[0].messages[0].content
+    selection = outcome.prompt_manifest["metadata"]["context_material_selection"]
+    request_metadata = selection["request"]["metadata"]
+
+    assert outcome.result.status == "completed"
+    assert "payment auth callback failed csrf token validation" in prompt_text
+    assert '"required":["risk"]' in prompt_text
+    assert selection["selected_count"] == 2
+    assert request_metadata["mcp_context_materials"]["material_count"] == 2
+    assert any(item["name"].startswith("mcp_resource:") for item in selection["selections"])
+    assert any(item["name"].startswith("mcp_prompt:") for item in selection["selections"])
+    assert outcome.trace_manifest["summary"]["context_material_selected_count"] == 2
+    assert outcome.trace_manifest["context_material_selection"]["roles"] == {"mcp": 2}
 
 
 @pytest.mark.asyncio

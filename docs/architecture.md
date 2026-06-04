@@ -230,6 +230,10 @@ returns selector-ready `ContextMaterial` records with prompt-safe byte/hash
 manifests. This lets MCP participate in the same semantic context
 selection/trimming/injection path as memory and runtime hints without turning
 MCP process management into SDK code.
+Runner integration is explicit: `AgentRunRequest.mcp_context_materials` asks
+`AgentRunner` to collect MCP materials and merge them into the existing
+`ContextMaterialSelectionRequest`; requests without that field never read MCP
+resources/prompts during prompt assembly.
 
 `MCPCenterTrace` and `SkillCenterTrace` are run-level summaries derived from
 session/capability manifests. They let replay and eval require MCP server
