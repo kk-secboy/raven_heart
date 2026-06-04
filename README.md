@@ -334,6 +334,8 @@ runtime should pass before starting adapter-specific migration tests.
 - `AgentJournalReplay` for replayable event timelines and journal consistency audit.
 - `AgentRunTraceBundle` for per-run prompt, provider, approval, replay,
   journal, and event manifests.
+- `TraceExportBuilder` / `export_trace_bundle` for prompt-safe trace/eval
+  export bundles with redaction decisions, byte counts, and payload digests.
 - `AgentRunStorePort` for manager-level queued/running/completed state.
 - `InMemoryAgentRunStore`, `SQLiteAgentRunStore`, and `MarkdownAgentRunStore`
   for lightweight run state persistence.
@@ -474,6 +476,10 @@ multi-tenant audit storage, retention policy, and observability pipelines.
 - `StructuredOutputTrace` summarizes final-output validation attempts,
   successful schemas, repair requests, and validation failures from journal
   checkpoints.
+- `TraceExportBundle` turns run trace and eval manifests into prompt-safe
+  export records. The SDK owns redaction, hashes, and bundle schema; runtimes
+  own export sinks, operator permissions, retention, dashboards, and incident
+  workflows.
 - `MCPCenterTrace` summarizes prompt-safe MCP server inventory, refreshed/
   failed/partial servers, transports, tool/resource/prompt counts, and the last
   inventory refresh records.

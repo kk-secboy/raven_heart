@@ -35,6 +35,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["provider_acceptance"]["ready"] is True
     assert manifest["provider_conformance"]["ready"] is True
     assert manifest["redaction_acceptance"]["ready"] is True
+    assert manifest["trace_export_acceptance"]["ready"] is True
     assert manifest["eval_suite_acceptance"]["ready"] is True
     assert manifest["storage_acceptance"]["ready"] is True
     assert manifest["task_profile_acceptance"]["ready"] is True
@@ -112,6 +113,8 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["provider_conformance"]["json_mode"]["parsed_ok"] is True
     assert manifest["redaction_acceptance"]["leak_scan"]["leaked_count"] == 0
     assert manifest["redaction_acceptance"]["redaction"]["redacted_count"] >= 5
+    assert manifest["trace_export_acceptance"]["leak_scan"]["leaked_count"] == 0
+    assert manifest["trace_export_acceptance"]["trace_eval"]["ok"] is True
     assert manifest["eval_suite_acceptance"]["suite_report"]["status_counts"] == {
         "ready": 2
     }
@@ -175,6 +178,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "provider_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "provider_conformance_harness" in readiness["matched"]["capabilities"]
     assert "redaction_contracts" in readiness["matched"]["capabilities"]
+    assert "trace_export_bundle" in readiness["matched"]["capabilities"]
     assert "eval_suite_runner" in readiness["matched"]["capabilities"]
     assert "storage_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "task_profile_acceptance_harness" in readiness["matched"]["capabilities"]
@@ -218,6 +222,11 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "RedactionPolicy" in readiness["matched"]["public_api"]
     assert "AgentCoreRedactionAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_redaction_acceptance" in readiness["matched"]["public_api"]
+    assert "TraceExportBuilder" in readiness["matched"]["public_api"]
+    assert "TraceExportBundle" in readiness["matched"]["public_api"]
+    assert "export_trace_bundle" in readiness["matched"]["public_api"]
+    assert "AgentCoreTraceExportAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_trace_export_acceptance" in readiness["matched"]["public_api"]
     assert "TraceEvalSuiteRunner" in readiness["matched"]["public_api"]
     assert "AgentCoreEvalSuiteAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_eval_suite_acceptance" in readiness["matched"]["public_api"]
@@ -266,6 +275,11 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "RedactionPolicy" in stability["present_stable_api"]
     assert "AgentCoreRedactionAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_redaction_acceptance" in stability["present_stable_api"]
+    assert "TraceExportBuilder" in stability["present_stable_api"]
+    assert "TraceExportBundle" in stability["present_stable_api"]
+    assert "export_trace_bundle" in stability["present_stable_api"]
+    assert "AgentCoreTraceExportAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_trace_export_acceptance" in stability["present_stable_api"]
     assert "TraceEvalSuiteRunner" in stability["present_stable_api"]
     assert "AgentCoreEvalSuiteAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_eval_suite_acceptance" in stability["present_stable_api"]

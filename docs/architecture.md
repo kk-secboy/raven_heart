@@ -366,6 +366,10 @@ bucket, status, included count, excluded count, and trimmed count.
 decisions, risk levels, stores, reasons, and prompt-safe leak hashes. Runtime
 code owns where the bundle is stored, how long it is retained, and how it is
 queried for product observability or incident review.
+`TraceExportBuilder` and `export_trace_bundle` add the SDK-level export boundary:
+run traces and eval manifests are converted into prompt-safe records with
+redaction decisions, byte counts, and SHA-256 digests before a runtime writes
+them to files, CI artifacts, dashboards, or product audit stores.
 
 `ApprovalTrace` is derived from approval store manifests. It records approval
 ids, run/turn ids, status, subject, subject kind, and prompt-safe decision
@@ -850,6 +854,10 @@ selection request.
 `AgentRunTraceBundle`, `TraceReplayHarness`, and `DefaultTraceEvaluator` expose
 that manifest as a first-class trace contract, so suites can require selected
 materials, forbid drop statuses, cap dropped count, or cap selected bytes.
+`TraceExportBundle` preserves those evaluable trace shapes after redaction, so
+CI, runtime dashboards, or replay archives can consume exported records without
+receiving raw provider headers, API keys, tool secrets, or oversized prompt
+strings.
 
 `ContextInjectionPolicy` is the SDK-level guardrail applied before prompt
 assembly. It can restrict target buckets, trim each injected block, cap total

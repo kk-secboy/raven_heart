@@ -559,6 +559,19 @@ from agent_core.trace import (
     TraceCorrelationEntry,
     TraceCorrelationIndex,
 )
+from agent_core.trace_export import (
+    TraceExportBuilder,
+    TraceExportBundle,
+    TraceExportPolicy,
+    TraceExportRecord,
+    export_trace_bundle,
+)
+from agent_core.trace_export_acceptance import (
+    AgentCoreTraceExportAcceptanceHarness,
+    AgentCoreTraceExportAcceptanceIssue,
+    AgentCoreTraceExportAcceptanceReport,
+    run_agent_core_trace_export_acceptance,
+)
 from agent_core.validation import (
     AgentCoreRuntimeBoundaryHit,
     AgentCoreRuntimeBoundaryReport,
@@ -689,6 +702,9 @@ __all__ = [
     "AgentCoreTaskProfileAcceptanceHarness",
     "AgentCoreTaskProfileAcceptanceIssue",
     "AgentCoreTaskProfileAcceptanceReport",
+    "AgentCoreTraceExportAcceptanceHarness",
+    "AgentCoreTraceExportAcceptanceIssue",
+    "AgentCoreTraceExportAcceptanceReport",
     "AgentCoreValidationIssue",
     "AgentCoreValidationReport",
     "AgentCoreValidationSuite",
@@ -1016,6 +1032,7 @@ __all__ = [
     "evaluate_agent_core_api_lifecycle",
     "evaluate_agent_core_runtime_boundary",
     "evaluate_agent_core_readiness",
+    "export_trace_bundle",
     "structured_output_feedback",
     "storage_backend_manifest",
     "cosine_similarity",
@@ -1043,6 +1060,10 @@ __all__ = [
     "TraceEvalHarness",
     "TraceCorrelationEntry",
     "TraceCorrelationIndex",
+    "TraceExportBuilder",
+    "TraceExportBundle",
+    "TraceExportPolicy",
+    "TraceExportRecord",
     "TraceEvalIssue",
     "TraceEvalReport",
     "TraceEvalSpec",
@@ -1092,6 +1113,7 @@ __all__ = [
     "run_agent_core_resume_acceptance",
     "run_agent_core_storage_acceptance",
     "run_agent_core_task_profile_acceptance",
+    "run_agent_core_trace_export_acceptance",
     "run_agent_core_validation",
 ]
 
