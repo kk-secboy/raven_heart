@@ -96,3 +96,40 @@ async def test_event_stream_cursor_filters_event_types() -> None:
 
     assert [event.type for event in batch.events] == ["model_stream"]
     assert batch.manifest()["cursor"]["event_types"] == ["model_stream"]
+
+
+@pytest.mark.asyncio
+async def test_event_stream_cursor_filters_manager_run_metadata() -> None:
+    sink = ListEventSink()
+    await sink.emit(
+        AgentEvent(
+            type="run_started",
+            run_id="inner-1",
+            payload={"run_key": "run-a", "session_name": "alpha"},
+        )
+    )
+    await sink.emit(
+        AgentEvent(
+            type="run_started",
+            run_id="inner-2",
+            payload={"run_key": "run-b", "session_name": "alpha"},
+        )
+    )
+    await sink.emit(
+        AgentEvent(
+            type="run_finished",
+            run_id="inner-3",
+            payload={"run_key": "run-a", "session_name": "beta"},
+        )
+    )
+
+    batch = EventStreamBatch.from_log(
+        sink,
+        EventStreamCursor(run_key="run-a", session_name="alpha"),
+    )
+    manifest = batch.manifest()
+
+    assert [event.run_id for event in batch.events] == ["inner-1"]
+    assert manifest["cursor"]["run_key"] == "run-a"
+    assert manifest["cursor"]["session_name"] == "alpha"
+    assert manifest["next_cursor"]["run_key"] == "run-a"

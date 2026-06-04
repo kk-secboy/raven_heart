@@ -210,6 +210,10 @@ and downstream persistence.
 - `EventLogPort` for event logs that can return stored records and manifests.
 - `EventStreamCursor` and `EventStreamBatch` for provider-neutral event paging
   that runtime-owned SSE/WebSocket/polling adapters can consume.
+- `EventStreamCursor.run_key` and `session_name` filters for manager-owned
+  background runs before the inner ReAct `run_id` is known.
+- `AgentSessionManager.event_batch()` for polling one managed run's SDK event
+  log by `run_key`.
 - `ListEventSink` for lightweight event capture and manifest export.
 - `SQLiteEventSink` and `MarkdownEventSink` for durable local or inspectable
   SDK event logs.
@@ -797,6 +801,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Trace observability manifests | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
+| Manager run event paging | MVP implemented |
 | Lifecycle hook contracts | MVP implemented |
 | Lifecycle hook trace/eval contracts | MVP implemented |
 | Run preflight guardrails | MVP implemented |

@@ -87,6 +87,8 @@ class EventStreamCursor:
     """Provider-neutral cursor for runtime-owned SSE/WebSocket/polling streams."""
 
     run_id: str = ""
+    run_key: str = ""
+    session_name: str = ""
     after_sequence: int = 0
     limit: int = 100
     event_types: tuple[EventType, ...] = ()
@@ -100,6 +102,8 @@ class EventStreamCursor:
         return {
             "schema_version": "agent-core-event-stream-cursor/v1",
             "run_id": self.run_id,
+            "run_key": self.run_key,
+            "session_name": self.session_name,
             "after_sequence": self.after_sequence,
             "limit": self.limit,
             "event_types": list(self.event_types),
@@ -128,6 +132,7 @@ class EventStreamBatch:
             event
             for event in sorted(records, key=lambda item: item.sequence)
             if event.sequence > request.after_sequence
+            and _event_matches_cursor(event, request)
             and (not request.event_types or event.type in request.event_types)
         )
         page = selected[: request.limit]
@@ -142,6 +147,8 @@ class EventStreamBatch:
     def next_cursor(self) -> EventStreamCursor:
         return EventStreamCursor(
             run_id=self.cursor.run_id,
+            run_key=self.cursor.run_key,
+            session_name=self.cursor.session_name,
             after_sequence=self.next_after_sequence,
             limit=self.cursor.limit,
             event_types=self.cursor.event_types,
@@ -171,6 +178,16 @@ class EventLogPort(EventSinkPort, Protocol):
 
     def manifest(self) -> dict[str, Any]:
         """Return a prompt-safe event log manifest."""
+
+
+def _event_matches_cursor(event: AgentEvent, cursor: EventStreamCursor) -> bool:
+    if cursor.run_id and event.run_id != cursor.run_id:
+        return False
+    if cursor.run_key and str(event.payload.get("run_key") or "") != cursor.run_key:
+        return False
+    if cursor.session_name and str(event.payload.get("session_name") or "") != cursor.session_name:
+        return False
+    return True
 
 
 class NullEventSink:

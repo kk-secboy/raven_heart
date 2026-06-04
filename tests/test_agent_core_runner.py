@@ -1286,6 +1286,46 @@ async def test_agent_session_manager_persists_run_state_to_store() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_session_manager_exposes_run_key_event_batches_before_completion() -> None:
+    provider = _BlockingProvider()
+    events = ListEventSink()
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="evented"),
+            provider=provider,
+            tools=MockToolRuntime(),
+            event_sink=events,
+        )
+    )
+
+    run_key = manager.start("evented", "task")
+    for _ in range(100):
+        if manager.run_state(run_key).result_run_id:
+            break
+        await asyncio.sleep(0.01)
+
+    run = manager.run_state(run_key)
+    batch = manager.event_batch(run_key)
+    manifest = batch.manifest()
+
+    assert run.status == "running"
+    assert run.result_run_id
+    assert batch.events[0].type == "run_started"
+    assert batch.events[0].payload["run_key"] == run_key
+    assert batch.events[0].payload["session_name"] == "evented"
+    assert manifest["cursor"]["run_key"] == run_key
+    assert manifest["event_count"] >= 1
+
+    provider.release.set()
+    outcome = await manager.wait(run_key)
+    final_batch = manager.event_batch(run_key, batch.next_cursor())
+
+    assert outcome.result.status == "completed"
+    assert any(event.type == "run_finished" for event in final_batch.events)
+
+
+@pytest.mark.asyncio
 async def test_sqlite_agent_run_store_persists_manager_runs_across_instances(tmp_path) -> None:
     path = tmp_path / "runs.sqlite"
     provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])

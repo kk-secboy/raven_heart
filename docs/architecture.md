@@ -461,9 +461,12 @@ can capture them with `ListEventSink`; inspectable or local durable runs can use
 `SQLiteEventSink` or `MarkdownEventSink`. Production runtimes should implement
 `EventSinkPort` or `EventLogPort` for their own logs, UI streams, metrics,
 retention policy, or audit systems. `EventStreamCursor` and `EventStreamBatch`
-give those runtimes a provider-neutral paging contract with run filtering,
-sequence cursors, event-type filters, `has_more`, and terminal-run detection;
-the SDK does not own the SSE/WebSocket transport.
+give those runtimes a provider-neutral paging contract with ReAct `run_id`,
+manager `run_key`, session, sequence, and event-type filters, plus `has_more`
+and terminal-run detection. `AgentSessionManager.event_batch()` exposes that
+contract for one managed background run before completion by tagging emitted
+events with `run_key` and `session_name`; the SDK does not own the SSE/WebSocket
+transport.
 
 `ContextReducerPort` handles automatic timeline/context reduction as a core
 mechanic. `DefaultContextReducer` is deterministic and dependency-free, while

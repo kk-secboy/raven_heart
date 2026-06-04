@@ -10,7 +10,7 @@ import json
 import re
 import sqlite3
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -33,7 +33,12 @@ from agent_core.context import (
     ContextMaterialSelectorPort,
     ContextMaterialStorePort,
 )
-from agent_core.events import EventSinkPort
+from agent_core.events import (
+    AgentEvent,
+    EventSinkPort,
+    EventStreamBatch,
+    EventStreamCursor,
+)
 from agent_core.errors import ResumeError
 from agent_core.harness import (
     AgentHarness,
@@ -1504,6 +1509,23 @@ class AgentSessionManager:
             metadata={"source": type(self).__name__},
         )
 
+    def event_batch(
+        self,
+        run_key: str,
+        cursor: EventStreamCursor | None = None,
+    ) -> EventStreamBatch:
+        run = self.run_state(run_key)
+        session = self.session(run.session_name)
+        log = session.event_sink
+        request = cursor or EventStreamCursor(
+            run_id=run.result_run_id,
+            run_key=run.run_key,
+            session_name=run.session_name,
+        )
+        if not _is_event_log(log):
+            return EventStreamBatch(cursor=request)
+        return EventStreamBatch.from_log(log, request)
+
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-session-manager/v1",
@@ -1553,7 +1575,13 @@ class AgentSessionManager:
             session.reset_cancel_token()
         self._save_run(_replace_run(self._runs[run_key], status="running"))
         try:
-            outcome = await AgentRunner(session).run(request)
+            runner_session = _session_with_managed_event_sink(
+                session,
+                run_key=run_key,
+                session_name=session_name,
+                on_run_id=lambda run_id: self._record_result_run_id(run_key, run_id),
+            )
+            outcome = await AgentRunner(runner_session).run(request)
         except Exception as exc:
             run = self._runs[run_key]
             self._save_run(_replace_run(run, status="failed", error=str(exc)))
@@ -1579,6 +1607,14 @@ class AgentSessionManager:
         ))
         self._outcomes[run_key] = outcome
         return outcome
+
+    def _record_result_run_id(self, run_key: str, run_id: str) -> None:
+        if not run_id:
+            return
+        run = self._runs.get(run_key)
+        if run is None or run.result_run_id:
+            return
+        self._save_run(_replace_run(run, result_run_id=run_id))
 
     async def _run_when_capacity(
         self,
@@ -1743,6 +1779,70 @@ def _budget_manifest(budget: RuntimeBudget) -> dict[str, Any]:
         "max_tool_result_bytes": budget.max_tool_result_bytes,
         "max_cost_usd": budget.max_cost_usd,
     }
+
+
+class _ManagedRunEventSink:
+    def __init__(
+        self,
+        base: EventSinkPort,
+        *,
+        run_key: str,
+        session_name: str,
+        on_run_id: Any,
+    ) -> None:
+        self.base = base
+        self.run_key = run_key
+        self.session_name = session_name
+        self.on_run_id = on_run_id
+
+    async def emit(self, event: AgentEvent) -> None:
+        if event.run_id:
+            self.on_run_id(event.run_id)
+        payload = {
+            **dict(event.payload),
+            "run_key": self.run_key,
+            "session_name": self.session_name,
+        }
+        await self.base.emit(replace(event, payload=payload))
+
+    def records(self, *, run_id: str | None = None) -> tuple[AgentEvent, ...]:
+        records = getattr(self.base, "records", None)
+        if not callable(records):
+            return ()
+        return records(run_id=run_id)
+
+    def manifest(self) -> dict[str, Any]:
+        base_manifest = _component_manifest_sync(self.base)
+        return {
+            "schema_version": "agent-core-managed-run-event-sink/v1",
+            "run_key": self.run_key,
+            "session_name": self.session_name,
+            "base": base_manifest,
+        }
+
+
+def _session_with_managed_event_sink(
+    session: AgentSession,
+    *,
+    run_key: str,
+    session_name: str,
+    on_run_id: Any,
+) -> AgentSession:
+    if session.event_sink is None:
+        return session
+    return replace(
+        session,
+        event_sink=_ManagedRunEventSink(
+            session.event_sink,
+            run_key=run_key,
+            session_name=session_name,
+            on_run_id=on_run_id,
+        ),
+    )
+
+
+def _is_event_log(value: Any) -> bool:
+    return callable(getattr(value, "records", None))
 
 
 def _prompt_with_budget_plan(prompt: PromptIR, plan: AgentPromptBudgetPlan) -> PromptIR:
