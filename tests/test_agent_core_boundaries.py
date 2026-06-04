@@ -61,6 +61,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreCoordinationAcceptanceHarness",
         "AgentCoreCoordinationAcceptanceIssue",
         "AgentCoreCoordinationAcceptanceReport",
+        "AgentCoreEventAcceptanceHarness",
+        "AgentCoreEventAcceptanceIssue",
+        "AgentCoreEventAcceptanceReport",
         "AgentCoreOrchestrationAcceptanceHarness",
         "AgentCoreOrchestrationAcceptanceIssue",
         "AgentCoreOrchestrationAcceptanceReport",
@@ -312,6 +315,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_approval_acceptance",
         "run_agent_core_context_acceptance",
         "run_agent_core_coordination_acceptance",
+        "run_agent_core_event_acceptance",
         "run_agent_core_orchestration_acceptance",
         "run_agent_core_provider_acceptance",
         "run_agent_core_recovery_acceptance",
@@ -376,6 +380,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "context_acceptance_harness" in capability_names
     assert "orchestration_acceptance_harness" in capability_names
     assert "coordination_acceptance_harness" in capability_names
+    assert "event_acceptance_harness" in capability_names
     assert "provider_acceptance_harness" in capability_names
     assert "storage_acceptance_harness" in capability_names
     assert "recovery_acceptance_harness" in capability_names
@@ -439,6 +444,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "context_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "coordination_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "event_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "storage_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]

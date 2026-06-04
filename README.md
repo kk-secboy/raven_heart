@@ -170,6 +170,13 @@ evaluates planner, handoff, agent-tool, and artifact traces. Distributed
 scheduling, product workflow queues, and runtime-specific worker policy remain
 outside the SDK.
 
+`agent_core.run_agent_core_event_acceptance()` runs deterministic streaming and
+event-stream checks. It verifies streaming provider runs emit prompt-safe
+`model_stream` events, event logs can be paged and tailed by cursor, managed
+background runs expose events before and after completion, and trace eval can
+require event-log types plus monotonic sequencing. SSE, WebSocket, metrics,
+dashboards, and production observability sinks remain runtime responsibilities.
+
 `agent_core.run_agent_core_provider_acceptance()` runs a deterministic provider
 compatibility matrix. It checks provider routing for text, multimodal,
 structured-output, and native-tool requests; OpenAI-compatible codec
@@ -203,8 +210,8 @@ flows remain outside the SDK.
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
-acceptance, provider acceptance, storage acceptance, recovery acceptance, and
-resume acceptance, then returns one
+acceptance, event acceptance, provider acceptance, storage acceptance, recovery
+acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
 
@@ -939,6 +946,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK recovery acceptance harness | MVP implemented |
 | SDK resume acceptance harness | MVP implemented |
 | SDK coordination acceptance harness | MVP implemented |
+| SDK event acceptance harness | MVP implemented |
 | SDK aggregate validation suite | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |

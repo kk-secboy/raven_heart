@@ -110,6 +110,12 @@ from agent_core.coordination_acceptance import (
     AgentCoreCoordinationAcceptanceReport,
     run_agent_core_coordination_acceptance as _run_agent_core_coordination_acceptance,
 )
+from agent_core.event_acceptance import (
+    AgentCoreEventAcceptanceHarness,
+    AgentCoreEventAcceptanceIssue,
+    AgentCoreEventAcceptanceReport,
+    run_agent_core_event_acceptance,
+)
 from agent_core.orchestration_acceptance import (
     AgentCoreOrchestrationAcceptanceHarness,
     AgentCoreOrchestrationAcceptanceIssue,
@@ -539,6 +545,9 @@ __all__ = [
     "AgentCoreCoordinationAcceptanceHarness",
     "AgentCoreCoordinationAcceptanceIssue",
     "AgentCoreCoordinationAcceptanceReport",
+    "AgentCoreEventAcceptanceHarness",
+    "AgentCoreEventAcceptanceIssue",
+    "AgentCoreEventAcceptanceReport",
     "AgentCoreOrchestrationAcceptanceHarness",
     "AgentCoreOrchestrationAcceptanceIssue",
     "AgentCoreOrchestrationAcceptanceReport",
@@ -935,6 +944,7 @@ __all__ = [
     "run_agent_core_approval_acceptance",
     "run_agent_core_context_acceptance",
     "run_agent_core_coordination_acceptance",
+    "run_agent_core_event_acceptance",
     "run_agent_core_orchestration_acceptance",
     "run_agent_core_provider_acceptance",
     "run_agent_core_recovery_acceptance",

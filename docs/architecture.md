@@ -101,6 +101,14 @@ contracts for planner, handoff, agent-as-tool, and artifacts. The SDK owns the
 portable coordination semantics; runtimes own distributed scheduling, workflow
 queues, tenant policy, and domain-specific planning strategy.
 
+`AgentCoreEventAcceptanceHarness` is the streaming/event gate. It verifies
+streaming ReAct runs emit `model_stream` events, event logs can be paged and
+tailed with `EventStreamCursor`, managed background runs expose events before
+and after completion, and trace eval can require event-log types, terminal
+events, and monotonic event sequencing. The SDK owns event schemas, cursor
+semantics, lightweight persistence, and trace contracts; runtimes own SSE,
+WebSocket, metrics, dashboards, and production observability sinks.
+
 `AgentCoreProviderAcceptanceHarness` is the provider-compatibility gate. It runs
 a deterministic matrix for text, multimodal, structured-output, native-tool,
 OpenAI-compatible codec, transport fallback, and streaming routes. It proves the
@@ -136,8 +144,8 @@ selection, UI recovery flows, and product workflow state.
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
-acceptance, provider acceptance, storage acceptance, recovery acceptance, and
-resume acceptance, then returns one
+acceptance, event acceptance, provider acceptance, storage acceptance, recovery
+acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.
