@@ -27,6 +27,32 @@ async def test_agent_core_provider_acceptance_matrix_passes() -> None:
     assert manifest["codec_matrix"]["encoded_has_response_format"] is True
     assert manifest["codec_matrix"]["encoded_has_multimodal_content"] is True
     assert manifest["codec_matrix"]["decoded_tool_call_names"] == ["lookup"]
+    assert (
+        manifest["contract_matrix"]["default_payload_schema"]
+        == "agent-core-llm-transport-request/v1"
+    )
+    assert manifest["contract_matrix"]["default_payload_has_content_parts"] is True
+    assert manifest["contract_matrix"]["default_payload_tool_choice_mode"] == "tool"
+    assert manifest["contract_matrix"]["default_payload_response_format_kind"] == "json_schema"
+    assert manifest["contract_matrix"]["request_manifest_redacts_uri"] is True
+    assert manifest["contract_matrix"]["default_response_tool_call_names"] == ["lookup"]
+    assert manifest["contract_matrix"]["default_response_usage_total_tokens"] == 13
+    assert (
+        manifest["contract_matrix"]["default_response_transport_provider"]
+        == "default-contract"
+    )
+    assert manifest["contract_matrix"]["default_stream_event_types"] == [
+        "delta",
+        "tool_call",
+        "usage",
+        "message_end",
+    ]
+    assert manifest["contract_matrix"]["default_stream_tool_call_names"] == ["lookup"]
+    assert manifest["contract_matrix"]["default_stream_usage_total_tokens"] == [8]
+    assert manifest["contract_matrix"]["openai_stream_tool_event_type"] == "tool_call"
+    assert manifest["contract_matrix"]["openai_stream_tool_call_name"] == "lookup"
+    assert manifest["contract_matrix"]["openai_stream_error_type"] == "error"
+    assert manifest["contract_matrix"]["openai_stream_error_retryable"] is True
     assert manifest["transport_matrix"]["fallback_used"] is True
     assert manifest["transport_matrix"]["call_statuses"] == ["failed", "completed"]
     assert manifest["streaming_matrix"]["selected_provider"] == "stream"

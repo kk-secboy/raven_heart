@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from agent_core.providers import (
+    DefaultLLMProviderCodec,
     LLMContentPart,
     LLMMessage,
     LLMModelCapabilities,
@@ -52,6 +53,7 @@ class AgentCoreProviderAcceptanceReport:
     status: str
     route_matrix: dict[str, Any] = field(default_factory=dict)
     codec_matrix: dict[str, Any] = field(default_factory=dict)
+    contract_matrix: dict[str, Any] = field(default_factory=dict)
     transport_matrix: dict[str, Any] = field(default_factory=dict)
     streaming_matrix: dict[str, Any] = field(default_factory=dict)
     issues: tuple[AgentCoreProviderAcceptanceIssue, ...] = ()
@@ -75,6 +77,7 @@ class AgentCoreProviderAcceptanceReport:
             "issues": [issue.manifest() for issue in self.issues],
             "route_matrix": dict(self.route_matrix),
             "codec_matrix": dict(self.codec_matrix),
+            "contract_matrix": dict(self.contract_matrix),
             "transport_matrix": dict(self.transport_matrix),
             "streaming_matrix": dict(self.streaming_matrix),
             "metadata": dict(self.metadata),
@@ -145,11 +148,13 @@ class AgentCoreProviderAcceptanceHarness:
     async def run(self) -> AgentCoreProviderAcceptanceReport:
         route_matrix = await _provider_route_matrix()
         codec_matrix = _provider_codec_matrix()
+        contract_matrix = await _provider_contract_matrix()
         transport_matrix = await _provider_transport_matrix()
         streaming_matrix = await _provider_streaming_matrix()
         issues = _provider_acceptance_issues(
             route_matrix=route_matrix,
             codec_matrix=codec_matrix,
+            contract_matrix=contract_matrix,
             transport_matrix=transport_matrix,
             streaming_matrix=streaming_matrix,
         )
@@ -158,6 +163,7 @@ class AgentCoreProviderAcceptanceHarness:
             status=status,
             route_matrix=route_matrix,
             codec_matrix=codec_matrix,
+            contract_matrix=contract_matrix,
             transport_matrix=transport_matrix,
             streaming_matrix=streaming_matrix,
             issues=issues,
@@ -356,6 +362,166 @@ def _provider_codec_matrix() -> dict[str, Any]:
     }
 
 
+async def _provider_contract_matrix() -> dict[str, Any]:
+    default_codec = DefaultLLMProviderCodec()
+    request = LLMRequest(
+        messages=[
+            LLMMessage(role="system", content="contract rules"),
+            LLMMessage(
+                role="user",
+                content="inspect artifact",
+                content_parts=(
+                    LLMContentPart(
+                        kind="image",
+                        uri="file://private-artifact.png",
+                        mime_type="image/png",
+                    ),
+                ),
+            ),
+        ],
+        model="portable-mini",
+        tools=(
+            LLMToolContract(
+                name="lookup",
+                description="Lookup one target",
+                parameters_schema={"type": "object", "required": ["target"]},
+                strict=True,
+            ),
+        ),
+        tool_choice=LLMToolChoice(mode="tool", tool_name="lookup"),
+        response_format=LLMResponseFormat(
+            kind="json_schema",
+            name="finding",
+            schema={"type": "object", "properties": {"summary": {"type": "string"}}},
+            strict=True,
+        ),
+        metadata={"request_id": "contract-1"},
+    )
+    complete_transport = ProviderAcceptanceTransport(
+        response={
+            "content": "need lookup",
+            "tool_calls": [
+                {
+                    "tool_name": "lookup",
+                    "arguments": {"target": "demo"},
+                    "call_id": "call-contract",
+                }
+            ],
+            "usage": {"input_tokens": 9, "output_tokens": 4, "total_tokens": 13},
+            "finish_reason": "tool_calls",
+        }
+    )
+    response = await TransportLLMProvider(
+        complete_transport,
+        codec=default_codec,
+        name="default-contract",
+    ).complete(request)
+
+    stream_transport = ProviderAcceptanceTransport(
+        events=(
+            {"type": "delta", "delta": "partial"},
+            {
+                "type": "tool_call",
+                "tool_call": {
+                    "tool_name": "lookup",
+                    "arguments": {"target": "demo"},
+                    "call_id": "stream-call",
+                },
+            },
+            {"type": "usage", "usage": {"total_tokens": 8}},
+            {"type": "message_end"},
+        )
+    )
+    stream_events = [
+        event
+        async for event in TransportLLMProvider(
+            stream_transport,
+            codec=default_codec,
+            name="default-stream-contract",
+        ).stream(request)
+    ]
+    openai_codec = OpenAICompatibleLLMProviderCodec()
+    openai_tool_event = openai_codec.decode_stream_event(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "id": "openai-stream-call",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup",
+                                    "arguments": "{\"target\":\"demo\"}",
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ]
+        }
+    )
+    openai_error_event = openai_codec.decode_stream_event(
+        {"error": {"message": "rate limited", "retryable": True}}
+    )
+    first_payload = complete_transport.complete_payloads[0]
+    return {
+        "schema_version": "agent-core-provider-contract-acceptance/v1",
+        "default_payload_schema": first_payload.get("schema_version"),
+        "default_payload_message_count": len(first_payload.get("messages") or ()),
+        "default_payload_has_content_parts": bool(
+            ((first_payload.get("messages") or ({}, {}))[1]).get("content_parts")
+        ),
+        "default_payload_tool_choice_mode": (
+            (first_payload.get("tool_choice") or {}).get("mode")
+        ),
+        "default_payload_response_format_kind": (
+            (first_payload.get("response_format") or {}).get("kind")
+        ),
+        "request_manifest_redacts_uri": "file://private-artifact.png"
+        not in str(request.manifest()),
+        "default_response_tool_call_names": [
+            tool_call.tool_name for tool_call in response.tool_calls
+        ],
+        "default_response_usage_total_tokens": response.usage.total_tokens,
+        "default_response_finish_reason": response.finish_reason,
+        "default_response_transport_provider": response.metadata.get("transport_provider"),
+        "default_stream_event_types": [event.type for event in stream_events],
+        "default_stream_tool_call_names": [
+            event.tool_call.tool_name
+            for event in stream_events
+            if event.tool_call is not None
+        ],
+        "default_stream_usage_total_tokens": [
+            event.usage.total_tokens
+            for event in stream_events
+            if event.usage is not None
+        ],
+        "default_stream_transport_providers": sorted(
+            {
+                str(event.metadata.get("transport_provider") or "")
+                for event in stream_events
+            }
+        ),
+        "openai_stream_tool_event_type": openai_tool_event.type,
+        "openai_stream_tool_call_name": (
+            openai_tool_event.tool_call.tool_name
+            if openai_tool_event.tool_call is not None
+            else ""
+        ),
+        "openai_stream_tool_call_id": (
+            openai_tool_event.tool_call.call_id
+            if openai_tool_event.tool_call is not None
+            else ""
+        ),
+        "openai_stream_error_type": openai_error_event.type,
+        "openai_stream_error_retryable": bool(
+            openai_error_event.metadata.get("retryable")
+        ),
+    }
+
+
 async def _provider_transport_matrix() -> dict[str, Any]:
     primary_transport = ProviderAcceptanceTransport(
         response={"error": {"message": "temporary", "retryable": True}}
@@ -427,6 +593,7 @@ def _provider_acceptance_issues(
     *,
     route_matrix: dict[str, Any],
     codec_matrix: dict[str, Any],
+    contract_matrix: dict[str, Any],
     transport_matrix: dict[str, Any],
     streaming_matrix: dict[str, Any],
 ) -> tuple[AgentCoreProviderAcceptanceIssue, ...]:
@@ -471,6 +638,70 @@ def _provider_acceptance_issues(
                 source="codec_matrix",
                 code="openai_codec_tool_decode_missing",
                 message="OpenAI-compatible codec did not decode tool calls.",
+            )
+        )
+    if contract_matrix.get("default_payload_schema") != "agent-core-llm-transport-request/v1":
+        issues.append(
+            AgentCoreProviderAcceptanceIssue(
+                source="contract_matrix",
+                code="default_codec_payload_schema_missing",
+                message="Default provider codec did not emit the portable transport schema.",
+            )
+        )
+    if contract_matrix.get("default_payload_has_content_parts") is not True:
+        issues.append(
+            AgentCoreProviderAcceptanceIssue(
+                source="contract_matrix",
+                code="default_codec_content_parts_missing",
+                message="Default provider codec did not preserve provider-neutral content parts.",
+            )
+        )
+    if contract_matrix.get("request_manifest_redacts_uri") is not True:
+        issues.append(
+            AgentCoreProviderAcceptanceIssue(
+                source="contract_matrix",
+                code="request_manifest_leaks_uri",
+                message="Provider request manifest leaked raw artifact URI.",
+            )
+        )
+    if contract_matrix.get("default_response_tool_call_names") != ["lookup"]:
+        issues.append(
+            AgentCoreProviderAcceptanceIssue(
+                source="contract_matrix",
+                code="default_codec_tool_call_decode_missing",
+                message="Default provider codec did not decode native tool calls.",
+            )
+        )
+    if contract_matrix.get("default_stream_event_types") != [
+        "delta",
+        "tool_call",
+        "usage",
+        "message_end",
+    ]:
+        issues.append(
+            AgentCoreProviderAcceptanceIssue(
+                source="contract_matrix",
+                code="default_stream_contract_unexpected",
+                message="Default provider stream contract did not preserve event order.",
+            )
+        )
+    if contract_matrix.get("openai_stream_tool_call_name") != "lookup":
+        issues.append(
+            AgentCoreProviderAcceptanceIssue(
+                source="contract_matrix",
+                code="openai_stream_tool_call_decode_missing",
+                message="OpenAI-compatible stream codec did not decode streamed tool calls.",
+            )
+        )
+    if (
+        contract_matrix.get("openai_stream_error_type") != "error"
+        or contract_matrix.get("openai_stream_error_retryable") is not True
+    ):
+        issues.append(
+            AgentCoreProviderAcceptanceIssue(
+                source="contract_matrix",
+                code="openai_stream_error_contract_missing",
+                message="OpenAI-compatible stream codec did not preserve retryable error events.",
             )
         )
     if transport_matrix.get("fallback_used") is not True:

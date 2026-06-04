@@ -211,9 +211,11 @@ responsibilities.
 `agent_core.run_agent_core_provider_acceptance()` runs a deterministic provider
 compatibility matrix. It checks provider routing for text, multimodal,
 structured-output, and native-tool requests; OpenAI-compatible codec
-encode/decode; transport-backed provider fallback; streaming route selection;
-and prompt-safe call manifests. Concrete HTTP clients, credentials, rate limits,
-and vendor-specific adapters remain outside the SDK.
+encode/decode; the default provider-neutral transport codec; prompt-safe request
+manifests; streamed tool-call and retryable-error decoding; transport-backed
+provider fallback; streaming route selection; and prompt-safe call manifests.
+Concrete HTTP clients, credentials, rate limits, and vendor-specific adapters
+remain outside the SDK.
 
 `agent_core.run_agent_core_storage_acceptance()` runs deterministic storage
 backend portability checks. It verifies built-in in-memory/SQLite/Markdown/none
@@ -553,6 +555,9 @@ ranking contract used by lightweight core stores.
   `TransportLLMProvider` for dependency-free provider adapter contracts.
 - `OpenAICompatibleLLMProviderCodec` for Chat Completions-style payload
   encoding/decoding without importing the OpenAI SDK.
+- `AgentCoreProviderAcceptanceHarness` for no-network provider contract checks,
+  including default transport payloads, prompt-safe request manifests,
+  OpenAI-compatible streamed tool calls, and retryable stream errors.
 - Provider registry and routing.
 - `LLMContentPart` for provider-neutral text, image, audio, file, binary, and
   JSON message parts without binding the SDK to one vendor message schema.

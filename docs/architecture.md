@@ -133,10 +133,12 @@ leases, worker process control, UI controls, and operational policy.
 
 `AgentCoreProviderAcceptanceHarness` is the provider-compatibility gate. It runs
 a deterministic matrix for text, multimodal, structured-output, native-tool,
-OpenAI-compatible codec, transport fallback, and streaming routes. It proves the
-SDK can choose providers by capability and preserve portable call manifests
-without embedding concrete HTTP clients, credentials, rate limits, or
-vendor-specific adapters in core.
+OpenAI-compatible codec, the default provider-neutral transport codec,
+prompt-safe request manifests, streamed tool-call and retryable-error decoding,
+transport fallback, and streaming routes. It proves the SDK can choose
+providers by capability and preserve portable call manifests without embedding
+concrete HTTP clients, credentials, rate limits, or vendor-specific adapters in
+core.
 
 `AgentCoreStorageAcceptanceHarness` is the storage-portability gate. It verifies
 SDK built-in in-memory, SQLite, Markdown, and none backend manifests across
@@ -537,6 +539,11 @@ Completions-style payloads. It maps SDK messages, multimodal parts, native tool
 contracts, tool choices, response formats, usage, tool calls, and basic stream
 chunks without depending on the OpenAI SDK; HTTP/auth/model deployment remain
 runtime responsibilities.
+`AgentCoreProviderAcceptanceHarness` exercises both the default transport codec
+and the OpenAI-compatible codec without network access. Its contract matrix
+checks provider-neutral payload schemas, content-part preservation, prompt-safe
+request manifests, decoded native tool calls, streamed tool-call chunks, and
+retryable stream errors before a runtime brings real API keys or vendor clients.
 `LLMStreamAccumulator` gives streaming calls a single reconstruction and audit
 contract: events become an `LLMResponse`, while manifests retain event counts,
 event types, byte counts, usage, finish reason, and action presence without
