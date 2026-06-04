@@ -31,6 +31,19 @@ runtime adapters, Graphiti, FastAPI, Redis, SQLAlchemy, and third-party MCP SDK
 imports. This gives RavenStorm or a future code-agent runtime a simple
 machine-readable preflight check before replacing OpenAI Agents SDK behavior.
 
+`AgentCoreReadinessProfile` turns that package manifest into a concrete
+acceptance gate. The default `agent_core-replacement-readiness` profile requires
+the generic core contracts for harness lifecycle, ReAct, provider routing,
+tool/skill/MCP orchestration, prompt/context semantics, memory governance,
+storage manifests, policy/approval, trace/replay/eval, and coordination. It also
+requires the public API names a host runtime would call, built-in and external
+storage backend kinds, and the declarations that keep runtime adapters out of
+the SDK package. `evaluate_agent_core_readiness()` returns an
+`AgentCoreReadinessReport` with matched contracts and blocking issues. This is a
+core-SDK readiness check; product wiring, RavenStorm adapter behavior,
+credentials, UI streams, and production data stores still need runtime-level
+acceptance tests outside this repository.
+
 ## Boundary Table
 
 | Core area | Runtime responsibility |

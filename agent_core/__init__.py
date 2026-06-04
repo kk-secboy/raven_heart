@@ -169,10 +169,15 @@ from agent_core.lifecycle import (
 )
 from agent_core.manifest import (
     AgentCoreCapability,
+    AgentCoreReadinessIssue,
+    AgentCoreReadinessProfile,
+    AgentCoreReadinessReport,
     AgentCoreRuntimeBoundary,
     AgentCoreSDKManifest,
     agent_core_sdk_manifest as _build_agent_core_sdk_manifest,
+    agent_core_replacement_readiness_profile,
     default_agent_core_capabilities,
+    evaluate_agent_core_readiness as _evaluate_agent_core_readiness,
 )
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig, LoopGuardDecision
 from agent_core.memory import (
@@ -453,6 +458,9 @@ __all__ = [
     "AllowAllMemoryGovernance",
     "AgentContextPack",
     "AgentCoreCapability",
+    "AgentCoreReadinessIssue",
+    "AgentCoreReadinessProfile",
+    "AgentCoreReadinessReport",
     "AgentCoreRuntimeBoundary",
     "AgentCoreSDKManifest",
     "AgentEvent",
@@ -769,6 +777,8 @@ __all__ = [
     "StructuredOutputValidatorPort",
     "default_agent_run_preflight_center",
     "default_agent_core_capabilities",
+    "agent_core_replacement_readiness_profile",
+    "evaluate_agent_core_readiness",
     "structured_output_feedback",
     "storage_backend_manifest",
     "cosine_similarity",
@@ -831,5 +841,19 @@ def agent_core_sdk_manifest(
         public_api=tuple(__all__),
         package_version=package_version,
         metadata=metadata,
+    )
+
+
+def evaluate_agent_core_readiness(
+    profile: AgentCoreReadinessProfile | None = None,
+    *,
+    package_version: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreReadinessReport:
+    """Evaluate the current package root against a readiness profile."""
+
+    return _evaluate_agent_core_readiness(
+        agent_core_sdk_manifest(package_version=package_version, metadata=metadata),
+        profile=profile,
     )
 

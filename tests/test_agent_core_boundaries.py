@@ -47,6 +47,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
     expected = {
         "AgentRunner",
         "AgentCoreCapability",
+        "AgentCoreReadinessIssue",
+        "AgentCoreReadinessProfile",
+        "AgentCoreReadinessReport",
         "AgentCoreRuntimeBoundary",
         "AgentCoreSDKManifest",
         "AgentSession",
@@ -266,6 +269,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "default_agent_run_preflight_center",
         "default_agent_core_capabilities",
         "agent_core_sdk_manifest",
+        "agent_core_replacement_readiness_profile",
+        "evaluate_agent_core_readiness",
         "UsageInfo",
         "ToolReplayRecord",
         "ToolReplayStorePort",
@@ -349,6 +354,49 @@ def test_agent_core_boundary_scan_uses_manifest_forbidden_dependencies() -> None
     }
 
     assert scanned_prefixes <= forbidden_from_manifest
+
+
+def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() -> None:
+    import agent_core
+
+    profile = agent_core.agent_core_replacement_readiness_profile()
+    report = agent_core.evaluate_agent_core_readiness(profile)
+    manifest = report.manifest()
+
+    assert profile.manifest()["schema_version"] == "agent-core-readiness-profile/v1"
+    assert manifest["schema_version"] == "agent-core-readiness-report/v1"
+    assert manifest["profile_name"] == "agent-core-replacement-readiness"
+    assert manifest["status"] == "ready"
+    assert manifest["ready"] is True
+    assert manifest["error_count"] == 0
+    assert "AgentRunner" in manifest["matched"]["public_api"]
+    assert "prompt_context_semantics" in manifest["matched"]["capabilities"]
+    assert "postgres" in manifest["matched"]["external_storage_kinds"]
+    assert "openai_agents_runtime" in manifest["matched"]["forbidden_packages"]
+
+
+def test_agent_core_readiness_report_blocks_missing_required_contracts() -> None:
+    import agent_core
+
+    sdk_manifest = agent_core.agent_core_sdk_manifest().manifest()
+    sdk_manifest["capabilities"] = [
+        capability
+        for capability in sdk_manifest["capabilities"]
+        if capability["name"] != "react_loop"
+    ]
+    sdk_manifest["public_api"] = [
+        name for name in sdk_manifest["public_api"] if name != "ReActExecutor"
+    ]
+
+    report = agent_core.agent_core_replacement_readiness_profile().evaluate(sdk_manifest)
+    issue_codes = {issue["code"] for issue in report.manifest()["issues"]}
+    expected_values = {issue["expected"] for issue in report.manifest()["issues"]}
+
+    assert report.ready is False
+    assert report.manifest()["status"] == "blocked"
+    assert "required_capability_missing" in issue_codes
+    assert "required_public_api_missing" in issue_codes
+    assert {"react_loop", "ReActExecutor"} <= expected_values
 
 
 def test_repository_does_not_ship_runtime_adapter_packages() -> None:

@@ -110,6 +110,14 @@ agent, ops agent, or separate adapter package can read it to assert that it is
 integrating against the SDK base instead of importing Raven/OpenAI Agents
 SDK/Graphiti/FastAPI runtime code back into `agent_core`.
 
+`agent_core.evaluate_agent_core_readiness()` checks that manifest against the
+default replacement-readiness profile. The report answers a narrower question:
+"does this SDK package expose the generic core contracts a host runtime needs
+before adapter work starts?" It verifies required capabilities, public API
+contracts, storage backend roles/kinds, and runtime-boundary declarations. It
+does not validate RavenStorm-specific wiring, credentials, UI behavior, or
+production adapters; those remain runtime acceptance tests.
+
 ## Core Capabilities
 
 ### Harness
@@ -832,6 +840,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Trace observability manifests | MVP implemented |
 | Run failure summary trace/eval | MVP implemented |
 | SDK capability/boundary manifest | MVP implemented |
+| SDK replacement-readiness profile | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
 | Manager run event paging | MVP implemented |
