@@ -116,6 +116,12 @@ from agent_core.event_acceptance import (
     AgentCoreEventAcceptanceReport,
     run_agent_core_event_acceptance,
 )
+from agent_core.external_backend_acceptance import (
+    AgentCoreExternalBackendAcceptanceHarness,
+    AgentCoreExternalBackendAcceptanceIssue,
+    AgentCoreExternalBackendAcceptanceReport,
+    run_agent_core_external_backend_acceptance,
+)
 from agent_core.guardrail_acceptance import (
     AgentCoreGuardrailAcceptanceHarness,
     AgentCoreGuardrailAcceptanceIssue,
@@ -560,6 +566,9 @@ __all__ = [
     "AgentCoreEventAcceptanceHarness",
     "AgentCoreEventAcceptanceIssue",
     "AgentCoreEventAcceptanceReport",
+    "AgentCoreExternalBackendAcceptanceHarness",
+    "AgentCoreExternalBackendAcceptanceIssue",
+    "AgentCoreExternalBackendAcceptanceReport",
     "AgentCoreGuardrailAcceptanceHarness",
     "AgentCoreGuardrailAcceptanceIssue",
     "AgentCoreGuardrailAcceptanceReport",
@@ -963,6 +972,7 @@ __all__ = [
     "run_agent_core_context_acceptance",
     "run_agent_core_coordination_acceptance",
     "run_agent_core_event_acceptance",
+    "run_agent_core_external_backend_acceptance",
     "run_agent_core_guardrail_acceptance",
     "run_agent_core_lifecycle_acceptance",
     "run_agent_core_orchestration_acceptance",

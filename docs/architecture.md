@@ -109,6 +109,14 @@ events, and monotonic event sequencing. The SDK owns event schemas, cursor
 semantics, lightweight persistence, and trace contracts; runtimes own SSE,
 WebSocket, metrics, dashboards, and production observability sinks.
 
+`AgentCoreExternalBackendAcceptanceHarness` is the backend portability gate. It
+verifies built-in SQLite and Markdown backend manifests, runtime-owned
+postgres/vector/graph/product backend contracts, external memory and
+context-material calls, storage preflight selection, context injection, selected
+context material, and trace eval. The SDK owns ports, manifests, selection, and
+preflight contracts; runtimes own concrete PG, vector DB, graph/Graphiti,
+product API, migration, tenancy, and retention drivers.
+
 `AgentCoreGuardrailAcceptanceHarness` is the input/policy/output guardrail gate.
 It verifies preflight blocking, policy denial for dangerous tools without
 execution, structured-output validation and repair, policy decision audit
@@ -158,9 +166,9 @@ selection, UI recovery flows, and product workflow state.
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
-acceptance, event acceptance, guardrail acceptance, lifecycle acceptance,
-provider acceptance, storage acceptance, recovery acceptance, and resume
-acceptance, then returns one
+acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
+lifecycle acceptance, provider acceptance, storage acceptance, recovery
+acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.

@@ -12,6 +12,9 @@ from agent_core.approval_acceptance import run_agent_core_approval_acceptance
 from agent_core.context_acceptance import run_agent_core_context_acceptance
 from agent_core.coordination_acceptance import run_agent_core_coordination_acceptance
 from agent_core.event_acceptance import run_agent_core_event_acceptance
+from agent_core.external_backend_acceptance import (
+    run_agent_core_external_backend_acceptance,
+)
 from agent_core.guardrail_acceptance import run_agent_core_guardrail_acceptance
 from agent_core.lifecycle_acceptance import run_agent_core_lifecycle_acceptance
 from agent_core.manifest import (
@@ -122,6 +125,7 @@ class AgentCoreValidationReport:
     orchestration_acceptance: dict[str, Any] = field(default_factory=dict)
     coordination_acceptance: dict[str, Any] = field(default_factory=dict)
     event_acceptance: dict[str, Any] = field(default_factory=dict)
+    external_backend_acceptance: dict[str, Any] = field(default_factory=dict)
     guardrail_acceptance: dict[str, Any] = field(default_factory=dict)
     lifecycle_acceptance: dict[str, Any] = field(default_factory=dict)
     provider_acceptance: dict[str, Any] = field(default_factory=dict)
@@ -156,6 +160,7 @@ class AgentCoreValidationReport:
             "orchestration_acceptance": dict(self.orchestration_acceptance),
             "coordination_acceptance": dict(self.coordination_acceptance),
             "event_acceptance": dict(self.event_acceptance),
+            "external_backend_acceptance": dict(self.external_backend_acceptance),
             "guardrail_acceptance": dict(self.guardrail_acceptance),
             "lifecycle_acceptance": dict(self.lifecycle_acceptance),
             "provider_acceptance": dict(self.provider_acceptance),
@@ -217,6 +222,14 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "event_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        external_backend_acceptance = (
+            await run_agent_core_external_backend_acceptance(
+                metadata={
+                    "validation_gate": "external_backend_acceptance",
+                    **dict(self.metadata),
+                }
+            )
+        ).manifest()
         guardrail_acceptance = (
             await run_agent_core_guardrail_acceptance(
                 metadata={"validation_gate": "guardrail_acceptance", **dict(self.metadata)}
@@ -257,6 +270,7 @@ class AgentCoreValidationSuite:
             orchestration_acceptance=orchestration_acceptance,
             coordination_acceptance=coordination_acceptance,
             event_acceptance=event_acceptance,
+            external_backend_acceptance=external_backend_acceptance,
             guardrail_acceptance=guardrail_acceptance,
             lifecycle_acceptance=lifecycle_acceptance,
             provider_acceptance=provider_acceptance,
@@ -276,6 +290,7 @@ class AgentCoreValidationSuite:
             orchestration_acceptance=orchestration_acceptance,
             coordination_acceptance=coordination_acceptance,
             event_acceptance=event_acceptance,
+            external_backend_acceptance=external_backend_acceptance,
             guardrail_acceptance=guardrail_acceptance,
             lifecycle_acceptance=lifecycle_acceptance,
             provider_acceptance=provider_acceptance,
@@ -399,6 +414,7 @@ def _validation_issues(
     orchestration_acceptance: dict[str, Any],
     coordination_acceptance: dict[str, Any],
     event_acceptance: dict[str, Any],
+    external_backend_acceptance: dict[str, Any],
     guardrail_acceptance: dict[str, Any],
     lifecycle_acceptance: dict[str, Any],
     provider_acceptance: dict[str, Any],
@@ -427,6 +443,11 @@ def _validation_issues(
         issues,
         source="event_acceptance",
         report=event_acceptance,
+    )
+    _extend_report_issues(
+        issues,
+        source="external_backend_acceptance",
+        report=external_backend_acceptance,
     )
     _extend_report_issues(
         issues,
