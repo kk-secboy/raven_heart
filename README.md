@@ -45,6 +45,7 @@ ops agents, research agents, and future automation systems.
 - Human-in-loop approval request and decision queue primitives.
 - Approval resume context for approved action/tool gate continuation.
 - Policy gates, budget metadata, loop guards, and capability manifests.
+- Package-level SDK manifest for public API, capability, storage, and runtime-boundary audits.
 - Structured output specs and validator ports for provider-neutral final answers.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
@@ -89,6 +90,25 @@ The dependency direction must always be:
 runtime imports agent_core
 agent_core never imports runtime
 ```
+
+## SDK Manifest
+
+`agent_core.agent_core_sdk_manifest()` returns a machine-readable package
+manifest for migration and runtime preflight checks. It records:
+
+- Public API exported from the package root.
+- Core capability matrix for harness, ReAct, providers, tools, skills, MCP,
+  memory, prompt/context shaping, policy, trace/replay/eval, and coordination.
+- Storage backend interface roles plus built-in `in_memory` / `sqlite` /
+  `markdown` kinds and external `postgres` / `vector` / `graph` /
+  `object_storage` / `product` / `custom` kinds.
+- Runtime boundary rules, including forbidden runtime dependencies and adapter
+  packages that must stay outside this repository.
+
+The manifest is intentionally provider-neutral. A RavenStorm runtime, code
+agent, ops agent, or separate adapter package can read it to assert that it is
+integrating against the SDK base instead of importing Raven/OpenAI Agents
+SDK/Graphiti/FastAPI runtime code back into `agent_core`.
 
 ## Core Capabilities
 
@@ -811,6 +831,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |
 | Run failure summary trace/eval | MVP implemented |
+| SDK capability/boundary manifest | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
 | Manager run event paging | MVP implemented |

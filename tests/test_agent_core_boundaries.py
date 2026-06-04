@@ -46,6 +46,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
 
     expected = {
         "AgentRunner",
+        "AgentCoreCapability",
+        "AgentCoreRuntimeBoundary",
+        "AgentCoreSDKManifest",
         "AgentSession",
         "AgentHarness",
         "AgentManagerCapacityError",
@@ -261,6 +264,8 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "StructuredOutputValidatorPort",
         "StaticRunPreflightCheck",
         "default_agent_run_preflight_center",
+        "default_agent_core_capabilities",
+        "agent_core_sdk_manifest",
         "UsageInfo",
         "ToolReplayRecord",
         "ToolReplayStorePort",
@@ -290,6 +295,60 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
     assert expected <= set(agent_core.__all__)
     for name in expected:
         assert getattr(agent_core, name) is not None
+
+
+def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() -> None:
+    import agent_core
+
+    manifest = agent_core.agent_core_sdk_manifest().manifest()
+    capability_names = {capability["name"] for capability in manifest["capabilities"]}
+    boundary = manifest["runtime_boundary"]
+    storage = manifest["storage_backend_interfaces"]
+
+    assert manifest["schema_version"] == "agent-core-sdk-manifest/v1"
+    assert manifest["package"] == "raven-heart"
+    assert manifest["public_api_count"] == len(set(agent_core.__all__))
+    assert "AgentRunner" in manifest["public_api"]
+    assert "harness_lifecycle" in capability_names
+    assert "react_loop" in capability_names
+    assert "llm_provider_center" in capability_names
+    assert "prompt_context_semantics" in capability_names
+    assert "memory_governance" in capability_names
+    assert "trace_replay_eval" in capability_names
+    assert "runtime_boundary" in capability_names
+    assert manifest["capability_statuses"]["excluded"] == 1
+    assert boundary["dependency_direction"] == "runtime imports agent_core"
+    assert "openai_agents_runtime" in boundary["forbidden_packages"]
+    assert "openai" in boundary["forbidden_dependencies"]
+    assert "runtime adapters for RavenStorm or other hosts" in boundary["runtime_owns"]
+    assert {"memory", "journal", "run_trace", "event_log"} <= set(storage["roles"])
+    assert {"in_memory", "sqlite", "markdown"} <= set(storage["builtin_kinds"])
+    assert {"postgres", "vector", "graph", "product", "custom"} <= set(
+        storage["external_kinds"]
+    )
+
+
+def test_agent_core_boundary_scan_uses_manifest_forbidden_dependencies() -> None:
+    import agent_core
+
+    boundary = agent_core.agent_core_sdk_manifest().manifest()["runtime_boundary"]
+    forbidden_from_manifest = set(boundary["forbidden_dependencies"])
+    scanned_prefixes = {
+        "app.openai_agents_runtime",
+        "app.tools",
+        "app.graph",
+        "app.knowledge",
+        "app.api",
+        "openai",
+        "agents",
+        "fastapi",
+        "graphiti",
+        "mcp",
+        "redis",
+        "sqlalchemy",
+    }
+
+    assert scanned_prefixes <= forbidden_from_manifest
 
 
 def test_repository_does_not_ship_runtime_adapter_packages() -> None:

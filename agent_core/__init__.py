@@ -4,6 +4,8 @@ The package is deliberately independent from RavenStorm's runtime adapters,
 OpenAI Agents SDK, FastAPI, Redis, databases, and concrete tool implementations.
 """
 
+from typing import Any
+
 from agent_core.actions import (
     ActionRegistry,
     ActionSpec,
@@ -164,6 +166,13 @@ from agent_core.lifecycle import (
     LifecycleEventType,
     LifecycleHookStatus,
     NullLifecycleHooks,
+)
+from agent_core.manifest import (
+    AgentCoreCapability,
+    AgentCoreRuntimeBoundary,
+    AgentCoreSDKManifest,
+    agent_core_sdk_manifest as _build_agent_core_sdk_manifest,
+    default_agent_core_capabilities,
 )
 from agent_core.loop_guard import LoopGuard, LoopGuardConfig, LoopGuardDecision
 from agent_core.memory import (
@@ -443,6 +452,9 @@ __all__ = [
     "AllowAllPolicy",
     "AllowAllMemoryGovernance",
     "AgentContextPack",
+    "AgentCoreCapability",
+    "AgentCoreRuntimeBoundary",
+    "AgentCoreSDKManifest",
     "AgentEvent",
     "AgentHarness",
     "AgentJournalSnapshot",
@@ -756,6 +768,7 @@ __all__ = [
     "StructuredOutputSpec",
     "StructuredOutputValidatorPort",
     "default_agent_run_preflight_center",
+    "default_agent_core_capabilities",
     "structured_output_feedback",
     "storage_backend_manifest",
     "cosine_similarity",
@@ -803,5 +816,20 @@ __all__ = [
     "TurnStatus",
     "UsageInfo",
     "validate_tool_arguments",
+    "agent_core_sdk_manifest",
 ]
+
+
+def agent_core_sdk_manifest(
+    *,
+    package_version: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreSDKManifest:
+    """Return the package-level SDK manifest with the current public API list."""
+
+    return _build_agent_core_sdk_manifest(
+        public_api=tuple(__all__),
+        package_version=package_version,
+        metadata=metadata,
+    )
 

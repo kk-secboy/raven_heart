@@ -17,6 +17,20 @@ agent_core
   imports no runtime packages
 ```
 
+## SDK Package Manifest
+
+`agent_core_sdk_manifest()` is the package-level contract that a host runtime
+can inspect before integration. It reports the package version, root public API,
+capability matrix, storage backend interface roles, built-in backend kinds, and
+external backend kinds that runtimes or adapter packages may implement.
+
+The same manifest also publishes the runtime boundary: `runtime imports
+agent_core`, the concerns owned by core, the concerns owned by the host runtime,
+and forbidden runtime dependencies/packages such as OpenAI Agents SDK, Raven
+runtime adapters, Graphiti, FastAPI, Redis, SQLAlchemy, and third-party MCP SDK
+imports. This gives RavenStorm or a future code-agent runtime a simple
+machine-readable preflight check before replacing OpenAI Agents SDK behavior.
+
 ## Boundary Table
 
 | Core area | Runtime responsibility |
