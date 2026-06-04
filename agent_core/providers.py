@@ -976,6 +976,43 @@ class LLMProviderRoutePlan:
 
 
 @dataclass(frozen=True)
+class LLMRequestShapePlan:
+    requested_provider: str = ""
+    requested_model: str = ""
+    provider_name: str = ""
+    model: str = ""
+    streamed: bool = False
+    original_max_output_tokens: int | None = None
+    final_max_output_tokens: int | None = None
+    provider_max_output_tokens: int = 0
+    context_window_tokens: int = 0
+    adjusted: bool = False
+    decisions: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "decisions", tuple(str(item) for item in self.decisions))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-llm-request-shape-plan/v1",
+            "requested_provider": self.requested_provider,
+            "requested_model": self.requested_model,
+            "provider_name": self.provider_name,
+            "model": self.model,
+            "streamed": self.streamed,
+            "original_max_output_tokens": self.original_max_output_tokens,
+            "final_max_output_tokens": self.final_max_output_tokens,
+            "provider_max_output_tokens": self.provider_max_output_tokens,
+            "context_window_tokens": self.context_window_tokens,
+            "adjusted": self.adjusted,
+            "decisions": list(self.decisions),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class LLMCallRecord:
     provider_name: str
     model: str
@@ -1149,8 +1186,13 @@ class LLMProviderCenter(LLMProviderPort):
             model = self._model_for_entry(request, entry)
             supports_model = entry.spec.supports(model)
             capabilities = entry.spec.capabilities_for(model)
+            shaped_request, shape_plan = self._shape_request_for_entry(
+                request,
+                entry,
+                streamed=streamed,
+            )
             supports_capabilities = (
-                capabilities.supports_request(request, streamed=streamed)
+                capabilities.supports_request(shaped_request, streamed=streamed)
                 if supports_model and capabilities is not None
                 else supports_model
             )
@@ -1180,6 +1222,7 @@ class LLMProviderCenter(LLMProviderPort):
                 reason=reason,
                 metadata={
                     "model_capabilities": capabilities.manifest() if capabilities else None,
+                    "request_shape_plan": shape_plan.manifest(),
                     **entry.spec.metadata,
                 },
             )
@@ -1191,6 +1234,7 @@ class LLMProviderCenter(LLMProviderPort):
                     metadata={
                         "provider_priority": entry.spec.priority,
                         "model_capabilities": capabilities.manifest() if capabilities else None,
+                        "request_shape_plan": shape_plan.manifest(),
                         **entry.spec.metadata,
                     },
                 )
@@ -1234,6 +1278,7 @@ class LLMProviderCenter(LLMProviderPort):
                         usage=response.usage,
                         metadata={
                             "route_plan": route_plan.manifest(),
+                            "request_shape_plan": routed.metadata.get("request_shape_plan"),
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
                             "response": response.manifest(),
@@ -1259,6 +1304,7 @@ class LLMProviderCenter(LLMProviderPort):
                         exc,
                         metadata={
                             "route_plan": route_plan.manifest(),
+                            "request_shape_plan": routed.metadata.get("request_shape_plan"),
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
                         },
@@ -1274,7 +1320,7 @@ class LLMProviderCenter(LLMProviderPort):
         last_error: Exception | None = None
         route_plan = self.route_plan(request, streamed=True)
         for entry in self._candidate_entries(request, streamed=True):
-            routed = self._route_request(request, entry)
+            routed = self._route_request(request, entry, streamed=True)
             attempts = self.max_retries + 1
             for attempt in range(attempts):
                 self._check_call_attempt_limit()
@@ -1294,6 +1340,7 @@ class LLMProviderCenter(LLMProviderPort):
                         usage=usage,
                         metadata={
                             "route_plan": route_plan.manifest(),
+                            "request_shape_plan": routed.metadata.get("request_shape_plan"),
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
                             "stream_summary": stream_summary,
@@ -1314,6 +1361,7 @@ class LLMProviderCenter(LLMProviderPort):
                         streamed=True,
                         metadata={
                             "route_plan": route_plan.manifest(),
+                            "request_shape_plan": routed.metadata.get("request_shape_plan"),
                             "request": routed.manifest(),
                             "original_request": request.manifest(),
                         },
@@ -1363,26 +1411,17 @@ class LLMProviderCenter(LLMProviderPort):
             entry = self._providers.get(requested_provider)
             if entry is None:
                 return ""
-            model = self._model_for_entry(request, entry)
-            if entry.spec.supports_route(model, request, streamed=streamed):
+            if self._entry_supports_request(entry, request, streamed=streamed):
                 return entry.spec.name
             return ""
 
         if self.default_provider:
             entry = self._providers.get(self.default_provider)
-            if entry and entry.spec.supports_route(
-                self._model_for_entry(request, entry),
-                request,
-                streamed=streamed,
-            ):
+            if entry and self._entry_supports_request(entry, request, streamed=streamed):
                 return entry.spec.name
 
         for entry in self._ordered_entries():
-            if entry.spec.supports_route(
-                self._model_for_entry(request, entry),
-                request,
-                streamed=streamed,
-            ):
+            if self._entry_supports_request(entry, request, streamed=streamed):
                 return entry.spec.name
         return ""
 
@@ -1414,26 +1453,17 @@ class LLMProviderCenter(LLMProviderPort):
             entry = self._providers.get(requested_provider)
             if entry is None:
                 raise LLMProviderNotFoundError(requested_provider)
-            model = self._model_for_entry(request, entry)
-            if not entry.spec.supports_route(model, request, streamed=streamed):
+            if not self._entry_supports_request(entry, request, streamed=streamed):
                 raise LLMProviderNotFoundError(f"{requested_provider}:{request.model}")
             return entry
 
         if self.default_provider:
             entry = self._providers.get(self.default_provider)
-            if entry and entry.spec.supports_route(
-                self._model_for_entry(request, entry),
-                request,
-                streamed=streamed,
-            ):
+            if entry and self._entry_supports_request(entry, request, streamed=streamed):
                 return entry
 
         for entry in self._ordered_entries():
-            if entry.spec.supports_route(
-                self._model_for_entry(request, entry),
-                request,
-                streamed=streamed,
-            ):
+            if self._entry_supports_request(entry, request, streamed=streamed):
                 return entry
 
         raise LLMProviderNotFoundError(request.model or "<default>")
@@ -1455,11 +1485,7 @@ class LLMProviderCenter(LLMProviderPort):
         for entry in self._ordered_entries():
             if entry.spec.name == selected.spec.name:
                 continue
-            if entry.spec.supports_route(
-                self._model_for_entry(request, entry),
-                request,
-                streamed=streamed,
-            ):
+            if self._entry_supports_request(entry, request, streamed=streamed):
                 entries.append(entry)
         return tuple(entries)
 
@@ -1471,16 +1497,89 @@ class LLMProviderCenter(LLMProviderPort):
             )
         )
 
-    def _route_request(self, request: LLMRequest, entry: _ProviderEntry) -> LLMRequest:
+    def _route_request(
+        self,
+        request: LLMRequest,
+        entry: _ProviderEntry,
+        *,
+        streamed: bool = False,
+    ) -> LLMRequest:
+        routed, _shape_plan = self._shape_request_for_entry(
+            request,
+            entry,
+            streamed=streamed,
+        )
+        return routed
+
+    def _shape_request_for_entry(
+        self,
+        request: LLMRequest,
+        entry: _ProviderEntry,
+        *,
+        streamed: bool = False,
+    ) -> tuple[LLMRequest, LLMRequestShapePlan]:
         model = self._model_for_entry(request, entry)
         capabilities = entry.spec.capabilities_for(model)
+        max_output_tokens = request.max_output_tokens
+        decisions: list[str] = []
+        provider_max_output = capabilities.max_output_tokens if capabilities else 0
+        if (
+            provider_max_output
+            and max_output_tokens is not None
+            and max_output_tokens > provider_max_output
+        ):
+            max_output_tokens = provider_max_output
+            decisions.append("max_output_tokens_capped_to_provider_limit")
+        shape_plan = LLMRequestShapePlan(
+            requested_provider=str(request.metadata.get("provider") or ""),
+            requested_model=request.model,
+            provider_name=entry.spec.name,
+            model=model,
+            streamed=streamed,
+            original_max_output_tokens=request.max_output_tokens,
+            final_max_output_tokens=max_output_tokens,
+            provider_max_output_tokens=provider_max_output,
+            context_window_tokens=capabilities.context_window_tokens if capabilities else 0,
+            adjusted=bool(decisions),
+            decisions=tuple(decisions),
+            metadata={
+                "provider_priority": entry.spec.priority,
+                "has_model_capabilities": capabilities is not None,
+            },
+        )
         metadata = {
             **request.metadata,
             "provider": entry.spec.name,
             "provider_priority": entry.spec.priority,
             "model_capabilities": capabilities.manifest() if capabilities else None,
+            "request_shape_plan": shape_plan.manifest(),
         }
-        return replace(request, model=model, metadata=metadata)
+        return replace(
+            request,
+            model=model,
+            max_output_tokens=max_output_tokens,
+            metadata=metadata,
+        ), shape_plan
+
+    def _entry_supports_request(
+        self,
+        entry: _ProviderEntry,
+        request: LLMRequest,
+        *,
+        streamed: bool = False,
+    ) -> bool:
+        model = self._model_for_entry(request, entry)
+        if not entry.spec.supports(model):
+            return False
+        capabilities = entry.spec.capabilities_for(model)
+        if capabilities is None:
+            return True
+        shaped_request, _shape_plan = self._shape_request_for_entry(
+            request,
+            entry,
+            streamed=streamed,
+        )
+        return capabilities.supports_request(shaped_request, streamed=streamed)
 
     def _model_for_entry(self, request: LLMRequest, entry: _ProviderEntry) -> str:
         return request.model or entry.spec.default_model or self.default_model

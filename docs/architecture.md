@@ -285,10 +285,12 @@ payloads remain runtime-owned.
 streaming support, tool-call support, JSON mode, structured-output support, and
 modalities without importing a vendor SDK. The center uses those declarations to
 skip incompatible routes when a request declares required capabilities or
-estimated token/output size. Routed call manifests retain the selected
-capability profile, and trace evals can require specific provider names, model
-names, or capabilities such as `structured_output`, `json_mode`, `tool_calls`,
-and `streaming`.
+estimated token/output size. For otherwise compatible routes, it can also shape
+the request before the adapter call, such as capping `max_output_tokens` to the
+declared model output limit. Routed call manifests retain both the selected
+capability profile and the `LLMRequestShapePlan`, and trace evals can require
+specific provider names, model names, or capabilities such as
+`structured_output`, `json_mode`, `tool_calls`, and `streaming`.
 `LLMProviderRoutePlan` is the preflight form of the same decision. It lists each
 candidate provider, selected route, fallback candidates, capability/model
 rejection reasons, requested provider/model, and streamed mode without invoking
@@ -299,6 +301,10 @@ tenant routing, and vendor clients stay outside the SDK.
 model call. When a selected provider exposes a context window and output limit,
 the core derives a smaller effective prompt byte budget and records the decision
 in prompt and run trace manifests.
+`LLMRequestShapePlan` is the provider-center counterpart to that runner prompt
+budget: the runner can shrink the prompt, while the provider center constrains
+the outgoing generation request. Concrete adapters still own HTTP payloads,
+credentials, deployment names, tenant routing, and vendor-specific quota logic.
 `LLMToolContract`, `LLMToolChoice`, and `LLMResponseFormat` are request-level
 contracts for native model tools and constrained output. They deliberately stop
 at the provider-neutral shape: OpenAI-compatible tools/response formats,

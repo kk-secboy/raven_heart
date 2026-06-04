@@ -262,6 +262,41 @@ def test_provider_center_search_manifest_and_missing_provider() -> None:
         center.select(LLMRequest(messages=[], metadata={"provider": "missing"}))
 
 
+@pytest.mark.asyncio
+async def test_provider_center_shapes_request_to_declared_output_limit() -> None:
+    provider = MockLLMProvider(["ok"])
+    center = LLMProviderCenter(default_provider="limited")
+    center.register(
+        "limited",
+        provider,
+        default_model="limited-mini",
+        default_capabilities=LLMModelCapabilities(
+            context_window_tokens=4096,
+            max_output_tokens=64,
+        ),
+    )
+
+    plan = center.route_plan(LLMRequest(messages=[], max_output_tokens=256))
+    response = await center.complete(LLMRequest(messages=[], max_output_tokens=256))
+    shape_plan = center.calls[0].metadata["request_shape_plan"]
+
+    assert response.content == "ok"
+    assert provider.requests[0].max_output_tokens == 64
+    assert provider.requests[0].metadata["request_shape_plan"]["adjusted"] is True
+    assert provider.requests[0].metadata["request_shape_plan"]["final_max_output_tokens"] == 64
+    assert shape_plan["schema_version"] == "agent-core-llm-request-shape-plan/v1"
+    assert shape_plan["original_max_output_tokens"] == 256
+    assert shape_plan["final_max_output_tokens"] == 64
+    assert shape_plan["provider_max_output_tokens"] == 64
+    assert shape_plan["decisions"] == ["max_output_tokens_capped_to_provider_limit"]
+    assert center.calls[0].metadata["original_request"]["max_output_tokens"] == 256
+    assert center.calls[0].metadata["request"]["max_output_tokens"] == 64
+    assert plan.ready
+    assert plan.selected_route is not None
+    assert plan.selected_route.metadata["request_shape_plan"]["adjusted"] is True
+    assert plan.candidates[0].metadata["request_shape_plan"]["final_max_output_tokens"] == 64
+
+
 def test_llm_message_supports_provider_neutral_content_parts() -> None:
     message = LLMMessage(
         role="user",

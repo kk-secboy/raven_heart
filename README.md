@@ -386,6 +386,8 @@ ranking contract used by lightweight core stores.
 - `LLMModelCapabilities` for provider-neutral model context windows, output
   limits, streaming support, tool-call support, JSON mode, structured output,
   and modality declarations.
+- `LLMRequestShapePlan` for provider-aware request shaping before calls, such
+  as capping `max_output_tokens` to a declared model output limit.
 - `LLMRetryPolicy` for retry/fallback behavior.
 - `LLMUsageLimits` for cost, call-attempt, and token budgets.
 - Usage/failure accounting.
@@ -411,7 +413,8 @@ vendor rate limits live in runtimes or adapter packages. `agent_core` owns the
 provider-neutral request/response/stream shapes, stream aggregation, and
 error/retry mapping. When runtimes declare `LLMModelCapabilities`,
 `LLMProviderCenter` can avoid routes that cannot satisfy requested model
-features or declared token/output limits.
+features and can shape compatible requests to declared output limits before an
+adapter sees them.
 Native tool calling and response-format contracts are represented as SDK
 request fields, not vendor payloads. Adapter packages translate them to
 OpenAI-compatible `tools`/`response_format`, Anthropic tool use, Gemini function
@@ -431,6 +434,9 @@ The routed request manifest records the selected provider, model priority, and
 model capabilities so trace/eval contracts can later prove which model ability
 was actually used for structured output, JSON mode, tool calls, streaming, or
 modalities.
+The request shape plan records whether `max_output_tokens` was capped, the
+original and final output limit, provider/model identity, and declared context
+window. This keeps provider limits auditable without importing vendor SDKs.
 The route plan manifest records the full provider preflight decision, so a
 runtime can explain why a cheap/default model was skipped, which provider was
 selected, and which compatible providers remain available for fallback without
