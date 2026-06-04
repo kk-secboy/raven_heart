@@ -68,6 +68,14 @@ base can execute the generic agent loop end to end, while RavenStorm-specific
 routes, credentials, distributed workers, UI streaming, and production storage
 remain separate adapter/runtime acceptance concerns.
 
+`AgentCoreContextAcceptanceHarness` is the context-semantics gate. It runs a
+deterministic pure-core scenario for context material routing, semantic
+selection, target denial, context injection, per-injection trimming,
+bucket-local prompt budgets, semantic prompt trimming, provider-aware prompt
+budgeting, and trace eval. It proves the Yaklang-inspired context pipeline is a
+portable SDK behavior; runtime-specific stores, rankers, embeddings, domain
+prompts, and product policies remain outside core.
+
 `AgentCoreRecoveryHarness` adds the recovery gate. It runs provider fallback and
 tool retry scenarios with deterministic failures, then returns an
 `AgentCoreRecoveryReport` containing retry counts, fallback use, attempt
@@ -85,11 +93,11 @@ resume manifests, and the acceptance report; runtimes own distributed worker
 selection, UI recovery flows, and product workflow state.
 
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
-boundary audit, readiness, API stability, replacement acceptance, recovery
-acceptance, and resume acceptance, then returns one `AgentCoreValidationReport`
-with all subreports and blocking issues. This is the SDK-level check a runtime
-should pass before adapter implementation or product-specific migration tests
-begin.
+boundary audit, readiness, API stability, replacement acceptance, context
+acceptance, recovery acceptance, and resume acceptance, then returns one
+`AgentCoreValidationReport` with all subreports and blocking issues. This is the
+SDK-level check a runtime should pass before adapter implementation or
+product-specific migration tests begin.
 
 ## Boundary Table
 

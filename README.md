@@ -139,6 +139,13 @@ result is an `AgentCoreAcceptanceReport` with blocking issues, run summary,
 readiness report, and trace-eval report. This is the package-level gate before a
 runtime starts adapter-specific migration tests.
 
+`agent_core.run_agent_core_context_acceptance()` runs a deterministic
+Yaklang-style context gate. It exercises context material routing, semantic
+selection, target denial, context injection, per-injection trimming, bucket-local
+prompt budgets, semantic prompt trimming, provider-aware prompt budget, and
+trace eval. The report proves the portable context pipeline works before a
+runtime adds product-specific stores, ranking models, or domain prompt content.
+
 `agent_core.run_agent_core_recovery_acceptance()` runs deterministic recovery
 checks for provider fallback and tool retry. The report proves that retryable
 provider failures are classified, retried, and recovered through fallback, and
@@ -154,8 +161,8 @@ when `allow_terminal=False`. Runtime worker scheduling and user-facing recovery
 flows remain outside the SDK.
 
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
-runtime-boundary audit, readiness, API stability, replacement acceptance,
-recovery acceptance, and resume acceptance, then returns one
+runtime-boundary audit, readiness, API stability, replacement acceptance, context
+acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
 
@@ -885,6 +892,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK public API stability contract | MVP implemented |
 | SDK runtime boundary audit | MVP implemented |
 | SDK replacement acceptance harness | MVP implemented |
+| SDK context acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | SDK resume acceptance harness | MVP implemented |
 | SDK aggregate validation suite | MVP implemented |

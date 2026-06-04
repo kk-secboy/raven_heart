@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_core.acceptance import run_agent_core_acceptance
+from agent_core.context_acceptance import run_agent_core_context_acceptance
 from agent_core.manifest import (
     AgentCoreSDKManifest,
     FORBIDDEN_RUNTIME_DEPENDENCIES,
@@ -108,6 +109,7 @@ class AgentCoreValidationReport:
     readiness: dict[str, Any] = field(default_factory=dict)
     api_stability: dict[str, Any] = field(default_factory=dict)
     acceptance: dict[str, Any] = field(default_factory=dict)
+    context_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
     issues: tuple[AgentCoreValidationIssue, ...] = ()
@@ -133,6 +135,7 @@ class AgentCoreValidationReport:
             "readiness": dict(self.readiness),
             "api_stability": dict(self.api_stability),
             "acceptance": dict(self.acceptance),
+            "context_acceptance": dict(self.context_acceptance),
             "recovery": dict(self.recovery),
             "resume": dict(self.resume),
             "metadata": dict(self.metadata),
@@ -165,6 +168,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "acceptance", **dict(self.metadata)},
             )
         ).manifest()
+        context_acceptance = (
+            await run_agent_core_context_acceptance(
+                metadata={"validation_gate": "context_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         recovery = (
             await run_agent_core_recovery_acceptance(
                 metadata={"validation_gate": "recovery", **dict(self.metadata)}
@@ -180,6 +188,7 @@ class AgentCoreValidationSuite:
             readiness=readiness,
             api_stability=api_stability,
             acceptance=acceptance,
+            context_acceptance=context_acceptance,
             recovery=recovery,
             resume=resume,
         )
@@ -190,6 +199,7 @@ class AgentCoreValidationSuite:
             readiness=readiness,
             api_stability=api_stability,
             acceptance=acceptance,
+            context_acceptance=context_acceptance,
             recovery=recovery,
             resume=resume,
             issues=issues,
@@ -304,6 +314,7 @@ def _validation_issues(
     readiness: dict[str, Any],
     api_stability: dict[str, Any],
     acceptance: dict[str, Any],
+    context_acceptance: dict[str, Any],
     recovery: dict[str, Any],
     resume: dict[str, Any],
 ) -> tuple[AgentCoreValidationIssue, ...]:
@@ -312,6 +323,7 @@ def _validation_issues(
     _extend_report_issues(issues, source="readiness", report=readiness)
     _extend_api_stability_issues(issues, api_stability)
     _extend_report_issues(issues, source="acceptance", report=acceptance)
+    _extend_report_issues(issues, source="context_acceptance", report=context_acceptance)
     _extend_report_issues(issues, source="recovery", report=recovery)
     _extend_report_issues(issues, source="resume", report=resume)
     return tuple(issues)

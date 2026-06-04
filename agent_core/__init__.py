@@ -92,6 +92,12 @@ from agent_core.context import (
     MarkdownContextMaterialStore,
     SQLiteContextMaterialStore,
 )
+from agent_core.context_acceptance import (
+    AgentCoreContextAcceptanceHarness,
+    AgentCoreContextAcceptanceIssue,
+    AgentCoreContextAcceptanceReport,
+    run_agent_core_context_acceptance,
+)
 from agent_core.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingCallRecord,
@@ -494,6 +500,9 @@ __all__ = [
     "AgentCoreAPIContract",
     "AgentCoreAPIStabilityReport",
     "AgentCoreCapability",
+    "AgentCoreContextAcceptanceHarness",
+    "AgentCoreContextAcceptanceIssue",
+    "AgentCoreContextAcceptanceReport",
     "AgentCoreReadinessIssue",
     "AgentCoreReadinessProfile",
     "AgentCoreReadinessReport",
@@ -878,6 +887,7 @@ __all__ = [
     "validate_tool_arguments",
     "agent_core_sdk_manifest",
     "run_agent_core_acceptance",
+    "run_agent_core_context_acceptance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
     "run_agent_core_validation",

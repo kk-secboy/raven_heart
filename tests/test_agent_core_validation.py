@@ -19,9 +19,13 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["readiness"]["ready"] is True
     assert manifest["api_stability"]["ready"] is True
     assert manifest["acceptance"]["ready"] is True
+    assert manifest["context_acceptance"]["ready"] is True
     assert manifest["recovery"]["ready"] is True
     assert manifest["resume"]["ready"] is True
     assert manifest["acceptance"]["run_summary"]["tool_call_count"] == 1
+    assert manifest["context_acceptance"]["context_summary"][
+        "prompt_semantic_trimmed_count"
+    ] == 1
     assert manifest["recovery"]["provider_recovery"]["fallback_used"] is True
     assert manifest["resume"]["trace_eval"]["ok"] is True
 
@@ -52,13 +56,18 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "runtime_boundary_audit" in readiness["matched"]["capabilities"]
+    assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "validation_suite" in readiness["matched"]["capabilities"]
     assert "AgentCoreRuntimeBoundaryReport" in readiness["matched"]["public_api"]
     assert "evaluate_agent_core_runtime_boundary" in readiness["matched"]["public_api"]
+    assert "AgentCoreContextAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_context_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreValidationSuite" in readiness["matched"]["public_api"]
     assert "run_agent_core_validation" in readiness["matched"]["public_api"]
     assert "AgentCoreRuntimeBoundaryReport" in stability["present_stable_api"]
     assert "evaluate_agent_core_runtime_boundary" in stability["present_stable_api"]
+    assert "AgentCoreContextAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_context_acceptance" in stability["present_stable_api"]
     assert "AgentCoreValidationSuite" in stability["present_stable_api"]
     assert "run_agent_core_validation" in stability["present_stable_api"]
 
