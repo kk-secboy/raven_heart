@@ -603,7 +603,9 @@ then semi-dynamic recall/schema material, then capability inventory, while
 protecting high-static system rules and preserving a minimum current-task
 window. The final prompt manifest records `PromptTrimResult` steps, removed
 bytes, protected roles, and convergence. `AgentRunner` applies this against
-`RuntimeBudget.max_prompt_bytes` before calling the provider.
+the effective prompt budget before calling the provider. `AgentPromptBudgetPlan`
+derives that budget from `RuntimeBudget.max_prompt_bytes` and, when available,
+provider route capabilities such as context window and reserved output tokens.
 
 If `AgentSession.context_reducer` is configured, `AgentRunner` first applies
 timeline reduction against `RuntimeBudget.max_timeline_bytes`. This gives the SDK
@@ -788,6 +790,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Artifact trace/eval contracts | MVP implemented |
 | Structured output trace/eval contracts | MVP implemented |
 | Prompt buckets/trimming | semantic trim plan MVP |
+| Provider-aware prompt budget | MVP implemented |
 | Prompt bucket budget policy | MVP implemented |
 | Runtime semantic prompt reducer | MVP implemented |
 | Runtime semantic prompt trace/eval | MVP implemented |

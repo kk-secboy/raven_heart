@@ -56,7 +56,7 @@ from agent_core.preflight import (
     AgentRunPreflightRequirements,
     default_agent_run_preflight_center,
 )
-from agent_core.providers import LLMProviderPort
+from agent_core.providers import LLMRequest, LLMProviderPort
 from agent_core.prompt import (
     PromptBucketBudgetPolicy,
     PromptBucketRole,
@@ -243,6 +243,45 @@ class AgentRunOutcome:
     memory_search_manifest: dict[str, Any] = field(default_factory=dict)
     preflight_manifest: dict[str, Any] = field(default_factory=dict)
     trace_manifest: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AgentPromptBudgetPlan:
+    """Effective prompt budget after profile and provider capability checks."""
+
+    profile_max_prompt_bytes: int
+    target_prompt_bytes: int
+    provider_name: str = ""
+    model: str = ""
+    context_window_tokens: int = 0
+    reserved_output_tokens: int = 0
+    provider_input_budget_bytes: int = 0
+    source: str = "profile_budget"
+    route_plan: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def provider_limited(self) -> bool:
+        return bool(
+            self.provider_input_budget_bytes
+            and self.target_prompt_bytes < self.profile_max_prompt_bytes
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-prompt-budget-plan/v1",
+            "profile_max_prompt_bytes": self.profile_max_prompt_bytes,
+            "target_prompt_bytes": self.target_prompt_bytes,
+            "provider_limited": self.provider_limited,
+            "provider_name": self.provider_name,
+            "model": self.model,
+            "context_window_tokens": self.context_window_tokens,
+            "reserved_output_tokens": self.reserved_output_tokens,
+            "provider_input_budget_bytes": self.provider_input_budget_bytes,
+            "source": self.source,
+            "route_plan": dict(self.route_plan),
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -689,10 +728,16 @@ class AgentRunner:
                 timeline_reduction_manifest=timeline_reduction_manifest,
             )
             prompt = self._prompt_builder().build(context)
+            prompt_budget_plan = self._prompt_budget_plan(run_request)
+            prompt = _prompt_with_budget_plan(prompt, prompt_budget_plan)
             if self.session.prompt_bucket_budget_policy is not None:
                 prompt = self.session.prompt_bucket_budget_policy.apply(prompt)
-            prompt = await self._semantic_trim_prompt_if_needed(run_request, prompt)
-            prompt = prompt.trim_to_budget(self.session.profile.budget.max_prompt_bytes)
+            prompt = await self._semantic_trim_prompt_if_needed(
+                run_request,
+                prompt,
+                prompt_budget_plan,
+            )
+            prompt = prompt.trim_to_budget(prompt_budget_plan.target_prompt_bytes)
             executor = self._executor(
                 run_request.approval_resume,
                 run_request.structured_output,
@@ -1179,6 +1224,7 @@ class AgentRunner:
                 "profile": self.session.profile.name,
                 "request_metadata": dict(request.metadata),
                 "prompt_trim": dict(prompt_manifest.get("metadata", {}).get("trim") or {}),
+                "prompt_budget": dict(prompt_manifest.get("metadata", {}).get("prompt_budget") or {}),
                 "prompt_semantic_trim": dict(
                     prompt_manifest.get("metadata", {}).get("semantic_trim") or {}
                 ),
@@ -1208,6 +1254,7 @@ class AgentRunner:
         self,
         request: AgentRunRequest,
         prompt: PromptIR,
+        budget_plan: AgentPromptBudgetPlan,
     ) -> PromptIR:
         reducer = self.session.prompt_semantic_reducer
         if reducer is None:
@@ -1215,14 +1262,48 @@ class AgentRunner:
         reducer_request = PromptSemanticTrimRequest(
             prompt=prompt,
             task=request.task,
-            target_bytes=self.session.profile.budget.max_prompt_bytes,
+            target_bytes=budget_plan.target_prompt_bytes,
             metadata={
                 "profile": self.session.profile.name,
                 "request_metadata": dict(request.metadata),
+                "prompt_budget": budget_plan.manifest(),
             },
         )
         result = await reducer.reduce(reducer_request)
         return result.prompt
+
+    def _prompt_budget_plan(self, request: AgentRunRequest) -> AgentPromptBudgetPlan:
+        profile_budget = max(1, int(self.session.profile.budget.max_prompt_bytes))
+        route_plan = _provider_route_plan_manifest(self.session, request)
+        selected = route_plan.get("selected_route") if isinstance(route_plan, dict) else {}
+        selected = selected if isinstance(selected, dict) else {}
+        route_metadata = selected.get("metadata") if isinstance(selected.get("metadata"), dict) else {}
+        capabilities = route_metadata.get("model_capabilities")
+        capabilities = capabilities if isinstance(capabilities, dict) else {}
+        context_window = int(capabilities.get("context_window_tokens") or 0)
+        max_output = int(capabilities.get("max_output_tokens") or 0)
+        reserved_output = _prompt_reserved_output_tokens(request, max_output)
+        provider_input_budget = 0
+        if context_window > 0:
+            input_tokens = max(1, context_window - reserved_output)
+            provider_input_budget = max(1, input_tokens * 4)
+        target = min(profile_budget, provider_input_budget) if provider_input_budget else profile_budget
+        return AgentPromptBudgetPlan(
+            profile_max_prompt_bytes=profile_budget,
+            target_prompt_bytes=target,
+            provider_name=str(selected.get("provider_name") or ""),
+            model=str(selected.get("model") or self.session.profile.model or ""),
+            context_window_tokens=context_window,
+            reserved_output_tokens=reserved_output,
+            provider_input_budget_bytes=provider_input_budget,
+            source="provider_context_window" if provider_input_budget and target < profile_budget else "profile_budget",
+            route_plan=route_plan,
+            metadata={
+                "profile": self.session.profile.name,
+                "request_metadata": dict(request.metadata),
+                "stream": self._stream_for_request(request),
+            },
+        )
 
 
 class AgentSessionManager:
@@ -1648,6 +1729,70 @@ def _budget_manifest(budget: RuntimeBudget) -> dict[str, Any]:
         "max_tool_result_bytes": budget.max_tool_result_bytes,
         "max_cost_usd": budget.max_cost_usd,
     }
+
+
+def _prompt_with_budget_plan(prompt: PromptIR, plan: AgentPromptBudgetPlan) -> PromptIR:
+    return PromptIR(
+        buckets=prompt.buckets,
+        metadata={**prompt.metadata, "prompt_budget": plan.manifest()},
+    )
+
+
+def _provider_route_plan_manifest(
+    session: AgentSession,
+    request: AgentRunRequest,
+) -> dict[str, Any]:
+    route_plan = getattr(session.provider, "route_plan", None)
+    if not callable(route_plan):
+        return {}
+    route_request = LLMRequest(
+        messages=[],
+        model=session.profile.model,
+        metadata={
+            "profile": session.profile.name,
+            "provider": str(request.metadata.get("provider") or ""),
+            "requires_streaming": request.stream
+            if request.stream is not None
+            else session.stream,
+            **_structured_output_route_metadata(request),
+        },
+    )
+    try:
+        value = route_plan(
+            route_request,
+            streamed=request.stream if request.stream is not None else session.stream,
+        )
+    except Exception as exc:
+        return {
+            "schema_version": "agent-core-provider-prompt-budget-route-plan-error/v1",
+            "error": str(exc),
+        }
+    manifest = getattr(value, "manifest", None)
+    if callable(manifest):
+        result = manifest()
+        return dict(result) if isinstance(result, dict) else {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _structured_output_route_metadata(request: AgentRunRequest) -> dict[str, Any]:
+    if request.structured_output is None:
+        return {}
+    return {"requires_structured_output": True}
+
+
+def _prompt_reserved_output_tokens(request: AgentRunRequest, max_output_tokens: int) -> int:
+    for key in ("reserved_output_tokens", "max_output_tokens", "estimated_output_tokens"):
+        value = request.metadata.get(key)
+        if value is None:
+            continue
+        try:
+            explicit = max(0, int(value))
+        except (TypeError, ValueError):
+            continue
+        if max_output_tokens > 0:
+            return min(max_output_tokens, explicit)
+        return explicit
+    return max(0, int(max_output_tokens))
 
 
 def _context_reducer_manifest(reducer: ContextReducerPort | None) -> dict[str, Any]:

@@ -294,6 +294,10 @@ rejection reasons, requested provider/model, and streamed mode without invoking
 a model. Provider call records attach the route plan manifest so traces can
 explain why a runtime chose or skipped a provider while concrete credentials,
 tenant routing, and vendor clients stay outside the SDK.
+`AgentPromptBudgetPlan` lets the runner use those route capabilities before the
+model call. When a selected provider exposes a context window and output limit,
+the core derives a smaller effective prompt byte budget and records the decision
+in prompt and run trace manifests.
 `LLMToolContract`, `LLMToolChoice`, and `LLMResponseFormat` are request-level
 contracts for native model tools and constrained output. They deliberately stop
 at the provider-neutral shape: OpenAI-compatible tools/response formats,
@@ -501,9 +505,11 @@ The SDK owns prompt mechanics, not business wording. `PromptIR` records semantic
 buckets, stable ordering, cache hints, hashes, and trim metadata. Runtimes provide
 the actual instructions, task contracts, examples, and domain language.
 
-`AgentRunner` applies `PromptIR.trim_to_budget()` with
-`RuntimeBudget.max_prompt_bytes` before provider calls, so automatic trimming is
-part of the core execution path rather than a Raven-specific adapter behavior.
+`AgentRunner` applies `PromptIR.trim_to_budget()` with the effective prompt
+budget before provider calls, so automatic trimming is part of the core
+execution path rather than a Raven-specific adapter behavior. The default
+effective budget starts from `RuntimeBudget.max_prompt_bytes` and can be
+tightened by provider route capabilities through `AgentPromptBudgetPlan`.
 If `AgentSession.context_reducer` is configured, the runner also applies
 timeline reduction before prompt assembly using
 `RuntimeBudget.max_timeline_bytes`.

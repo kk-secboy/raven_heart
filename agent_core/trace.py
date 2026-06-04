@@ -824,6 +824,7 @@ class AgentRunTraceBundle:
         ).manifest()
         prompt_bucket_budget = _prompt_bucket_budget(self.prompt)
         prompt_semantic_trim = _prompt_semantic_trim(self.prompt)
+        prompt_budget = _prompt_budget(self.prompt)
         correlation = self.correlation or TraceCorrelationIndex.from_trace_components(
             run_id=self.run_id,
             journal_replay=self.journal_replay,
@@ -954,6 +955,8 @@ class AgentRunTraceBundle:
                 "prompt_semantic_trimmed_count": int(
                     prompt_semantic_trim.get("trimmed_count") or 0
                 ),
+                "has_prompt_budget": bool(prompt_budget),
+                "prompt_budget_provider_limited": bool(prompt_budget.get("provider_limited")),
                 "has_prompt_trim": bool(self.prompt.get("metadata", {}).get("trim")),
             },
             "session": dict(self.session),
@@ -984,6 +987,7 @@ class AgentRunTraceBundle:
             "handoff_trace": dict(handoff_trace),
             "agent_tool_trace": dict(agent_tool_trace),
             "memory_governance": dict(memory_governance),
+            "prompt_budget": dict(prompt_budget),
             "prompt_bucket_budget": dict(prompt_bucket_budget),
             "prompt_semantic_trim": dict(prompt_semantic_trim),
             "correlation": dict(correlation),
@@ -1298,6 +1302,12 @@ def _count_route_field(route_plans: tuple[dict[str, Any], ...], field_name: str)
 def _prompt_bucket_budget(prompt: dict[str, Any]) -> dict[str, Any]:
     metadata = prompt.get("metadata") if isinstance(prompt.get("metadata"), dict) else {}
     budget = metadata.get("bucket_budget") if isinstance(metadata, dict) else {}
+    return dict(budget) if isinstance(budget, dict) else {}
+
+
+def _prompt_budget(prompt: dict[str, Any]) -> dict[str, Any]:
+    metadata = prompt.get("metadata") if isinstance(prompt.get("metadata"), dict) else {}
+    budget = metadata.get("prompt_budget") if isinstance(metadata, dict) else {}
     return dict(budget) if isinstance(budget, dict) else {}
 
 

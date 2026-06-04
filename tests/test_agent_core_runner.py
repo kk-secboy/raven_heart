@@ -32,7 +32,7 @@ from agent_core.mcp import (
     MCPToolReference,
     MCPToolSpec,
 )
-from agent_core.providers import LLMProviderCenter
+from agent_core.providers import LLMModelCapabilities, LLMProviderCenter
 from agent_core.providers import LLMRequest, LLMResponse, LLMToolCall
 from agent_core.prompt import (
     DefaultPromptSemanticReducer,
@@ -718,6 +718,55 @@ async def test_agent_runner_trims_prompt_to_profile_budget() -> None:
     assert trim["target_bytes"] == 900
     assert outcome.trace_manifest["summary"]["has_prompt_trim"] is True
     assert outcome.trace_manifest["metadata"]["prompt_trim"]["target_bytes"] == 900
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_trims_prompt_to_provider_context_window() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    center = LLMProviderCenter(default_provider="small")
+    center.register(
+        "small",
+        provider,
+        default_model="small-model",
+        default_capabilities=LLMModelCapabilities(
+            context_window_tokens=260,
+            max_output_tokens=60,
+        ),
+    )
+    session = AgentSession(
+        profile=AgentProfile(
+            name="provider-budget",
+            instructions="stable rules",
+            budget=RuntimeBudget(max_prompt_bytes=4000),
+        ),
+        provider=center,
+        tools=MockToolRuntime(),
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="summarize provider budget",
+            context=AgentContextPack(workspace="old observation " + ("o" * 2200) + " latest"),
+        )
+    )
+
+    prompt_text = provider.requests[0].messages[0].content
+    budget = outcome.prompt_manifest["metadata"]["prompt_budget"]
+    trim = outcome.prompt_manifest["metadata"]["trim"]
+
+    assert outcome.result.status == "completed"
+    assert budget["source"] == "provider_context_window"
+    assert budget["provider_limited"] is True
+    assert budget["provider_name"] == "small"
+    assert budget["model"] == "small-model"
+    assert budget["context_window_tokens"] == 260
+    assert budget["reserved_output_tokens"] == 60
+    assert budget["target_prompt_bytes"] == 800
+    assert len(prompt_text.encode("utf-8")) <= 800
+    assert trim["target_bytes"] == 800
+    assert outcome.trace_manifest["summary"]["has_prompt_budget"] is True
+    assert outcome.trace_manifest["summary"]["prompt_budget_provider_limited"] is True
+    assert outcome.trace_manifest["prompt_budget"]["target_prompt_bytes"] == 800
 
 
 @pytest.mark.asyncio
