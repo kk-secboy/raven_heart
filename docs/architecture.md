@@ -153,6 +153,13 @@ when API keys are available. The SDK owns the conformance contract, while HTTP
 clients, credentials, deployment routing, and rate-limit policy remain outside
 core.
 
+`AgentCoreBudgetAcceptanceHarness` is the provider-budget gate. It verifies
+`LLMProviderCenter` estimated-cost preflight, actual-cost enforcement,
+request-level budget overrides, call-attempt limits, token limits, usage
+accounting, and trace eval for provider cost. The SDK owns these portable
+budget semantics and prompt-safe reports; host runtimes own vendor quota
+integrations, tenant rate limits, billing systems, and operator policy.
+
 `TraceEvalSuiteRunner` is the generic regression-suite gate. It evaluates
 multiple `TraceEvalCase` objects, where each case binds one run ID to its own
 `TraceEvalSpec`, tags, and metadata, then returns one aggregate
@@ -222,9 +229,9 @@ boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, durable-session acceptance, event acceptance, external-backend
 acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
-packaging acceptance, provider acceptance, provider-conformance checks, storage
-acceptance, task-profile acceptance, recovery acceptance, and resume acceptance,
-then returns one
+packaging acceptance, provider acceptance, provider-conformance checks,
+budget acceptance, eval-suite checks, storage acceptance, task-profile
+acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.

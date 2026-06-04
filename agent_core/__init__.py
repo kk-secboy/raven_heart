@@ -62,6 +62,12 @@ from agent_core.backends import (
     storage_backend_manifests_from_components,
     storage_backend_manifest,
 )
+from agent_core.budget_acceptance import (
+    AgentCoreBudgetAcceptanceHarness,
+    AgentCoreBudgetAcceptanceIssue,
+    AgentCoreBudgetAcceptanceReport,
+    run_agent_core_budget_acceptance,
+)
 from agent_core.capabilities import (
     CapabilityCatalog,
     CapabilityDiscoveryResult,
@@ -606,6 +612,9 @@ __all__ = [
     "AgentCoreApprovalAcceptanceHarness",
     "AgentCoreApprovalAcceptanceIssue",
     "AgentCoreApprovalAcceptanceReport",
+    "AgentCoreBudgetAcceptanceHarness",
+    "AgentCoreBudgetAcceptanceIssue",
+    "AgentCoreBudgetAcceptanceReport",
     "AgentCoreCapability",
     "AgentCoreContextAcceptanceHarness",
     "AgentCoreContextAcceptanceIssue",
@@ -1045,6 +1054,7 @@ __all__ = [
     "agent_core_sdk_manifest",
     "run_agent_core_acceptance",
     "run_agent_core_approval_acceptance",
+    "run_agent_core_budget_acceptance",
     "run_agent_core_context_acceptance",
     "run_agent_core_coordination_acceptance",
     "run_agent_core_durable_session_acceptance",

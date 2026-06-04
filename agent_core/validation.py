@@ -9,6 +9,7 @@ from typing import Any
 
 from agent_core.acceptance import run_agent_core_acceptance
 from agent_core.approval_acceptance import run_agent_core_approval_acceptance
+from agent_core.budget_acceptance import run_agent_core_budget_acceptance
 from agent_core.context_acceptance import run_agent_core_context_acceptance
 from agent_core.coordination_acceptance import run_agent_core_coordination_acceptance
 from agent_core.durable_session_acceptance import run_agent_core_durable_session_acceptance
@@ -129,6 +130,7 @@ class AgentCoreValidationReport:
     api_stability: dict[str, Any] = field(default_factory=dict)
     acceptance: dict[str, Any] = field(default_factory=dict)
     approval_acceptance: dict[str, Any] = field(default_factory=dict)
+    budget_acceptance: dict[str, Any] = field(default_factory=dict)
     context_acceptance: dict[str, Any] = field(default_factory=dict)
     orchestration_acceptance: dict[str, Any] = field(default_factory=dict)
     coordination_acceptance: dict[str, Any] = field(default_factory=dict)
@@ -171,6 +173,7 @@ class AgentCoreValidationReport:
             "api_stability": dict(self.api_stability),
             "acceptance": dict(self.acceptance),
             "approval_acceptance": dict(self.approval_acceptance),
+            "budget_acceptance": dict(self.budget_acceptance),
             "context_acceptance": dict(self.context_acceptance),
             "orchestration_acceptance": dict(self.orchestration_acceptance),
             "coordination_acceptance": dict(self.coordination_acceptance),
@@ -222,6 +225,11 @@ class AgentCoreValidationSuite:
         approval_acceptance = (
             await run_agent_core_approval_acceptance(
                 metadata={"validation_gate": "approval_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
+        budget_acceptance = (
+            await run_agent_core_budget_acceptance(
+                metadata={"validation_gate": "budget_acceptance", **dict(self.metadata)}
             )
         ).manifest()
         context_acceptance = (
@@ -322,6 +330,7 @@ class AgentCoreValidationSuite:
             api_stability=api_stability,
             acceptance=acceptance,
             approval_acceptance=approval_acceptance,
+            budget_acceptance=budget_acceptance,
             context_acceptance=context_acceptance,
             orchestration_acceptance=orchestration_acceptance,
             coordination_acceptance=coordination_acceptance,
@@ -349,6 +358,7 @@ class AgentCoreValidationSuite:
             api_stability=api_stability,
             acceptance=acceptance,
             approval_acceptance=approval_acceptance,
+            budget_acceptance=budget_acceptance,
             context_acceptance=context_acceptance,
             orchestration_acceptance=orchestration_acceptance,
             coordination_acceptance=coordination_acceptance,
@@ -480,6 +490,7 @@ def _validation_issues(
     api_stability: dict[str, Any],
     acceptance: dict[str, Any],
     approval_acceptance: dict[str, Any],
+    budget_acceptance: dict[str, Any],
     context_acceptance: dict[str, Any],
     orchestration_acceptance: dict[str, Any],
     coordination_acceptance: dict[str, Any],
@@ -505,6 +516,7 @@ def _validation_issues(
     _extend_api_stability_issues(issues, api_stability)
     _extend_report_issues(issues, source="acceptance", report=acceptance)
     _extend_report_issues(issues, source="approval_acceptance", report=approval_acceptance)
+    _extend_report_issues(issues, source="budget_acceptance", report=budget_acceptance)
     _extend_report_issues(issues, source="context_acceptance", report=context_acceptance)
     _extend_report_issues(
         issues,

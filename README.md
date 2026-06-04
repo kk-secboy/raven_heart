@@ -231,6 +231,13 @@ streaming, JSON mode, and native tool-call behavior through the same report
 shape. HTTP clients, API keys, deployment routing, and rate-limit handling stay
 outside `agent_core`.
 
+`agent_core.run_agent_core_budget_acceptance()` runs deterministic provider
+budget checks for `LLMProviderCenter`. It verifies estimated-cost preflight,
+actual-cost enforcement, request-level budget overrides, call-attempt limits,
+input/total token limits, usage accounting, and trace eval for provider cost.
+Vendor quotas, tenant rate limits, billing APIs, and operator policy stay
+outside `agent_core`.
+
 `agent_core.run_agent_core_eval_suite_acceptance()` runs deterministic multi-case
 trace eval suite checks. It proves `TraceEvalSuiteRunner` can bind different
 `TraceEvalCase` objects to different run IDs and `TraceEvalSpec` contracts,
@@ -285,11 +292,11 @@ product workflows remain runtime responsibilities.
 
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, approval acceptance, orchestration acceptance, coordination
+acceptance, approval acceptance, budget acceptance, orchestration acceptance, coordination
 acceptance, durable-session acceptance, event acceptance, external-backend
 acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
-packaging acceptance, provider acceptance, provider-conformance checks, storage
-acceptance, task-profile acceptance, recovery acceptance, and resume acceptance,
+packaging acceptance, provider acceptance, provider-conformance checks,
+eval-suite checks, storage acceptance, task-profile acceptance, recovery acceptance, and resume acceptance,
 then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
@@ -639,6 +646,8 @@ ranking contract used by lightweight core stores.
   and completed streamed calls record a standard stream summary.
 - Stream summaries expose event types and error counts to trace/eval contracts
   without storing raw streamed content.
+- `LLMUsageLimits` and `LLMProviderCenter` enforce SDK-local call-attempt,
+  cost, and token budgets before and after provider execution.
 - `AgentSession.stream` and `AgentRunRequest.stream` let runners choose
   streaming per session or per run without changing provider adapters.
 
@@ -1030,6 +1039,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK context acceptance harness | MVP implemented |
 | SDK provider acceptance harness | MVP implemented |
 | SDK provider conformance harness | MVP implemented |
+| SDK budget acceptance harness | MVP implemented |
 | SDK eval suite runner | MVP implemented |
 | SDK task profile acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |

@@ -21,6 +21,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["api_stability"]["ready"] is True
     assert manifest["acceptance"]["ready"] is True
     assert manifest["approval_acceptance"]["ready"] is True
+    assert manifest["budget_acceptance"]["ready"] is True
     assert manifest["context_acceptance"]["ready"] is True
     assert manifest["orchestration_acceptance"]["ready"] is True
     assert manifest["coordination_acceptance"]["ready"] is True
@@ -44,6 +45,9 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     ] is True
     assert manifest["api_lifecycle"]["unknown_public_api_count"] == 0
     assert manifest["approval_acceptance"]["approval_resume"]["approved_count"] == 1
+    assert manifest["budget_acceptance"]["estimated_cost_block"]["provider_request_count"] == 0
+    assert manifest["budget_acceptance"]["override_success"]["center"]["usage"]["cost_usd"] == 0.01
+    assert manifest["budget_acceptance"]["trace_eval"]["ok"] is True
     assert manifest["context_acceptance"]["context_summary"][
         "prompt_semantic_trimmed_count"
     ] == 1
@@ -154,6 +158,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "runtime_boundary_audit" in readiness["matched"]["capabilities"]
     assert "api_lifecycle_policy" in readiness["matched"]["capabilities"]
     assert "approval_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "budget_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "coordination_acceptance_harness" in readiness["matched"]["capabilities"]
@@ -177,6 +182,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "evaluate_agent_core_api_lifecycle" in readiness["matched"]["public_api"]
     assert "AgentCoreApprovalAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_approval_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCoreBudgetAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_budget_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreContextAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_context_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreOrchestrationAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -220,6 +227,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "evaluate_agent_core_api_lifecycle" in stability["present_stable_api"]
     assert "AgentCoreApprovalAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_approval_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreBudgetAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_budget_acceptance" in stability["present_stable_api"]
     assert "AgentCoreContextAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_context_acceptance" in stability["present_stable_api"]
     assert "AgentCoreOrchestrationAcceptanceHarness" in stability["present_stable_api"]
