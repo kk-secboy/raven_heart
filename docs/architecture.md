@@ -160,6 +160,13 @@ accounting, and trace eval for provider cost. The SDK owns these portable
 budget semantics and prompt-safe reports; host runtimes own vendor quota
 integrations, tenant rate limits, billing systems, and operator policy.
 
+`AgentCoreRedactionAcceptanceHarness` is the prompt-safe redaction gate. It
+verifies `RedactionPolicy` recursively redacts sensitive keys, bearer/API-key/
+password-like values, inline secret strings, and oversized strings while keeping
+digest, byte-count, and path audit decisions. The SDK owns the portable
+redaction contract and report shape; host runtimes own secret stores,
+tenant-specific redaction policy, credential rotation, and incident workflows.
+
 `TraceEvalSuiteRunner` is the generic regression-suite gate. It evaluates
 multiple `TraceEvalCase` objects, where each case binds one run ID to its own
 `TraceEvalSpec`, tags, and metadata, then returns one aggregate
@@ -230,7 +237,7 @@ acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, durable-session acceptance, event acceptance, external-backend
 acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
 packaging acceptance, provider acceptance, provider-conformance checks,
-budget acceptance, eval-suite checks, storage acceptance, task-profile
+budget acceptance, redaction acceptance, eval-suite checks, storage acceptance, task-profile
 acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
@@ -253,6 +260,7 @@ product-specific migration tests begin.
 | Multi-agent handoff protocol | Product queues, distributed workers, business orchestration |
 | Prompt buckets, trimming, and injection | Domain-specific prompt material and task contracts |
 | Prompt bucket budget policy | Domain-specific budget numbers and release gates |
+| Prompt-safe redaction policy | Secret stores, tenant-specific policy, credential rotation |
 | Structured output specs and validation lifecycle | Domain schemas, typed business objects, persistence |
 | Context reducer protocol and reduction manifests | Domain summarizers, archive stores, retrieval policy |
 | Planner protocol and plan state | Domain-specific plan generation and workflow policy |

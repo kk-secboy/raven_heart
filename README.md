@@ -238,6 +238,13 @@ input/total token limits, usage accounting, and trace eval for provider cost.
 Vendor quotas, tenant rate limits, billing APIs, and operator policy stay
 outside `agent_core`.
 
+`agent_core.run_agent_core_redaction_acceptance()` runs deterministic prompt-safe
+redaction checks. It verifies `RedactionPolicy` recursively redacts sensitive
+keys, bearer/API-key/password-like values, inline secret strings, and oversized
+strings while preserving digest, byte-count, and path audit decisions. Secret
+stores, tenant-specific redaction policy, incident workflow, and credential
+rotation stay outside `agent_core`.
+
 `agent_core.run_agent_core_eval_suite_acceptance()` runs deterministic multi-case
 trace eval suite checks. It proves `TraceEvalSuiteRunner` can bind different
 `TraceEvalCase` objects to different run IDs and `TraceEvalSpec` contracts,
@@ -292,7 +299,7 @@ product workflows remain runtime responsibilities.
 
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, approval acceptance, budget acceptance, orchestration acceptance, coordination
+acceptance, approval acceptance, budget acceptance, redaction acceptance, orchestration acceptance, coordination
 acceptance, durable-session acceptance, event acceptance, external-backend
 acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
 packaging acceptance, provider acceptance, provider-conformance checks,
@@ -1040,6 +1047,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK provider acceptance harness | MVP implemented |
 | SDK provider conformance harness | MVP implemented |
 | SDK budget acceptance harness | MVP implemented |
+| SDK redaction acceptance harness | MVP implemented |
 | SDK eval suite runner | MVP implemented |
 | SDK task profile acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |

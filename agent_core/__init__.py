@@ -431,6 +431,18 @@ from agent_core.providers import (
     UsageInfo,
 )
 from agent_core.react import ReActConfig, ReActExecutor, ReActResult
+from agent_core.redaction import (
+    RedactionDecision,
+    RedactionPolicy,
+    RedactionResult,
+    redact_payload,
+)
+from agent_core.redaction_acceptance import (
+    AgentCoreRedactionAcceptanceHarness,
+    AgentCoreRedactionAcceptanceIssue,
+    AgentCoreRedactionAcceptanceReport,
+    run_agent_core_redaction_acceptance,
+)
 from agent_core.reducer import (
     ContextReducerPort,
     DefaultContextReducer,
@@ -655,6 +667,9 @@ __all__ = [
     "AgentCoreProviderConformanceIssue",
     "AgentCoreProviderConformanceReport",
     "AgentCoreProviderConformanceSpec",
+    "AgentCoreRedactionAcceptanceHarness",
+    "AgentCoreRedactionAcceptanceIssue",
+    "AgentCoreRedactionAcceptanceReport",
     "AgentCoreReadinessIssue",
     "AgentCoreReadinessProfile",
     "AgentCoreReadinessReport",
@@ -972,6 +987,9 @@ __all__ = [
     "PersistentPlanner",
     "PersistentToolReplay",
     "ProviderConformanceDeterministicProvider",
+    "RedactionDecision",
+    "RedactionPolicy",
+    "RedactionResult",
     "RuleBasedMemoryGovernance",
     "InMemoryPolicyDecisionStore",
     "MarkdownPolicyDecisionStore",
@@ -1003,6 +1021,7 @@ __all__ = [
     "cosine_similarity",
     "deterministic_text_embedding",
     "rank_semantic_documents",
+    "redact_payload",
     "validate_json_schema_subset",
     "TERMINAL_RUN_STATUSES",
     "TERMINAL_PLAN_STEP_STATUSES",
@@ -1068,6 +1087,7 @@ __all__ = [
     "run_agent_core_packaging_acceptance",
     "run_agent_core_provider_acceptance",
     "run_agent_core_provider_conformance",
+    "run_agent_core_redaction_acceptance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
     "run_agent_core_storage_acceptance",
