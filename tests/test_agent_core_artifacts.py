@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from agent_core import ArtifactTrace
 from agent_core.artifacts import InMemoryArtifactStore, MarkdownArtifactStore, SQLiteArtifactStore
 
 
@@ -58,3 +59,23 @@ async def test_in_memory_artifact_store_manifest_contains_prompt_safe_records() 
     assert manifest["artifacts"][0]["artifact_id"] == record.artifact_id
     assert manifest["artifacts"][0]["sha256"] == record.sha256
     assert "secret body" not in str(manifest)
+
+
+@pytest.mark.asyncio
+async def test_artifact_trace_summarizes_prompt_safe_records() -> None:
+    store = InMemoryArtifactStore()
+    record = await store.put_text(
+        "large tool result",
+        metadata={"kind": "tool_result", "tool_name": "dump", "call_id": "call-1"},
+    )
+
+    trace = ArtifactTrace.from_session({"artifact_store": store.manifest()}).manifest()
+
+    assert trace["schema_version"] == "agent-core-artifact-trace/v1"
+    assert trace["artifact_count"] == 1
+    assert trace["total_bytes"] == record.size_bytes
+    assert trace["max_artifact_bytes"] == record.size_bytes
+    assert trace["kinds"] == {"tool_result": 1}
+    assert trace["tool_names"] == {"dump": 1}
+    assert trace["artifacts"][0]["sha256"] == record.sha256
+    assert "large tool result" not in str(trace)

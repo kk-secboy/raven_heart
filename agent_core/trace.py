@@ -207,6 +207,38 @@ class ApprovalTrace:
         }
 
 
+@dataclass(frozen=True)
+class ArtifactTrace:
+    """Run-level summary of prompt-safe artifact records."""
+
+    artifacts: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_session(cls, session: dict[str, Any]) -> "ArtifactTrace":
+        store = session.get("artifact_store") if isinstance(session.get("artifact_store"), dict) else {}
+        raw = store.get("artifacts") if isinstance(store, dict) else ()
+        artifacts = tuple(_artifact_trace_record(item) for item in _dict_items(raw))
+        artifacts = tuple(record for record in artifacts if record.get("artifact_id"))
+        return cls(artifacts=artifacts)
+
+    def manifest(self) -> dict[str, Any]:
+        artifacts = tuple(dict(item) for item in self.artifacts)
+        total_bytes = sum(_safe_int(item.get("size_bytes")) for item in artifacts)
+        max_bytes = max((_safe_int(item.get("size_bytes")) for item in artifacts), default=0)
+        return {
+            "schema_version": "agent-core-artifact-trace/v1",
+            "artifact_count": len(artifacts),
+            "total_bytes": total_bytes,
+            "max_artifact_bytes": max_bytes,
+            "content_types": _count_injection_field(artifacts, "content_type"),
+            "kinds": _count_injection_field(artifacts, "kind"),
+            "tool_names": _count_injection_field(artifacts, "tool_name"),
+            "artifacts": list(artifacts),
+            "metadata": dict(self.metadata),
+        }
+
+
 class ToolCenterTrace:
     """Run-level summary of ToolCenter route and call audit records."""
 
@@ -457,6 +489,7 @@ class AgentRunTraceBundle:
     mcp_center: dict[str, Any] = field(default_factory=dict)
     skill_center: dict[str, Any] = field(default_factory=dict)
     storage_backends: dict[str, Any] = field(default_factory=dict)
+    artifact_trace: dict[str, Any] = field(default_factory=dict)
     context_injections: dict[str, Any] = field(default_factory=dict)
     memory_governance: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
@@ -483,6 +516,7 @@ class AgentRunTraceBundle:
         approval_trace = self.approval_trace or ApprovalTrace.from_approvals(
             self.approvals
         ).manifest()
+        artifact_trace = self.artifact_trace or ArtifactTrace.from_session(self.session).manifest()
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
@@ -529,6 +563,9 @@ class AgentRunTraceBundle:
                 "approval_approved_count": int(approval_trace.get("approved_count") or 0),
                 "approval_rejected_count": int(approval_trace.get("rejected_count") or 0),
                 "approval_cancelled_count": int(approval_trace.get("cancelled_count") or 0),
+                "artifact_count": int(artifact_trace.get("artifact_count") or 0),
+                "artifact_total_bytes": int(artifact_trace.get("total_bytes") or 0),
+                "artifact_max_bytes": int(artifact_trace.get("max_artifact_bytes") or 0),
                 "event_log_count": int(self.event_log.get("event_count") or 0),
                 "correlation_entry_count": int(correlation.get("entry_count") or 0),
                 "has_resume": bool(self.resume),
@@ -586,6 +623,7 @@ class AgentRunTraceBundle:
             "policy_decisions": dict(self.policy_decisions),
             "approvals": dict(self.approvals),
             "approval_trace": dict(approval_trace),
+            "artifact_trace": dict(artifact_trace),
             "event_log": dict(self.event_log),
             "resume": dict(self.resume),
             "resume_plan": dict(self.resume_plan),
@@ -708,6 +746,29 @@ def _approval_trace_record(record: dict[str, Any]) -> dict[str, Any]:
         "decided_at": str(decision.get("decided_at") or ""),
         "metadata": dict(record.get("metadata") or {}) if isinstance(record.get("metadata"), dict) else {},
     }
+
+
+def _artifact_trace_record(record: dict[str, Any]) -> dict[str, Any]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return {
+        "artifact_id": str(record.get("artifact_id") or ""),
+        "uri": str(record.get("uri") or ""),
+        "content_type": str(record.get("content_type") or ""),
+        "size_bytes": _safe_int(record.get("size_bytes")),
+        "sha256": str(record.get("sha256") or ""),
+        "kind": str(metadata.get("kind") or ""),
+        "tool_name": str(metadata.get("tool_name") or ""),
+        "call_id": str(metadata.get("call_id") or ""),
+        "status": str(metadata.get("status") or ""),
+        "metadata": dict(metadata),
+    }
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _count_route_field(route_plans: tuple[dict[str, Any], ...], field_name: str) -> dict[str, int]:

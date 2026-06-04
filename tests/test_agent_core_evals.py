@@ -363,6 +363,28 @@ def _trace_manifest() -> dict[str, object]:
                 },
             ],
         },
+        "artifact_trace": {
+            "schema_version": "agent-core-artifact-trace/v1",
+            "artifact_count": 1,
+            "total_bytes": 4096,
+            "max_artifact_bytes": 4096,
+            "content_types": {"text/plain; charset=utf-8": 1},
+            "kinds": {"tool_result": 1},
+            "tool_names": {"dump": 1},
+            "artifacts": [
+                {
+                    "artifact_id": "artifact-1",
+                    "uri": "artifact://artifact-1",
+                    "content_type": "text/plain; charset=utf-8",
+                    "size_bytes": 4096,
+                    "sha256": "abc123",
+                    "kind": "tool_result",
+                    "tool_name": "dump",
+                    "call_id": "call-1",
+                    "status": "completed",
+                }
+            ],
+        },
         "storage_backends": {
             "schema_version": "agent-core-storage-backend-trace/v1",
             "backend_count": 3,
@@ -476,6 +498,7 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "approval_approved",
         "approval_pending",
         "approval_rejected",
+        "artifact_stored",
         "provider_call_completed",
         "provider_call_completed",
     )
@@ -490,8 +513,11 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
     assert manifest["steps"][10]["payload"]["view_id"] == "review:rules.md:abcd"
     assert manifest["steps"][11]["source"] == "approval_trace"
     assert manifest["steps"][11]["payload"]["subject"] == "tool:deploy"
-    assert manifest["steps"][14]["source"] == "provider"
-    assert manifest["steps"][14]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][13]["source"] == "approval_trace"
+    assert manifest["steps"][14]["source"] == "artifact_trace"
+    assert manifest["steps"][14]["payload"]["artifact_id"] == "artifact-1"
+    assert manifest["steps"][15]["source"] == "provider"
+    assert manifest["steps"][15]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1550,6 +1576,61 @@ def test_trace_eval_reports_approval_contract_failures() -> None:
     assert {issue.code for issue in missing.issues} == {"approval_trace_missing"}
 
 
+def test_trace_eval_validates_artifact_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_artifacts=True,
+            required_artifact_kinds=("tool_result",),
+            required_artifact_tool_names=("dump",),
+            required_artifact_content_types=("text/plain; charset=utf-8",),
+            max_artifact_count=1,
+            max_artifact_total_bytes=4096,
+            max_artifact_size_bytes=4096,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_artifact_trace"] is True
+    assert report.summary["artifact_count"] == 1
+    assert report.summary["artifact_kinds"] == ["tool_result"]
+    assert report.summary["artifact_tool_names"] == ["dump"]
+    assert report.summary["artifact_content_types"] == ["text/plain; charset=utf-8"]
+    assert report.summary["artifact_total_bytes"] == 4096
+    assert report.summary["artifact_max_bytes"] == 4096
+
+
+def test_trace_eval_reports_artifact_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_artifact_kinds=("memory_snapshot",),
+            required_artifact_tool_names=("scan",),
+            required_artifact_content_types=("application/json",),
+            max_artifact_count=0,
+            max_artifact_total_bytes=1024,
+            max_artifact_size_bytes=1024,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "artifact_trace"},
+        TraceEvalSpec(require_artifacts=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_artifact_kind",
+        "missing_artifact_tool_name",
+        "missing_artifact_content_type",
+        "artifact_count_limit_exceeded",
+        "artifact_total_bytes_limit_exceeded",
+        "artifact_size_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"artifact_trace_missing"}
+
+
 def test_trace_eval_validates_mcp_and_skill_center_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
@@ -1974,7 +2055,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 16
+    assert report.summary["baseline_step_count"] == 17
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -2015,6 +2096,7 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "approval_approved",
         "approval_pending",
         "approval_rejected",
+        "artifact_stored",
         "provider_call_completed",
         "provider_call_completed",
     ]

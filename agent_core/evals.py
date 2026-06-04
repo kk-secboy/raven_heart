@@ -123,6 +123,13 @@ class TraceEvalSpec:
     max_pending_approvals: int | None = None
     max_rejected_approvals: int | None = None
     require_approved_approval_subjects: tuple[str, ...] = ()
+    require_artifacts: bool = False
+    required_artifact_kinds: tuple[str, ...] = ()
+    required_artifact_tool_names: tuple[str, ...] = ()
+    required_artifact_content_types: tuple[str, ...] = ()
+    max_artifact_count: int | None = None
+    max_artifact_total_bytes: int | None = None
+    max_artifact_size_bytes: int | None = None
     required_tool_names: tuple[str, ...] = ()
     required_tool_execution_names: tuple[str, ...] = ()
     required_tool_execution_ok_names: tuple[str, ...] = ()
@@ -271,6 +278,13 @@ class TraceEvalSpec:
             "require_approved_approval_subjects": list(
                 self.require_approved_approval_subjects
             ),
+            "require_artifacts": self.require_artifacts,
+            "required_artifact_kinds": list(self.required_artifact_kinds),
+            "required_artifact_tool_names": list(self.required_artifact_tool_names),
+            "required_artifact_content_types": list(self.required_artifact_content_types),
+            "max_artifact_count": self.max_artifact_count,
+            "max_artifact_total_bytes": self.max_artifact_total_bytes,
+            "max_artifact_size_bytes": self.max_artifact_size_bytes,
             "required_tool_names": list(self.required_tool_names),
             "required_tool_execution_names": list(self.required_tool_execution_names),
             "required_tool_execution_ok_names": list(self.required_tool_execution_ok_names),
@@ -572,6 +586,16 @@ class TraceReplayHarness:
                     payload=dict(item.get("payload") or {}),
                 )
             )
+        for item in _artifact_replay_steps(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="artifact_trace",
+                    event_type="artifact_stored",
+                    run_id=run_id,
+                    payload=dict(item),
+                )
+            )
         provider = trace.get("provider") if isinstance(trace.get("provider"), dict) else {}
         for item in _provider_call_records(provider):
             steps.append(
@@ -807,6 +831,16 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             for record in approval_records
             if record.get("status") == "approved" and record.get("subject")
         }
+        artifact_trace = _artifact_trace(trace)
+        artifact_records = _artifact_records(artifact_trace)
+        artifact_kinds = _artifact_values(artifact_records, "kind")
+        artifact_tool_names = _artifact_values(artifact_records, "tool_name")
+        artifact_content_types = _artifact_values(artifact_records, "content_type")
+        artifact_total_bytes = sum(_safe_int(record.get("size_bytes")) for record in artifact_records)
+        artifact_max_bytes = max(
+            (_safe_int(record.get("size_bytes")) for record in artifact_records),
+            default=0,
+        )
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -1812,6 +1846,83 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         f"required approval subject was not approved: {subject}",
                     )
                 )
+        if spec.require_artifacts and not artifact_trace:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "artifact_trace_missing",
+                    "artifact trace is required",
+                )
+            )
+        for kind in spec.required_artifact_kinds:
+            if kind not in artifact_kinds:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_artifact_kind",
+                        f"required artifact kind missing: {kind}",
+                    )
+                )
+        for tool_name in spec.required_artifact_tool_names:
+            if tool_name not in artifact_tool_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_artifact_tool_name",
+                        f"required artifact tool name missing: {tool_name}",
+                    )
+                )
+        for content_type in spec.required_artifact_content_types:
+            if content_type not in artifact_content_types:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_artifact_content_type",
+                        f"required artifact content type missing: {content_type}",
+                    )
+                )
+        if spec.max_artifact_count is not None and len(artifact_records) > spec.max_artifact_count:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "artifact_count_limit_exceeded",
+                    "artifact count exceeded limit",
+                    metadata={
+                        "actual": len(artifact_records),
+                        "limit": spec.max_artifact_count,
+                    },
+                )
+            )
+        if (
+            spec.max_artifact_total_bytes is not None
+            and artifact_total_bytes > spec.max_artifact_total_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "artifact_total_bytes_limit_exceeded",
+                    "artifact total bytes exceeded limit",
+                    metadata={
+                        "actual": artifact_total_bytes,
+                        "limit": spec.max_artifact_total_bytes,
+                    },
+                )
+            )
+        if (
+            spec.max_artifact_size_bytes is not None
+            and artifact_max_bytes > spec.max_artifact_size_bytes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "artifact_size_limit_exceeded",
+                    "artifact size exceeded limit",
+                    metadata={
+                        "actual": artifact_max_bytes,
+                        "limit": spec.max_artifact_size_bytes,
+                    },
+                )
+            )
         tool_names = _tool_names(trace)
         for tool_name in spec.required_tool_names:
             if tool_name not in tool_names:
@@ -2235,6 +2346,13 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "pending_approval_count": len(pending_approvals),
                 "rejected_approval_count": len(rejected_approvals),
                 "approved_approval_subjects": sorted(approved_approval_subjects),
+                "has_artifact_trace": bool(artifact_trace),
+                "artifact_count": len(artifact_records),
+                "artifact_kinds": sorted(artifact_kinds),
+                "artifact_tool_names": sorted(artifact_tool_names),
+                "artifact_content_types": sorted(artifact_content_types),
+                "artifact_total_bytes": artifact_total_bytes,
+                "artifact_max_bytes": artifact_max_bytes,
                 "terminal_event_types": sorted(
                     {str(event.get("type") or "") for event in terminal_events}
                 ),
@@ -2616,6 +2734,22 @@ def _approval_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
             }
         )
     return tuple(steps)
+
+
+def _artifact_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        {
+            "artifact_id": str(record.get("artifact_id") or ""),
+            "uri": str(record.get("uri") or ""),
+            "content_type": str(record.get("content_type") or ""),
+            "size_bytes": _safe_int(record.get("size_bytes")),
+            "sha256": str(record.get("sha256") or ""),
+            "kind": str(record.get("kind") or ""),
+            "tool_name": str(record.get("tool_name") or ""),
+            "call_id": str(record.get("call_id") or ""),
+        }
+        for record in _artifact_records(_artifact_trace(trace))
+    )
 
 
 def _mcp_inventory_replay_payload(refresh: dict[str, Any]) -> dict[str, Any]:
@@ -3441,6 +3575,53 @@ def _approval_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 
 
 def _approval_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in records if item.get(key)}
+
+
+def _artifact_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("artifact_trace")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    session = trace.get("session") if isinstance(trace.get("session"), dict) else {}
+    store = session.get("artifact_store") if isinstance(session.get("artifact_store"), dict) else {}
+    records = tuple(_artifact_trace_record(item) for item in _dict_items(store.get("artifacts")))
+    records = tuple(record for record in records if record.get("artifact_id"))
+    if not records:
+        return {}
+    total_bytes = sum(_safe_int(record.get("size_bytes")) for record in records)
+    return {
+        "schema_version": "agent-core-artifact-trace/v1",
+        "artifact_count": len(records),
+        "total_bytes": total_bytes,
+        "max_artifact_bytes": max((_safe_int(record.get("size_bytes")) for record in records), default=0),
+        "content_types": _count_values(records, "content_type"),
+        "kinds": _count_values(records, "kind"),
+        "tool_names": _count_values(records, "tool_name"),
+        "artifacts": list(records),
+    }
+
+
+def _artifact_trace_record(record: dict[str, Any]) -> dict[str, Any]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return {
+        "artifact_id": str(record.get("artifact_id") or ""),
+        "uri": str(record.get("uri") or ""),
+        "content_type": str(record.get("content_type") or ""),
+        "size_bytes": _safe_int(record.get("size_bytes")),
+        "sha256": str(record.get("sha256") or ""),
+        "kind": str(metadata.get("kind") or record.get("kind") or ""),
+        "tool_name": str(metadata.get("tool_name") or record.get("tool_name") or ""),
+        "call_id": str(metadata.get("call_id") or record.get("call_id") or ""),
+        "status": str(metadata.get("status") or record.get("status") or ""),
+        "metadata": dict(metadata),
+    }
+
+
+def _artifact_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("artifacts")))
+
+
+def _artifact_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in records if item.get(key)}
 
 

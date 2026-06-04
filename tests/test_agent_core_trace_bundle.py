@@ -131,8 +131,26 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
                         }
                     ],
                 },
-            },
-            "memory": {
+                },
+                "artifact_store": {
+                    "schema_version": "agent-core-artifact-store/v1",
+                    "artifacts": [
+                        {
+                            "artifact_id": "artifact-1",
+                            "uri": "artifact://artifact-1",
+                            "content_type": "text/plain; charset=utf-8",
+                            "size_bytes": 4096,
+                            "sha256": "abc123",
+                            "metadata": {
+                                "kind": "tool_result",
+                                "tool_name": "dump",
+                                "call_id": "call-1",
+                                "status": "completed",
+                            },
+                        }
+                    ],
+                },
+                "memory": {
                 "governance": {
                     "decisions": [
                         {
@@ -209,6 +227,11 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["approval_pending_count"] == 1
     assert manifest["summary"]["approval_approved_count"] == 1
     assert manifest["summary"]["approval_rejected_count"] == 1
+    assert manifest["summary"]["artifact_count"] == 1
+    assert manifest["summary"]["artifact_total_bytes"] == 4096
+    assert manifest["summary"]["artifact_max_bytes"] == 4096
+    assert manifest["artifact_trace"]["kinds"] == {"tool_result": 1}
+    assert manifest["artifact_trace"]["tool_names"] == {"dump": 1}
     assert manifest["approval_trace"]["statuses"] == {
         "approved": 1,
         "pending": 1,

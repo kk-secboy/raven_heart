@@ -112,8 +112,8 @@ capability discovery, memory recall/search, ToolCenter, MCP center, skill
 center, memory governance, and prompt trim manifests. The SDK
 owns the shape and summary counters, including discovery match counts, memory
 hit counts, storage backend counts, context injection counts, ToolCenter counts,
-MCP/skill center counts, approval status counts, memory governance counts, and
-prompt-trim presence.
+MCP/skill center counts, approval status counts, artifact counts/bytes, memory
+governance counts, and prompt-trim presence.
 `StorageBackendTrace` deduplicates the backend manifests visible
 across those components so a runtime can audit which state lived in core
 builtins and which state lived in external PG/vector/graph/object-store
@@ -129,6 +129,11 @@ ids, run/turn ids, status, subject, subject kind, and prompt-safe decision
 metadata so eval and replay can assert human-in-loop behavior without importing
 identity, notification, ticketing, or workflow runtime code.
 
+`ArtifactTrace` is derived from artifact store manifests. It records artifact
+ids, URIs, hashes, content types, byte sizes, artifact kind, tool name, and call
+id so eval and replay can assert prompt-unsafe observations were externalized
+without embedding artifact bodies in trace summaries.
+
 `TraceCorrelationIndex` is generated inside the trace bundle. It gives
 provider-neutral cross references across provider calls, tool replay records,
 policy decisions, approvals, event entries, and journal replay events by run,
@@ -140,7 +145,7 @@ trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
 streaming calls using prompt-safe summaries, prompt bucket budget, semantic
-prompt trim, global prompt trim, approval records, embedding calls, and lifecycle hook records. The core
+prompt trim, global prompt trim, approval records, artifact records, embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, required events, required tools,
@@ -157,8 +162,8 @@ sources, forbidden injection sources/statuses,
 trimmed/excluded injection limits, memory governance allow/rewrite/deny and risk
 ceilings, prompt bucket budget roles/statuses/over-budget ceilings, runtime
 semantic prompt trim roles/statuses/dropped-unit ceilings, approval
-status/subject/pending/rejected constraints, and global prompt trim roles/byte
-ceilings. Runtime code owns
+status/subject/pending/rejected constraints, artifact kind/tool/content-type
+and byte ceilings, and global prompt trim roles/byte ceilings. Runtime code owns
 domain-specific eval datasets, baseline selection, scoring policy, dashboards,
 and release gates.
 
