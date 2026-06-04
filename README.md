@@ -232,6 +232,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   inventory refresh records.
 - `SkillCenterTrace` summarizes loaded skills and windowed skill resource views
   without embedding skill bodies into the trace summary.
+- `HandoffTrace` summarizes multi-agent handoff decisions, selected sessions,
+  source sessions, candidate counts, and denial/not-found status.
 - `TraceCorrelationIndex` cross-references provider calls, tool replay records,
   policy decisions, approvals, event log entries, and journal replay events by
   run, turn, call id, approval id, decision id, and subject.
@@ -248,9 +250,9 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   event-log, and provider call manifests, including resume-plan,
   checkpoint-loaded, prompt-bucket-budget, prompt-semantic-trim,
   prompt-trim, context-material-selection, MCP inventory/server,
-  skill-load/resource-view, approval request/decision, artifact-store,
-  structured-output validation/repair, provider-call, provider-stream,
-  embedding-call, and lifecycle-hook steps.
+  skill-load/resource-view, handoff decision, approval request/decision,
+  artifact-store, structured-output validation/repair, provider-call,
+  provider-stream, embedding-call, and lifecycle-hook steps.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
@@ -259,7 +261,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   provider-native tool-call presence and tool-call names,
   embedding call limits, required embedding providers/models/dimensions,
   required events, required tools, resume-plan presence, resume-plan readiness,
-  expected checkpoint id, tool execution presence, tool retry, tool schema
+  expected checkpoint id, handoff status/session constraints, tool execution presence, tool retry, tool schema
   validation, minimum tool attempt counts, ToolCenter route/call audit
   constraints, MCP center inventory constraints, skill center constraints,
   approval status/subject constraints, artifact count/size/type constraints,
@@ -709,6 +711,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Trace observability manifests | MVP implemented |
 | Lifecycle hook contracts | MVP implemented |
 | Lifecycle hook trace/eval contracts | MVP implemented |
+| Handoff trace/eval contracts | MVP implemented |
 | Interrupt/cancel/timeout semantics | MVP implemented |
 | Tool center | MVP implemented |
 | Tool center route/call audit | MVP implemented |

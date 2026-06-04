@@ -211,6 +211,44 @@ class ContextMaterialSelectionTrace:
 
 
 @dataclass(frozen=True)
+class HandoffTrace:
+    """Run-level inventory of multi-agent handoff decisions."""
+
+    records: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_prompt(cls, prompt: dict[str, Any]) -> "HandoffTrace":
+        metadata = prompt.get("metadata") if isinstance(prompt.get("metadata"), dict) else {}
+        handoff = metadata.get("handoff") if isinstance(metadata, dict) else {}
+        records: list[dict[str, Any]] = []
+        for item in _dict_items(handoff):
+            record = _handoff_trace_record(item)
+            if record:
+                records.append(record)
+        return cls(records=tuple(records))
+
+    def manifest(self) -> dict[str, Any]:
+        records = tuple(dict(item) for item in self.records)
+        selected = tuple(item for item in records if item.get("status") == "selected")
+        denied = tuple(item for item in records if item.get("status") == "denied")
+        not_found = tuple(item for item in records if item.get("status") == "not_found")
+        return {
+            "schema_version": "agent-core-handoff-trace/v1",
+            "record_count": len(records),
+            "selected_count": len(selected),
+            "denied_count": len(denied),
+            "not_found_count": len(not_found),
+            "statuses": _count_injection_field(records, "status"),
+            "selected_sessions": _count_injection_field(records, "selected_session"),
+            "source_sessions": _count_injection_field(records, "source_session"),
+            "target_sessions": _count_injection_field(records, "target_session"),
+            "records": list(records),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class MemoryGovernanceTrace:
     """Run-level inventory of memory write governance decisions."""
 
@@ -610,6 +648,7 @@ class AgentRunTraceBundle:
     structured_output_trace: dict[str, Any] = field(default_factory=dict)
     context_injections: dict[str, Any] = field(default_factory=dict)
     context_material_selection: dict[str, Any] = field(default_factory=dict)
+    handoff_trace: dict[str, Any] = field(default_factory=dict)
     memory_governance: dict[str, Any] = field(default_factory=dict)
     correlation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -633,6 +672,7 @@ class AgentRunTraceBundle:
             self.context_material_selection
             or ContextMaterialSelectionTrace.from_prompt(self.prompt).manifest()
         )
+        handoff_trace = self.handoff_trace or HandoffTrace.from_prompt(self.prompt).manifest()
         tool_center = ToolCenterTrace.from_session(self.session)
         mcp_center = self.mcp_center or MCPCenterTrace.from_session(self.session)
         skill_center = self.skill_center or SkillCenterTrace.from_session(self.session)
@@ -733,6 +773,10 @@ class AgentRunTraceBundle:
                 "context_material_dropped_count": int(
                     context_material_selection.get("dropped_count") or 0
                 ),
+                "handoff_record_count": int(handoff_trace.get("record_count") or 0),
+                "handoff_selected_count": int(handoff_trace.get("selected_count") or 0),
+                "handoff_denied_count": int(handoff_trace.get("denied_count") or 0),
+                "handoff_not_found_count": int(handoff_trace.get("not_found_count") or 0),
                 "memory_governance_decision_count": int(
                     memory_governance.get("decision_count") or 0
                 ),
@@ -778,6 +822,7 @@ class AgentRunTraceBundle:
             "storage_backends": dict(storage_backends),
             "context_injections": dict(context_injections),
             "context_material_selection": dict(context_material_selection),
+            "handoff_trace": dict(handoff_trace),
             "memory_governance": dict(memory_governance),
             "prompt_bucket_budget": dict(prompt_bucket_budget),
             "prompt_semantic_trim": dict(prompt_semantic_trim),
@@ -946,6 +991,35 @@ def _structured_output_record_from_state(
         "repair_attempt": _safe_int(state.get("repair_attempt")),
         "iteration": _safe_int(state.get("iteration")),
         "schema_validation": dict(schema_validation),
+    }
+
+
+def _handoff_trace_record(record: dict[str, Any]) -> dict[str, Any]:
+    request = record.get("request") if isinstance(record.get("request"), dict) else {}
+    candidates = tuple(_dict_items(record.get("candidates")))
+    selected_session = str(record.get("selected_session") or "")
+    status = str(record.get("status") or "")
+    if not status and selected_session:
+        status = "selected"
+    if not status:
+        return {}
+    return {
+        "status": status,
+        "selected_session": selected_session,
+        "reason": str(record.get("reason") or ""),
+        "source_session": str(request.get("source_session") or ""),
+        "target_session": str(request.get("target_session") or ""),
+        "task_bytes": len(str(request.get("task") or "").encode("utf-8")),
+        "required_tags": list(request.get("required_tags") or ()),
+        "required_tools": list(request.get("required_tools") or ()),
+        "required_skills": list(request.get("required_skills") or ()),
+        "candidate_count": len(candidates),
+        "candidate_sessions": [
+            str(candidate.get("session_name") or "")
+            for candidate in candidates
+            if candidate.get("session_name")
+        ],
+        "metadata": dict(record.get("metadata") if isinstance(record.get("metadata"), dict) else {}),
     }
 
 
@@ -1600,6 +1674,8 @@ def _correlate_events(run_id: str, manifest: dict[str, Any]) -> tuple[TraceCorre
 
 
 def _dict_items(value: Any) -> tuple[dict[str, Any], ...]:
+    if isinstance(value, dict):
+        return (dict(value),)
     if not isinstance(value, (list, tuple)):
         return ()
     return tuple(dict(item) for item in value if isinstance(item, dict))

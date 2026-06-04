@@ -115,8 +115,8 @@ capability discovery, memory recall/search, ToolCenter, MCP center, skill
 center, memory governance, and prompt trim manifests. The SDK
 owns the shape and summary counters, including discovery match counts, memory
 hit counts, storage backend counts, context injection counts, ToolCenter counts,
-MCP/skill center counts, approval status counts, artifact counts/bytes, memory
-governance counts, and prompt-trim presence.
+MCP/skill center counts, handoff counts, approval status counts, artifact
+counts/bytes, memory governance counts, and prompt-trim presence.
 `StorageBackendTrace` deduplicates the backend manifests visible
 across those components so a runtime can audit which state lived in core
 builtins and which state lived in external PG/vector/graph/object-store
@@ -139,6 +139,11 @@ ids, URIs, hashes, content types, byte sizes, artifact kind, tool name, and call
 id so eval and replay can assert prompt-unsafe observations were externalized
 without embedding artifact bodies in trace summaries.
 
+`HandoffTrace` is derived from target-run prompt metadata. It records
+multi-agent handoff status, selected/source sessions, requirements, candidate
+counts, and denial/not-found states while product queues, distributed workers,
+and orchestration policy remain outside the SDK.
+
 `TraceCorrelationIndex` is generated inside the trace bundle. It gives
 provider-neutral cross references across provider calls, tool replay records,
 policy decisions, approvals, event entries, and journal replay events by run,
@@ -151,13 +156,13 @@ provider-neutral evaluation reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
 streaming calls using prompt-safe summaries, prompt bucket budget, semantic
 prompt trim, global prompt trim, approval records, artifact records, structured
-output validation/repair records, embedding calls, and lifecycle hook records. The core
+output validation/repair records, handoff records, embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, required events, required tools,
 cost ceilings, event ordering, journal integrity,
 resume-plan presence,
-resume-plan readiness, expected resume checkpoint ids, tool execution presence,
+resume-plan readiness, expected resume checkpoint ids, handoff status/session constraints, tool execution presence,
 tool retry, minimum tool attempt counts, ToolCenter selected mount/tool and
 failed-call constraints, required storage backend roles/kinds,
 forbidden backend kinds, external-backend limits, event-log presence/types,

@@ -98,6 +98,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "HandoffRouter",
         "HandoffRouterPort",
         "HandoffSpec",
+        "HandoffTrace",
         "ReActExecutor",
         "InMemoryPlanner",
         "InMemoryPlannerStore",

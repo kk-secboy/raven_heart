@@ -107,6 +107,10 @@ async def test_multi_agent_coordinator_runs_selected_session_and_records_handoff
     assert record.decision.selected_session == "code-reviewer"
     assert record.outcome.result.output == "reviewed"
     assert record.manifest()["outcome"]["result"]["status"] == "completed"
+    assert record.outcome.trace_manifest["summary"]["handoff_selected_count"] == 1
+    assert record.outcome.trace_manifest["handoff_trace"]["selected_sessions"] == {
+        "code-reviewer": 1
+    }
     assert coordinator.manifest()["record_count"] == 1
 
 

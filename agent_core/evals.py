@@ -106,6 +106,12 @@ class TraceEvalSpec:
     require_resume_plan: bool = False
     require_resume_plan_ready: bool = False
     expected_resume_checkpoint_id: str = ""
+    require_handoff: bool = False
+    required_handoff_statuses: tuple[str, ...] = ()
+    required_handoff_selected_sessions: tuple[str, ...] = ()
+    required_handoff_source_sessions: tuple[str, ...] = ()
+    max_handoff_denied: int | None = None
+    max_handoff_not_found: int | None = None
     require_tool_execution: bool = False
     required_event_types: tuple[str, ...] = ()
     require_event_log: bool = False
@@ -272,6 +278,14 @@ class TraceEvalSpec:
             "require_resume_plan": self.require_resume_plan,
             "require_resume_plan_ready": self.require_resume_plan_ready,
             "expected_resume_checkpoint_id": self.expected_resume_checkpoint_id,
+            "require_handoff": self.require_handoff,
+            "required_handoff_statuses": list(self.required_handoff_statuses),
+            "required_handoff_selected_sessions": list(
+                self.required_handoff_selected_sessions
+            ),
+            "required_handoff_source_sessions": list(self.required_handoff_source_sessions),
+            "max_handoff_denied": self.max_handoff_denied,
+            "max_handoff_not_found": self.max_handoff_not_found,
             "require_tool_execution": self.require_tool_execution,
             "required_event_types": list(self.required_event_types),
             "require_event_log": self.require_event_log,
@@ -587,6 +601,16 @@ class TraceReplayHarness:
                     payload=_payload(item),
                 )
             )
+        for item in _handoff_replay_steps(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="handoff_trace",
+                    event_type=str(item.get("event_type") or ""),
+                    run_id=run_id,
+                    payload=dict(item.get("payload") or {}),
+                )
+            )
         for item in _prompt_shaping_replay_steps(trace):
             steps.append(
                 TraceReplayStep(
@@ -723,6 +747,17 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         lifecycle_hook_failure_count = _lifecycle_hook_failure_count(lifecycle_hook_records)
         resume = _trace_dict(trace, "resume")
         resume_plan = _trace_dict(trace, "resume_plan")
+        handoff_trace = _handoff_trace(trace)
+        handoff_records = _handoff_records(handoff_trace)
+        handoff_statuses = _handoff_values(handoff_records, "status")
+        handoff_selected_sessions = _handoff_values(handoff_records, "selected_session")
+        handoff_source_sessions = _handoff_values(handoff_records, "source_session")
+        denied_handoffs = tuple(
+            record for record in handoff_records if record.get("status") == "denied"
+        )
+        not_found_handoffs = tuple(
+            record for record in handoff_records if record.get("status") == "not_found"
+        )
         tool_center = _tool_center_trace(trace)
         tool_center_calls = _tool_center_calls(tool_center)
         tool_center_route_plans = _tool_center_route_plans(tool_center_calls)
@@ -1245,6 +1280,59 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         },
                     )
                 )
+        if spec.require_handoff and not handoff_trace:
+            issues.append(TraceEvalIssue("error", "handoff_missing", "handoff trace is required"))
+        for status_value in spec.required_handoff_statuses:
+            if status_value not in handoff_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_handoff_status",
+                        f"required handoff status missing: {status_value}",
+                    )
+                )
+        for session_name in spec.required_handoff_selected_sessions:
+            if session_name not in handoff_selected_sessions:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_handoff_selected_session",
+                        f"required handoff selected session missing: {session_name}",
+                    )
+                )
+        for session_name in spec.required_handoff_source_sessions:
+            if session_name not in handoff_source_sessions:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_handoff_source_session",
+                        f"required handoff source session missing: {session_name}",
+                    )
+                )
+        if spec.max_handoff_denied is not None and len(denied_handoffs) > spec.max_handoff_denied:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "handoff_denied_limit_exceeded",
+                    "denied handoff count exceeded limit",
+                    metadata={"actual": len(denied_handoffs), "limit": spec.max_handoff_denied},
+                )
+            )
+        if (
+            spec.max_handoff_not_found is not None
+            and len(not_found_handoffs) > spec.max_handoff_not_found
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "handoff_not_found_limit_exceeded",
+                    "not-found handoff count exceeded limit",
+                    metadata={
+                        "actual": len(not_found_handoffs),
+                        "limit": spec.max_handoff_not_found,
+                    },
+                )
+            )
 
         if spec.require_storage_backends and not storage_backends:
             issues.append(
@@ -2523,6 +2611,13 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "resume_plan_ready": bool(resume_plan.get("ready")) if resume_plan else False,
                 "resume_checkpoint_id": str(resume.get("checkpoint_id") or ""),
                 "resume_plan_checkpoint_id": str(resume_plan.get("checkpoint_id") or ""),
+                "has_handoff": bool(handoff_trace),
+                "handoff_record_count": len(handoff_records),
+                "handoff_statuses": sorted(handoff_statuses),
+                "handoff_selected_sessions": sorted(handoff_selected_sessions),
+                "handoff_source_sessions": sorted(handoff_source_sessions),
+                "handoff_denied_count": len(denied_handoffs),
+                "handoff_not_found_count": len(not_found_handoffs),
                 "storage_backend_count": len(storage_backends),
                 "storage_backend_roles": sorted(storage_backend_roles),
                 "storage_backend_kinds": sorted(storage_backend_kinds),
@@ -2916,6 +3011,26 @@ def _prompt_shaping_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any],
                 "source": "prompt_trim",
                 "event_type": "prompt_trim_applied",
                 "payload": _prompt_trim_replay_payload(trim),
+            }
+        )
+    return tuple(steps)
+
+
+def _handoff_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    steps: list[dict[str, Any]] = []
+    for record in _handoff_records(_handoff_trace(trace)):
+        status = str(record.get("status") or "unknown")
+        steps.append(
+            {
+                "event_type": f"handoff_{status}",
+                "payload": {
+                    "status": status,
+                    "selected_session": str(record.get("selected_session") or ""),
+                    "source_session": str(record.get("source_session") or ""),
+                    "target_session": str(record.get("target_session") or ""),
+                    "candidate_count": _safe_int(record.get("candidate_count")),
+                    "reason": str(record.get("reason") or ""),
+                },
             }
         )
     return tuple(steps)
@@ -3570,6 +3685,75 @@ def _context_material_selection_records(manifest: dict[str, Any]) -> tuple[dict[
 
 
 def _context_material_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in records if item.get(key)}
+
+
+def _handoff_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("handoff_trace")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    prompt = trace.get("prompt")
+    metadata = prompt.get("metadata") if isinstance(prompt, dict) else {}
+    raw = metadata.get("handoff") if isinstance(metadata, dict) else {}
+    records = tuple(_handoff_record(item) for item in _dict_items(raw))
+    records = tuple(record for record in records if record.get("status"))
+    if not records:
+        return {}
+    return _handoff_trace_from_records(records)
+
+
+def _handoff_trace_from_records(records: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    selected = tuple(item for item in records if item.get("status") == "selected")
+    denied = tuple(item for item in records if item.get("status") == "denied")
+    not_found = tuple(item for item in records if item.get("status") == "not_found")
+    return {
+        "schema_version": "agent-core-handoff-trace/v1",
+        "record_count": len(records),
+        "selected_count": len(selected),
+        "denied_count": len(denied),
+        "not_found_count": len(not_found),
+        "statuses": _count_values(records, "status"),
+        "selected_sessions": _count_values(records, "selected_session"),
+        "source_sessions": _count_values(records, "source_session"),
+        "target_sessions": _count_values(records, "target_session"),
+        "records": list(records),
+    }
+
+
+def _handoff_record(record: dict[str, Any]) -> dict[str, Any]:
+    request = record.get("request") if isinstance(record.get("request"), dict) else {}
+    candidates = tuple(_dict_items(record.get("candidates")))
+    selected_session = str(record.get("selected_session") or "")
+    status = str(record.get("status") or "")
+    if not status and selected_session:
+        status = "selected"
+    if not status:
+        return {}
+    return {
+        "status": status,
+        "selected_session": selected_session,
+        "reason": str(record.get("reason") or ""),
+        "source_session": str(request.get("source_session") or ""),
+        "target_session": str(request.get("target_session") or ""),
+        "task_bytes": len(str(request.get("task") or "").encode("utf-8")),
+        "required_tags": list(request.get("required_tags") or ()),
+        "required_tools": list(request.get("required_tools") or ()),
+        "required_skills": list(request.get("required_skills") or ()),
+        "candidate_count": len(candidates),
+        "candidate_sessions": [
+            str(candidate.get("session_name") or "")
+            for candidate in candidates
+            if candidate.get("session_name")
+        ],
+        "metadata": dict(record.get("metadata") if isinstance(record.get("metadata"), dict) else {}),
+    }
+
+
+def _handoff_records(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("records")))
+
+
+def _handoff_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in records if item.get(key)}
 
 

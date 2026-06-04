@@ -24,6 +24,7 @@ from agent_core.trace import (
     ApprovalTrace,
     ContextInjectionTrace,
     ContextMaterialSelectionTrace,
+    HandoffTrace,
     InMemoryRunTraceStore,
     MarkdownRunTraceStore,
     MCPCenterTrace,
@@ -215,6 +216,33 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         },
         prompt={
             "metadata": {
+                "handoff": {
+                    "schema_version": "agent-core-handoff-decision/v1",
+                    "status": "selected",
+                    "selected_session": "code-reviewer",
+                    "reason": "",
+                    "request": {
+                        "schema_version": "agent-core-handoff-request/v1",
+                        "task": "review patch",
+                        "source_session": "planner",
+                        "target_session": "",
+                        "required_tags": ["review"],
+                        "required_tools": ["diff"],
+                        "required_skills": [],
+                        "metadata": {},
+                    },
+                    "candidates": [
+                        {
+                            "schema_version": "agent-core-handoff-spec/v1",
+                            "session_name": "code-reviewer",
+                            "tags": ["code", "review"],
+                            "tools": ["diff"],
+                            "skills": ["review"],
+                            "priority": 5,
+                            "enabled": True,
+                        }
+                    ],
+                },
                 "trim": {"target_bytes": 900},
                 "context_injections": [
                     {
@@ -339,6 +367,9 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         "score_below_threshold": 1,
         "selected": 1,
     }
+    assert manifest["summary"]["handoff_record_count"] == 1
+    assert manifest["summary"]["handoff_selected_count"] == 1
+    assert manifest["handoff_trace"]["selected_sessions"] == {"code-reviewer": 1}
     assert manifest["summary"]["memory_governance_decision_count"] == 2
     assert manifest["summary"]["memory_governance_denied_count"] == 1
     assert manifest["summary"]["memory_governance_rewritten_count"] == 1
@@ -647,6 +678,43 @@ def test_context_material_selection_trace_can_fallback_to_selected_injections() 
     assert trace["dropped_count"] == 0
     assert trace["targets"] == {"timeline_open": 1}
     assert trace["selections"][0]["score"] == 314.5
+
+
+def test_handoff_trace_summarizes_prompt_handoff_decisions() -> None:
+    trace = HandoffTrace.from_prompt(
+        {
+            "metadata": {
+                "handoff": [
+                    {
+                        "status": "selected",
+                        "selected_session": "code-reviewer",
+                        "request": {
+                            "task": "review patch",
+                            "source_session": "planner",
+                            "required_tags": ["review"],
+                            "required_tools": ["diff"],
+                        },
+                        "candidates": [{"session_name": "code-reviewer"}],
+                    },
+                    {
+                        "status": "denied",
+                        "selected_session": "",
+                        "reason": "target session is disabled",
+                        "request": {"task": "ops task", "source_session": "planner"},
+                    },
+                ]
+            }
+        }
+    ).manifest()
+
+    assert trace["schema_version"] == "agent-core-handoff-trace/v1"
+    assert trace["record_count"] == 2
+    assert trace["selected_count"] == 1
+    assert trace["denied_count"] == 1
+    assert trace["statuses"] == {"denied": 1, "selected": 1}
+    assert trace["selected_sessions"] == {"code-reviewer": 1}
+    assert trace["source_sessions"] == {"planner": 2}
+    assert trace["records"][0]["candidate_sessions"] == ["code-reviewer"]
 
 
 def test_memory_governance_trace_summarizes_session_memory_decisions() -> None:

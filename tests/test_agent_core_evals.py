@@ -134,6 +134,35 @@ def _trace_manifest() -> dict[str, object]:
         },
         "prompt": {
             "metadata": {
+                "handoff": {
+                    "schema_version": "agent-core-handoff-decision/v1",
+                    "status": "selected",
+                    "selected_session": "code-reviewer",
+                    "reason": "",
+                    "request": {
+                        "schema_version": "agent-core-handoff-request/v1",
+                        "task": "review patch",
+                        "source_session": "planner",
+                        "target_session": "",
+                        "required_tags": ["review"],
+                        "required_tools": ["diff"],
+                        "required_skills": [],
+                        "metadata": {"ticket": "T-1"},
+                    },
+                    "candidates": [
+                        {
+                            "schema_version": "agent-core-handoff-spec/v1",
+                            "session_name": "code-reviewer",
+                            "description": "Review code",
+                            "tags": ["code", "review"],
+                            "tools": ["diff"],
+                            "skills": ["review"],
+                            "priority": 5,
+                            "enabled": True,
+                        }
+                    ],
+                    "metadata": {},
+                },
                 "context_injections": [
                     {
                         "name": "memory_recall",
@@ -580,6 +609,7 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "run_finished",
         "tool_started",
         "tool_finished",
+        "handoff_selected",
         "context_material_selection_applied",
         "prompt_bucket_budget_applied",
         "prompt_semantic_trim_applied",
@@ -598,27 +628,29 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "provider_call_completed",
     )
     assert manifest["steps"][2]["source"] == "event_log"
-    assert manifest["steps"][4]["source"] == "context_material_selection"
-    assert manifest["steps"][4]["payload"]["selected_names"] == ["auth_trace"]
-    assert manifest["steps"][5]["source"] == "prompt_bucket_budget"
-    assert manifest["steps"][6]["source"] == "prompt_semantic_trim"
-    assert manifest["steps"][6]["payload"]["roles"] == ["dynamic", "timeline_open"]
-    assert manifest["steps"][6]["payload"]["dropped_units"] == 3
-    assert manifest["steps"][8]["source"] == "mcp_center"
-    assert manifest["steps"][8]["payload"]["server_name"] == "fs"
-    assert manifest["steps"][10]["source"] == "skill_center"
-    assert manifest["steps"][11]["payload"]["view_id"] == "review:rules.md:abcd"
-    assert manifest["steps"][12]["source"] == "approval_trace"
-    assert manifest["steps"][12]["payload"]["subject"] == "tool:deploy"
-    assert manifest["steps"][14]["source"] == "approval_trace"
-    assert manifest["steps"][15]["source"] == "artifact_trace"
-    assert manifest["steps"][15]["payload"]["artifact_id"] == "artifact-1"
-    assert manifest["steps"][16]["source"] == "structured_output"
-    assert manifest["steps"][16]["payload"]["error"] == "$.risk is required"
+    assert manifest["steps"][4]["source"] == "handoff_trace"
+    assert manifest["steps"][4]["payload"]["selected_session"] == "code-reviewer"
+    assert manifest["steps"][5]["source"] == "context_material_selection"
+    assert manifest["steps"][5]["payload"]["selected_names"] == ["auth_trace"]
+    assert manifest["steps"][6]["source"] == "prompt_bucket_budget"
+    assert manifest["steps"][7]["source"] == "prompt_semantic_trim"
+    assert manifest["steps"][7]["payload"]["roles"] == ["dynamic", "timeline_open"]
+    assert manifest["steps"][7]["payload"]["dropped_units"] == 3
+    assert manifest["steps"][9]["source"] == "mcp_center"
+    assert manifest["steps"][9]["payload"]["server_name"] == "fs"
+    assert manifest["steps"][11]["source"] == "skill_center"
+    assert manifest["steps"][12]["payload"]["view_id"] == "review:rules.md:abcd"
+    assert manifest["steps"][13]["source"] == "approval_trace"
+    assert manifest["steps"][13]["payload"]["subject"] == "tool:deploy"
+    assert manifest["steps"][15]["source"] == "approval_trace"
+    assert manifest["steps"][16]["source"] == "artifact_trace"
+    assert manifest["steps"][16]["payload"]["artifact_id"] == "artifact-1"
     assert manifest["steps"][17]["source"] == "structured_output"
-    assert manifest["steps"][17]["payload"]["schema_name"] == "risk_summary"
-    assert manifest["steps"][18]["source"] == "provider"
-    assert manifest["steps"][18]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][17]["payload"]["error"] == "$.risk is required"
+    assert manifest["steps"][18]["source"] == "structured_output"
+    assert manifest["steps"][18]["payload"]["schema_name"] == "risk_summary"
+    assert manifest["steps"][19]["source"] == "provider"
+    assert manifest["steps"][19]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1906,6 +1938,63 @@ def test_trace_eval_reports_storage_backend_contract_failures() -> None:
     assert {issue.code for issue in missing.issues} == {"storage_backends_missing"}
 
 
+def test_trace_eval_validates_handoff_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_handoff=True,
+            required_handoff_statuses=("selected",),
+            required_handoff_selected_sessions=("code-reviewer",),
+            required_handoff_source_sessions=("planner",),
+            max_handoff_denied=0,
+            max_handoff_not_found=0,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_handoff"] is True
+    assert report.summary["handoff_record_count"] == 1
+    assert report.summary["handoff_statuses"] == ["selected"]
+    assert report.summary["handoff_selected_sessions"] == ["code-reviewer"]
+    assert report.summary["handoff_source_sessions"] == ["planner"]
+    assert report.metadata["spec"]["require_handoff"] is True
+
+
+def test_trace_eval_reports_handoff_contract_failures() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            required_handoff_statuses=("denied",),
+            required_handoff_selected_sessions=("ops",),
+            required_handoff_source_sessions=("scheduler",),
+            max_handoff_denied=-1,
+            max_handoff_not_found=-1,
+        ),
+    )
+    missing_trace = _trace_manifest()
+    missing_prompt = dict(missing_trace["prompt"])
+    missing_metadata = dict(missing_prompt.get("metadata") or {})
+    missing_metadata.pop("handoff", None)
+    missing_prompt["metadata"] = missing_metadata
+    missing_trace["prompt"] = missing_prompt
+    missing = DefaultTraceEvaluator().evaluate(
+        missing_trace,
+        TraceEvalSpec(require_handoff=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_handoff_status",
+        "missing_handoff_selected_session",
+        "missing_handoff_source_session",
+        "handoff_denied_limit_exceeded",
+        "handoff_not_found_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"handoff_missing"}
+
+
 def test_trace_eval_validates_context_injection_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
@@ -2279,7 +2368,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 20
+    assert report.summary["baseline_step_count"] == 21
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -2310,6 +2399,7 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "run_finished",
         "tool_finished",
         "tool_started",
+        "handoff_selected",
         "context_material_selection_applied",
         "prompt_bucket_budget_applied",
         "prompt_semantic_trim_applied",
