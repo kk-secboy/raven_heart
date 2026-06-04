@@ -199,6 +199,15 @@ request timeouts, interrupt metadata, schedule snapshots, event logs, and trace
 eval. Distributed schedulers, leases, worker process control, and UI controls
 remain runtime responsibilities.
 
+`agent_core.run_agent_core_native_tool_acceptance()` runs deterministic
+provider-native tool-call checks. It verifies that `AgentRunner` sends native
+tool contracts, receives provider tool calls, executes the referenced tool
+through the SDK tool runtime, returns a provider-neutral `role=tool` message,
+preserves `provider_tool_call` metadata in the journal, and passes trace eval
+for provider tool calls/results. Provider-specific HTTP payloads, credentials,
+deployment names, and SDK clients remain runtime/provider-adapter
+responsibilities.
+
 `agent_core.run_agent_core_provider_acceptance()` runs a deterministic provider
 compatibility matrix. It checks provider routing for text, multimodal,
 structured-output, and native-tool requests; OpenAI-compatible codec
@@ -233,8 +242,8 @@ flows remain outside the SDK.
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
-lifecycle acceptance, provider acceptance, storage acceptance, recovery
-acceptance, and resume acceptance, then returns one
+lifecycle acceptance, native-tool acceptance, provider acceptance, storage
+acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
 
@@ -973,6 +982,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK external backend acceptance harness | MVP implemented |
 | SDK guardrail acceptance harness | MVP implemented |
 | SDK lifecycle acceptance harness | MVP implemented |
+| SDK native tool acceptance harness | MVP implemented |
 | SDK aggregate validation suite | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |

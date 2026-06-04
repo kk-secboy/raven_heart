@@ -163,12 +163,21 @@ when `allow_terminal=False`. The SDK owns resume tokens, plans, prompt-safe
 resume manifests, and the acceptance report; runtimes own distributed worker
 selection, UI recovery flows, and product workflow state.
 
+`AgentCoreNativeToolAcceptanceHarness` adds the provider-native tool-call gate.
+It runs the real `AgentRunner` native-tool path against deterministic provider
+responses, verifies provider tool contracts, executes the provider tool call
+through the SDK tool runtime, returns a provider-neutral `role=tool` message,
+preserves the originating `provider_tool_call` metadata in the journal, and
+requires trace eval coverage for provider tool calls and provider tool results.
+The SDK owns the provider-neutral loop contract; host runtimes own vendor HTTP
+payloads, credentials, deployment routing, and concrete provider adapters.
+
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
-lifecycle acceptance, provider acceptance, storage acceptance, recovery
-acceptance, and resume acceptance, then returns one
+lifecycle acceptance, native-tool acceptance, provider acceptance, storage
+acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.

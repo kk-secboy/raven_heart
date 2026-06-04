@@ -134,6 +134,12 @@ from agent_core.lifecycle_acceptance import (
     AgentCoreLifecycleAcceptanceReport,
     run_agent_core_lifecycle_acceptance,
 )
+from agent_core.native_tool_acceptance import (
+    AgentCoreNativeToolAcceptanceHarness,
+    AgentCoreNativeToolAcceptanceIssue,
+    AgentCoreNativeToolAcceptanceReport,
+    run_agent_core_native_tool_acceptance,
+)
 from agent_core.orchestration_acceptance import (
     AgentCoreOrchestrationAcceptanceHarness,
     AgentCoreOrchestrationAcceptanceIssue,
@@ -575,6 +581,9 @@ __all__ = [
     "AgentCoreLifecycleAcceptanceHarness",
     "AgentCoreLifecycleAcceptanceIssue",
     "AgentCoreLifecycleAcceptanceReport",
+    "AgentCoreNativeToolAcceptanceHarness",
+    "AgentCoreNativeToolAcceptanceIssue",
+    "AgentCoreNativeToolAcceptanceReport",
     "AgentCoreOrchestrationAcceptanceHarness",
     "AgentCoreOrchestrationAcceptanceIssue",
     "AgentCoreOrchestrationAcceptanceReport",
@@ -975,6 +984,7 @@ __all__ = [
     "run_agent_core_external_backend_acceptance",
     "run_agent_core_guardrail_acceptance",
     "run_agent_core_lifecycle_acceptance",
+    "run_agent_core_native_tool_acceptance",
     "run_agent_core_orchestration_acceptance",
     "run_agent_core_provider_acceptance",
     "run_agent_core_recovery_acceptance",
