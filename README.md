@@ -119,6 +119,9 @@ agent_core never imports runtime
 - `AgentRunStorePort` for manager-level queued/running/completed state.
 - `InMemoryAgentRunStore`, `SQLiteAgentRunStore`, and `MarkdownAgentRunStore`
   for lightweight run state persistence.
+- `AgentRunQuery` gives run stores and managers the same portable filter
+  surface for run keys, sessions, statuses, metadata equality, limits, and
+  reverse ordering.
 - `AgentManagerConcurrencyPolicy` for single-process active-run capacity limits.
 - `AgentManagerConcurrencyPolicy.reject_when_full=False` for SDK-managed
   pending queues when local capacity is full.
@@ -755,6 +758,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Trace correlation | MVP implemented |
 | Trace observability manifests | MVP implemented |
 | Run trace query | MVP implemented |
+| Manager run state query | MVP implemented |
 | Lifecycle hook contracts | MVP implemented |
 | Lifecycle hook trace/eval contracts | MVP implemented |
 | Run preflight guardrails | MVP implemented |

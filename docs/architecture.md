@@ -196,6 +196,11 @@ token or consuming later capacity. Restored queued, running, and cancelling
 manager records are marked `interrupted` with `restored_from_status` metadata
 because the SDK run store intentionally persists state manifests, not executable
 request objects.
+`AgentRunQuery` is the portable retrieval contract for manager-run state. The
+built-in in-memory, SQLite, and Markdown stores support run-key, session,
+status, metadata-equality, limit, and reverse-order filters. Runtime-owned PG,
+workflow database, or distributed scheduler stores can implement the same port
+without changing `AgentSessionManager` callers.
 `AgentManagerScheduleSnapshot` and `AgentManagerCapacityStatus` expose
 provider-neutral schedule/capacity audit manifests so runtimes can inspect
 availability, active claims, pending queues, interrupted restored runs, and

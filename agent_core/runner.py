@@ -281,6 +281,41 @@ class ManagedAgentRun:
 
 
 @dataclass(frozen=True)
+class AgentRunQuery:
+    """Portable manager-run query for SDK and runtime-owned run stores."""
+
+    run_keys: tuple[str, ...] = ()
+    session_names: tuple[str, ...] = ()
+    statuses: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+    limit: int | None = None
+    reverse: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "run_keys", tuple(str(item) for item in self.run_keys if str(item)))
+        object.__setattr__(
+            self,
+            "session_names",
+            tuple(str(item) for item in self.session_names if str(item)),
+        )
+        object.__setattr__(self, "statuses", tuple(str(item) for item in self.statuses if str(item)))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+        if self.limit is not None:
+            object.__setattr__(self, "limit", max(0, int(self.limit)))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-run-query/v1",
+            "run_keys": list(self.run_keys),
+            "session_names": list(self.session_names),
+            "statuses": list(self.statuses),
+            "metadata": dict(self.metadata),
+            "limit": self.limit,
+            "reverse": self.reverse,
+        }
+
+
+@dataclass(frozen=True)
 class AgentManagerConcurrencyPolicy:
     max_active_runs: int | None = None
     max_active_runs_per_session: int = 1
@@ -401,6 +436,9 @@ class AgentRunStorePort(Protocol):
     def list(self) -> tuple[ManagedAgentRun, ...]:
         """Return all known runs."""
 
+    def query(self, query: AgentRunQuery) -> tuple[ManagedAgentRun, ...]:
+        """Return runs matching a portable query."""
+
     def delete(self, run_key: str) -> bool:
         """Delete one run state record."""
 
@@ -421,13 +459,20 @@ class InMemoryAgentRunStore:
     def list(self) -> tuple[ManagedAgentRun, ...]:
         return tuple(sorted(self._runs.values(), key=lambda item: item.run_key))
 
+    def query(self, query: AgentRunQuery) -> tuple[ManagedAgentRun, ...]:
+        return _query_managed_runs(self.list(), query)
+
     def delete(self, run_key: str) -> bool:
         return self._runs.pop(run_key, None) is not None
 
     def manifest(self) -> dict[str, Any]:
         return {
             "schema_version": "agent-core-in-memory-run-store/v1",
-            "backend": storage_backend_manifest(role="run_state", kind="in_memory"),
+            "backend": storage_backend_manifest(
+                role="run_state",
+                kind="in_memory",
+                capabilities=("save", "get", "list", "query", "delete"),
+            ),
             "run_count": len(self._runs),
         }
 
@@ -504,6 +549,9 @@ class SQLiteAgentRunStore:
             ).fetchall()
         return tuple(_managed_run_from_row(row) for row in rows)
 
+    def query(self, query: AgentRunQuery) -> tuple[ManagedAgentRun, ...]:
+        return _query_managed_runs(self.list(), query)
+
     def delete(self, run_key: str) -> bool:
         with sqlite3.connect(self.path) as conn:
             cursor = conn.execute("DELETE FROM managed_runs WHERE run_key = ?", (run_key,))
@@ -518,7 +566,7 @@ class SQLiteAgentRunStore:
                 role="run_state",
                 kind="sqlite",
                 location=str(self.path),
-                capabilities=("save", "get", "list", "delete"),
+                capabilities=("save", "get", "list", "query", "delete"),
             ),
             "path": str(self.path),
             "run_count": int(count),
@@ -550,6 +598,9 @@ class MarkdownAgentRunStore:
             runs.append(_managed_run_from_payload(_decode_run_payload(match.group("payload"))))
         return tuple(sorted(runs, key=lambda item: item.run_key))
 
+    def query(self, query: AgentRunQuery) -> tuple[ManagedAgentRun, ...]:
+        return _query_managed_runs(self.list(), query)
+
     def delete(self, run_key: str) -> bool:
         current = self.list()
         runs = tuple(run for run in current if run.run_key != run_key)
@@ -565,7 +616,7 @@ class MarkdownAgentRunStore:
                 role="run_state",
                 kind="markdown",
                 location=str(self.path),
-                capabilities=("save", "get", "list", "delete"),
+                capabilities=("save", "get", "list", "query", "delete"),
             ),
             "path": str(self.path),
             "run_count": len(self.list()),
@@ -1325,6 +1376,9 @@ class AgentSessionManager:
     def runs(self) -> tuple[ManagedAgentRun, ...]:
         return tuple(sorted(self._runs.values(), key=lambda item: item.run_key))
 
+    def query_runs(self, query: AgentRunQuery) -> tuple[ManagedAgentRun, ...]:
+        return _query_managed_runs(self.runs(), query)
+
     def active_runs(self) -> tuple[ManagedAgentRun, ...]:
         active_keys = {
             run_key
@@ -1950,6 +2004,34 @@ def _managed_run_from_payload(payload: dict[str, Any]) -> ManagedAgentRun:
         error=str(payload.get("error") or ""),
         metadata=dict(metadata) if isinstance(metadata, dict) else {},
     )
+
+
+def _query_managed_runs(
+    runs: tuple[ManagedAgentRun, ...],
+    query: AgentRunQuery,
+) -> tuple[ManagedAgentRun, ...]:
+    results = []
+    for run in runs:
+        if query.run_keys and run.run_key not in query.run_keys:
+            continue
+        if query.session_names and run.session_name not in query.session_names:
+            continue
+        if query.statuses and run.status not in query.statuses:
+            continue
+        if not _run_metadata_matches(run.metadata, query.metadata):
+            continue
+        results.append(run)
+    results = sorted(results, key=lambda item: item.run_key, reverse=query.reverse)
+    if query.limit is not None:
+        results = results[: query.limit]
+    return tuple(results)
+
+
+def _run_metadata_matches(metadata: dict[str, Any], expected: dict[str, Any]) -> bool:
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            return False
+    return True
 
 
 def _encode_run_payload(payload: dict[str, Any]) -> str:

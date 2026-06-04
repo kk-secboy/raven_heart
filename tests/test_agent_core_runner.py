@@ -46,6 +46,7 @@ from agent_core.runner import (
     AgentManagerConcurrencyPolicy,
     AgentResumeRequest,
     AgentRunner,
+    AgentRunQuery,
     AgentRunRequest,
     AgentSession,
     AgentSessionManager,
@@ -1110,6 +1111,81 @@ async def test_sqlite_agent_run_store_persists_manager_runs_across_instances(tmp
     assert restored.manifest()["run_store"]["schema_version"] == "agent-core-sqlite-run-store/v1"
     assert run.status == "completed"
     assert run.result_run_id == outcome.result.run_id
+
+
+def test_agent_run_stores_query_by_session_status_metadata_and_limit(tmp_path) -> None:
+    runs = (
+        ManagedAgentRun(
+            run_key="run-a",
+            session_name="alpha",
+            task="first",
+            status="completed",
+            metadata={"tenant": "acme", "priority": "low"},
+        ),
+        ManagedAgentRun(
+            run_key="run-b",
+            session_name="alpha",
+            task="second",
+            status="running",
+            metadata={"tenant": "acme", "priority": "high"},
+        ),
+        ManagedAgentRun(
+            run_key="run-c",
+            session_name="beta",
+            task="third",
+            status="completed",
+            metadata={"tenant": "other", "priority": "high"},
+        ),
+    )
+    stores = (
+        InMemoryAgentRunStore(),
+        SQLiteAgentRunStore(tmp_path / "runs-query.sqlite"),
+        MarkdownAgentRunStore(tmp_path / "runs-query.md"),
+    )
+    for store in stores:
+        for run in runs:
+            store.save(run)
+
+        high_acme = store.query(
+            AgentRunQuery(
+                session_names=("alpha",),
+                metadata={"tenant": "acme", "priority": "high"},
+            )
+        )
+        latest_two = store.query(AgentRunQuery(limit=2, reverse=True))
+        completed = store.query(AgentRunQuery(statuses=("completed",)))
+
+        assert [run.run_key for run in high_acme] == ["run-b"]
+        assert [run.run_key for run in latest_two] == ["run-c", "run-b"]
+        assert [run.run_key for run in completed] == ["run-a", "run-c"]
+        assert "query" in store.manifest()["backend"]["capabilities"]
+
+
+def test_agent_session_manager_query_runs_uses_current_manager_state() -> None:
+    manager = AgentSessionManager(
+        run_store=InMemoryAgentRunStore(
+            (
+                ManagedAgentRun(
+                    run_key="run-a",
+                    session_name="alpha",
+                    task="first",
+                    status="queued",
+                    metadata={"tenant": "acme"},
+                ),
+                ManagedAgentRun(
+                    run_key="run-b",
+                    session_name="beta",
+                    task="second",
+                    status="completed",
+                    metadata={"tenant": "acme"},
+                ),
+            )
+        )
+    )
+
+    matches = manager.query_runs(AgentRunQuery(metadata={"tenant": "acme"}, reverse=True))
+
+    assert [run.run_key for run in matches] == ["run-b", "run-a"]
 
 
 def test_markdown_agent_run_store_marks_restored_active_runs_interrupted(tmp_path) -> None:
