@@ -234,6 +234,12 @@ provider calls. Built-in checks validate request-local requirements such as
 task-byte limits, required tools/actions/skills/MCP servers, and memory
 availability. Runtime-owned tenant, RBAC, quota, ticket, or deployment gates can
 mount additional checks without changing `AgentRunner`.
+Storage backend requirements use the same bus: a run request can provide
+`StorageBackendRequirement` entries, the runner builds a catalog from session
+component manifests, records a `StorageBackendPreflightReport`, and blocks
+before provider calls if required PG/vector/graph/SQLite/Markdown backends are
+not ready. The check remains adapter-free because it only reads prompt-safe
+manifests.
 
 `HandoffSpec`, `HandoffRequest`, `HandoffRouter`, and `MultiAgentCoordinator`
 provide a provider-neutral multi-agent handoff contract. The core can advertise

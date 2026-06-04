@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+from agent_core.backends import StorageBackendRequirement
+
 
 PreflightSeverity = Literal["info", "warning", "error"]
 PreflightStatus = Literal["passed", "blocked"]
@@ -18,6 +20,7 @@ class AgentRunPreflightRequirements:
     required_skills: tuple[str, ...] = ()
     required_mcp_servers: tuple[str, ...] = ()
     require_memory: bool = False
+    storage_backend_requirements: tuple[StorageBackendRequirement, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def manifest(self) -> dict[str, Any]:
@@ -29,6 +32,9 @@ class AgentRunPreflightRequirements:
             "required_skills": list(self.required_skills),
             "required_mcp_servers": list(self.required_mcp_servers),
             "require_memory": self.require_memory,
+            "storage_backend_requirements": [
+                requirement.manifest() for requirement in self.storage_backend_requirements
+            ],
             "metadata": dict(self.metadata),
         }
 
@@ -45,6 +51,7 @@ class AgentRunPreflightRequest:
     available_skills: tuple[str, ...] = ()
     available_mcp_servers: tuple[str, ...] = ()
     memory_enabled: bool = False
+    storage_backend_preflight: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -62,6 +69,7 @@ class AgentRunPreflightRequest:
             "available_skills": list(self.available_skills),
             "available_mcp_servers": list(self.available_mcp_servers),
             "memory_enabled": self.memory_enabled,
+            "storage_backend_preflight": dict(self.storage_backend_preflight),
             "metadata": dict(self.metadata),
         }
 
@@ -229,6 +237,37 @@ class StaticRunPreflightCheck:
                     source=self.name,
                 )
             )
+        if requirements.storage_backend_requirements:
+            if not request.storage_backend_preflight:
+                issues.append(
+                    AgentRunPreflightIssue(
+                        "error",
+                        "storage_backend_preflight_missing",
+                        "run requires storage backend preflight but no report was provided",
+                        source=self.name,
+                    )
+                )
+            elif request.storage_backend_preflight.get("ready") is not True:
+                issues.append(
+                    AgentRunPreflightIssue(
+                        "error",
+                        "storage_backend_preflight_not_ready",
+                        "run storage backend preflight is not ready",
+                        source=self.name,
+                        metadata={
+                            "blocking_count": int(
+                                request.storage_backend_preflight.get("blocking_count") or 0
+                            ),
+                            "missing_roles": list(
+                                request.storage_backend_preflight.get("missing_roles") or ()
+                            ),
+                            "blocking_reasons": list(
+                                request.storage_backend_preflight.get("blocking_reasons") or ()
+                            ),
+                            "report": dict(request.storage_backend_preflight),
+                        },
+                    )
+                )
         return tuple(issues)
 
 

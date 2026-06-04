@@ -18,7 +18,7 @@ from uuid import uuid4
 from agent_core.actions import ActionRegistry, ActionVerifierPort
 from agent_core.approvals import ApprovalResumeContext, ApprovalStorePort, NullApprovalStore
 from agent_core.artifacts import ArtifactStorePort
-from agent_core.backends import storage_backend_manifest
+from agent_core.backends import storage_backend_catalog_from_components, storage_backend_manifest
 from agent_core.capabilities import CapabilityCatalog, CapabilityQuery
 from agent_core.config import AgentProfile, RuntimeBudget
 from agent_core.context import (
@@ -835,17 +835,30 @@ class AgentRunner:
         return await self.session.preflight.check(self._preflight_request(request))
 
     def _preflight_request(self, request: AgentRunRequest) -> AgentRunPreflightRequest:
+        requirements = request.preflight_requirements or AgentRunPreflightRequirements()
         return AgentRunPreflightRequest(
             task=request.task,
             session_name=self.session.profile.name,
-            requirements=request.preflight_requirements or AgentRunPreflightRequirements(),
+            requirements=requirements,
             available_actions=tuple(spec.name for spec in self.session.actions.specs()),
             available_tools=tuple(spec.name for spec in self.session.tools.specs() if spec.enabled),
             available_skills=_available_skill_names(self.session.skills),
             available_mcp_servers=_available_mcp_server_names(self.session.mcp),
             memory_enabled=bool(self.session.profile.capabilities.memory_enabled),
+            storage_backend_preflight=self._storage_backend_preflight(requirements),
             metadata={"request_metadata": dict(request.metadata)},
         )
+
+    def _storage_backend_preflight(
+        self,
+        requirements: AgentRunPreflightRequirements,
+    ) -> dict[str, Any]:
+        if not requirements.storage_backend_requirements:
+            return {}
+        return storage_backend_catalog_from_components(self.session.manifest()).preflight(
+            requirements.storage_backend_requirements,
+            metadata={"session_name": self.session.profile.name},
+        ).manifest()
 
     async def _preflight_blocked_outcome(
         self,

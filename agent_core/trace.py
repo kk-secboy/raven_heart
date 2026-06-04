@@ -768,6 +768,7 @@ class AgentRunTraceBundle:
     resume: dict[str, Any] = field(default_factory=dict)
     resume_plan: dict[str, Any] = field(default_factory=dict)
     preflight: dict[str, Any] = field(default_factory=dict)
+    storage_backend_preflight: dict[str, Any] = field(default_factory=dict)
     timeline_reduction: dict[str, Any] = field(default_factory=dict)
     capability_discovery: dict[str, Any] = field(default_factory=dict)
     memory_search: dict[str, Any] = field(default_factory=dict)
@@ -822,6 +823,9 @@ class AgentRunTraceBundle:
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
+        storage_backend_preflight = self.storage_backend_preflight or _storage_backend_preflight(
+            self.preflight
+        )
         prompt_bucket_budget = _prompt_bucket_budget(self.prompt)
         prompt_semantic_trim = _prompt_semantic_trim(self.prompt)
         prompt_budget = _prompt_budget(self.prompt)
@@ -910,6 +914,13 @@ class AgentRunTraceBundle:
                 "external_storage_backend_count": int(
                     storage_backends.get("external_backend_count") or 0
                 ),
+                "has_storage_backend_preflight": bool(storage_backend_preflight),
+                "storage_backend_preflight_ready": bool(
+                    storage_backend_preflight.get("ready")
+                ),
+                "storage_backend_preflight_blocking_count": int(
+                    storage_backend_preflight.get("blocking_count") or 0
+                ),
                 "context_injection_count": int(context_injections.get("injection_count") or 0),
                 "context_injection_trimmed_count": int(
                     context_injections.get("trimmed_count") or 0
@@ -978,6 +989,7 @@ class AgentRunTraceBundle:
             "resume": dict(self.resume),
             "resume_plan": dict(self.resume_plan),
             "preflight": dict(self.preflight),
+            "storage_backend_preflight": dict(storage_backend_preflight),
             "timeline_reduction": dict(self.timeline_reduction),
             "capability_discovery": dict(self.capability_discovery),
             "memory_search": dict(self.memory_search),
@@ -1315,6 +1327,20 @@ def _prompt_semantic_trim(prompt: dict[str, Any]) -> dict[str, Any]:
     metadata = prompt.get("metadata") if isinstance(prompt.get("metadata"), dict) else {}
     semantic_trim = metadata.get("semantic_trim") if isinstance(metadata, dict) else {}
     return dict(semantic_trim) if isinstance(semantic_trim, dict) else {}
+
+
+def _storage_backend_preflight(preflight: dict[str, Any]) -> dict[str, Any]:
+    request = preflight.get("request") if isinstance(preflight, dict) else {}
+    if isinstance(request, dict):
+        report = request.get("storage_backend_preflight")
+        if isinstance(report, dict) and report:
+            return dict(report)
+    metadata = preflight.get("metadata") if isinstance(preflight, dict) else {}
+    if isinstance(metadata, dict):
+        report = metadata.get("storage_backend_preflight")
+        if isinstance(report, dict) and report:
+            return dict(report)
+    return {}
 
 
 class RunTraceStorePort(Protocol):

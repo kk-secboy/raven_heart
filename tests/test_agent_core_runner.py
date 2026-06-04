@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from agent_core.approvals import ApprovalDecisionRecord, ApprovalResumeContext, InMemoryApprovalStore
+from agent_core.backends import StorageBackendRequirement
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import (
     AgentContextPack,
@@ -183,6 +184,111 @@ async def test_agent_runner_blocks_before_provider_when_preflight_fails() -> Non
     ]
     assert saved is not None
     assert saved["run"]["status"] == "denied"
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_records_ready_storage_backend_preflight() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    memory = MemoryCenter(default_store="tenant-memory")
+    memory.register(
+        "tenant-memory",
+        InMemoryMemoryStore(),
+        backend_kind="postgres",
+        core_builtin=False,
+        namespaces=("tenant-a",),
+        supports_vector=True,
+        supports_graph=True,
+    )
+    context = ContextMaterialCenter(default_store="tenant-context")
+    context.register(
+        "tenant-context",
+        InMemoryContextMaterialStore(),
+        backend_kind="vector",
+        core_builtin=False,
+        namespace="tenant-a",
+        supports_vector=True,
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="backend-ready"),
+        provider=provider,
+        tools=ToolRegistry(),
+        memory=memory,
+        context_material_store=context,
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="scan target",
+            preflight_requirements=AgentRunPreflightRequirements(
+                storage_backend_requirements=(
+                    StorageBackendRequirement(
+                        role="memory",
+                        allowed_kinds=("postgres", "vector"),
+                        required_capabilities=("semantic", "vector", "graph"),
+                        namespace="tenant-a",
+                    ),
+                    StorageBackendRequirement(
+                        role="context_material",
+                        allowed_kinds=("vector", "graph"),
+                        required_capabilities=("semantic", "vector"),
+                        namespace="tenant-a",
+                    ),
+                )
+            ),
+        )
+    )
+
+    assert outcome.result.status == "completed"
+    assert provider.requests
+    assert outcome.preflight_manifest["status"] == "passed"
+    assert outcome.preflight_manifest["request"]["storage_backend_preflight"]["ready"] is True
+    assert outcome.trace_manifest["summary"]["has_storage_backend_preflight"] is True
+    assert outcome.trace_manifest["summary"]["storage_backend_preflight_ready"] is True
+    assert outcome.trace_manifest["storage_backend_preflight"]["selected_roles"] == [
+        "memory",
+        "context_material",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_blocks_when_storage_backend_preflight_is_not_ready() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    memory = MemoryCenter(default_store="local-memory")
+    memory.register("local-memory", InMemoryMemoryStore(), backend_kind="in_memory")
+    session = AgentSession(
+        profile=AgentProfile(name="backend-blocked"),
+        provider=provider,
+        tools=ToolRegistry(),
+        memory=memory,
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="scan target",
+            preflight_requirements=AgentRunPreflightRequirements(
+                storage_backend_requirements=(
+                    StorageBackendRequirement(
+                        role="memory",
+                        allowed_kinds=("postgres", "vector"),
+                        required_capabilities=("semantic", "vector"),
+                    ),
+                )
+            ),
+        )
+    )
+
+    assert outcome.result.status == "denied"
+    assert provider.requests == []
+    assert outcome.preflight_manifest["status"] == "blocked"
+    assert outcome.preflight_manifest["blocking_codes"] == [
+        "storage_backend_preflight_not_ready"
+    ]
+    report = outcome.preflight_manifest["request"]["storage_backend_preflight"]
+    assert report["ready"] is False
+    assert report["blocking_count"] == 1
+    assert "kind_not_allowed" in report["blocking_reasons"]
+    assert outcome.trace_manifest["storage_backend_preflight"]["ready"] is False
+    assert outcome.trace_manifest["summary"]["storage_backend_preflight_blocking_count"] == 1
 
 
 @pytest.mark.asyncio

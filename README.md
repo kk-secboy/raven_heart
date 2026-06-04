@@ -137,7 +137,11 @@ agent_core never imports runtime
 - `AgentRunPreflightCenter` runs SDK/runtime preflight checks after optional
   refresh and before resume, memory recall, prompt build, or provider calls.
 - `AgentRunPreflightRequirements` lets one request require actions, tools,
-  skills, MCP servers, memory availability, or task byte limits.
+  skills, MCP servers, memory availability, task byte limits, or storage
+  backend readiness.
+- Storage backend requirements are evaluated from session component manifests
+  before prompt build or provider calls, so PG/vector/graph readiness can block
+  a run without importing runtime adapters.
 - Blocked preflight reports return a denied `AgentRunOutcome` with traceable
   issue codes and without entering the provider/tool loop.
 
@@ -792,6 +796,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Lifecycle hook trace/eval contracts | MVP implemented |
 | Run preflight guardrails | MVP implemented |
 | Run preflight trace/eval contracts | MVP implemented |
+| Run storage backend preflight gate | MVP implemented |
 | Agent-as-tool runtime | MVP implemented |
 | Agent-as-tool trace/eval contracts | MVP implemented |
 | Handoff trace/eval contracts | MVP implemented |

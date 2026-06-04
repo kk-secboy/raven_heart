@@ -700,6 +700,16 @@ def test_run_trace_bundle_summarizes_preflight_report() -> None:
             "blocking_count": 1,
             "codes": ["empty_task", "missing_tool"],
             "blocking_codes": ["missing_tool"],
+            "request": {
+                "storage_backend_preflight": {
+                    "schema_version": "agent-core-storage-backend-preflight/v1",
+                    "ready": False,
+                    "status": "blocked",
+                    "blocking_count": 1,
+                    "missing_roles": ["memory"],
+                    "blocking_reasons": ["missing_capabilities"],
+                }
+            },
         },
     ).manifest()
 
@@ -707,7 +717,11 @@ def test_run_trace_bundle_summarizes_preflight_report() -> None:
     assert manifest["summary"]["preflight_blocked"] is True
     assert manifest["summary"]["preflight_issue_count"] == 2
     assert manifest["summary"]["preflight_blocking_count"] == 1
+    assert manifest["summary"]["has_storage_backend_preflight"] is True
+    assert manifest["summary"]["storage_backend_preflight_ready"] is False
+    assert manifest["summary"]["storage_backend_preflight_blocking_count"] == 1
     assert manifest["preflight"]["blocking_codes"] == ["missing_tool"]
+    assert manifest["storage_backend_preflight"]["missing_roles"] == ["memory"]
 
 
 def test_context_injection_trace_summarizes_prompt_injection_decisions() -> None:
