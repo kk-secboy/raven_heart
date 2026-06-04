@@ -167,6 +167,75 @@ class EventStreamBatch:
         }
 
 
+@dataclass(frozen=True)
+class EventStreamTail:
+    """A bounded drain of available event pages for polling adapters."""
+
+    start_cursor: EventStreamCursor
+    batches: tuple[EventStreamBatch, ...] = ()
+    max_batches: int = 10
+    stop_at_terminal: bool = True
+
+    @classmethod
+    def from_log(
+        cls,
+        log: "EventLogPort",
+        cursor: EventStreamCursor | None = None,
+        *,
+        max_batches: int = 10,
+        stop_at_terminal: bool = True,
+    ) -> "EventStreamTail":
+        request = cursor or EventStreamCursor()
+        limit = max(1, int(max_batches))
+        batches: list[EventStreamBatch] = []
+        current = request
+        for _ in range(limit):
+            batch = EventStreamBatch.from_log(log, current)
+            batches.append(batch)
+            if stop_at_terminal and batch.terminal:
+                break
+            if not batch.has_more:
+                break
+            current = batch.next_cursor()
+        return cls(
+            start_cursor=request,
+            batches=tuple(batches),
+            max_batches=limit,
+            stop_at_terminal=stop_at_terminal,
+        )
+
+    @property
+    def event_count(self) -> int:
+        return sum(len(batch.events) for batch in self.batches)
+
+    @property
+    def terminal(self) -> bool:
+        return any(batch.terminal for batch in self.batches)
+
+    @property
+    def has_more(self) -> bool:
+        return bool(self.batches and self.batches[-1].has_more and not self.terminal)
+
+    def next_cursor(self) -> EventStreamCursor:
+        if not self.batches:
+            return self.start_cursor
+        return self.batches[-1].next_cursor()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-event-stream-tail/v1",
+            "start_cursor": self.start_cursor.manifest(),
+            "next_cursor": self.next_cursor().manifest(),
+            "batch_count": len(self.batches),
+            "event_count": self.event_count,
+            "max_batches": self.max_batches,
+            "stop_at_terminal": self.stop_at_terminal,
+            "has_more": self.has_more,
+            "terminal": self.terminal,
+            "batches": [batch.manifest() for batch in self.batches],
+        }
+
+
 class EventSinkPort(Protocol):
     async def emit(self, event: AgentEvent) -> None:
         """Emit an agent event."""

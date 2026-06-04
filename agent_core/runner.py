@@ -38,6 +38,7 @@ from agent_core.events import (
     EventSinkPort,
     EventStreamBatch,
     EventStreamCursor,
+    EventStreamTail,
 )
 from agent_core.errors import ResumeError
 from agent_core.harness import (
@@ -1525,6 +1526,35 @@ class AgentSessionManager:
         if not _is_event_log(log):
             return EventStreamBatch(cursor=request)
         return EventStreamBatch.from_log(log, request)
+
+    def event_tail(
+        self,
+        run_key: str,
+        cursor: EventStreamCursor | None = None,
+        *,
+        max_batches: int = 10,
+        stop_at_terminal: bool = True,
+    ) -> EventStreamTail:
+        run = self.run_state(run_key)
+        session = self.session(run.session_name)
+        log = session.event_sink
+        request = cursor or EventStreamCursor(
+            run_id=run.result_run_id,
+            run_key=run.run_key,
+            session_name=run.session_name,
+        )
+        if not _is_event_log(log):
+            return EventStreamTail(
+                start_cursor=request,
+                max_batches=max(1, int(max_batches)),
+                stop_at_terminal=stop_at_terminal,
+            )
+        return EventStreamTail.from_log(
+            log,
+            request,
+            max_batches=max_batches,
+            stop_at_terminal=stop_at_terminal,
+        )
 
     def manifest(self) -> dict[str, Any]:
         return {

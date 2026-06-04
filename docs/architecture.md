@@ -463,10 +463,11 @@ can capture them with `ListEventSink`; inspectable or local durable runs can use
 retention policy, or audit systems. `EventStreamCursor` and `EventStreamBatch`
 give those runtimes a provider-neutral paging contract with ReAct `run_id`,
 manager `run_key`, session, sequence, and event-type filters, plus `has_more`
-and terminal-run detection. `AgentSessionManager.event_batch()` exposes that
-contract for one managed background run before completion by tagging emitted
-events with `run_key` and `session_name`; the SDK does not own the SSE/WebSocket
-transport.
+and terminal-run detection. `EventStreamTail` drains a bounded number of
+available pages and returns the next cursor for polling loops.
+`AgentSessionManager.event_batch()` and `event_tail()` expose those contracts
+for one managed background run before completion by tagging emitted events with
+`run_key` and `session_name`; the SDK does not own the SSE/WebSocket transport.
 
 `ContextReducerPort` handles automatic timeline/context reduction as a core
 mechanic. `DefaultContextReducer` is deterministic and dependency-free, while

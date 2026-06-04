@@ -6,6 +6,7 @@ from agent_core.events import (
     AgentEvent,
     EventStreamBatch,
     EventStreamCursor,
+    EventStreamTail,
     ListEventSink,
     MarkdownEventSink,
     SQLiteEventSink,
@@ -133,3 +134,34 @@ async def test_event_stream_cursor_filters_manager_run_metadata() -> None:
     assert manifest["cursor"]["run_key"] == "run-a"
     assert manifest["cursor"]["session_name"] == "alpha"
     assert manifest["next_cursor"]["run_key"] == "run-a"
+
+
+@pytest.mark.asyncio
+async def test_event_stream_tail_drains_pages_until_terminal() -> None:
+    sink = ListEventSink()
+    await sink.emit(AgentEvent(type="run_started", run_id="run-1"))
+    await sink.emit(AgentEvent(type="turn_started", run_id="run-1"))
+    await sink.emit(AgentEvent(type="tool_finished", run_id="run-1"))
+    await sink.emit(AgentEvent(type="run_finished", run_id="run-1"))
+    await sink.emit(AgentEvent(type="run_started", run_id="run-2"))
+
+    tail = EventStreamTail.from_log(
+        sink,
+        EventStreamCursor(run_id="run-1", limit=2),
+        max_batches=10,
+    )
+    manifest = tail.manifest()
+
+    assert [event.type for batch in tail.batches for event in batch.events] == [
+        "run_started",
+        "turn_started",
+        "tool_finished",
+        "run_finished",
+    ]
+    assert len(tail.batches) == 2
+    assert tail.event_count == 4
+    assert tail.terminal is True
+    assert tail.has_more is False
+    assert tail.next_cursor().after_sequence == 4
+    assert manifest["schema_version"] == "agent-core-event-stream-tail/v1"
+    assert manifest["batch_count"] == 2

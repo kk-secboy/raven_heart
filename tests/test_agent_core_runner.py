@@ -1307,6 +1307,7 @@ async def test_agent_session_manager_exposes_run_key_event_batches_before_comple
 
     run = manager.run_state(run_key)
     batch = manager.event_batch(run_key)
+    tail = manager.event_tail(run_key, max_batches=2)
     manifest = batch.manifest()
 
     assert run.status == "running"
@@ -1316,13 +1317,17 @@ async def test_agent_session_manager_exposes_run_key_event_batches_before_comple
     assert batch.events[0].payload["session_name"] == "evented"
     assert manifest["cursor"]["run_key"] == run_key
     assert manifest["event_count"] >= 1
+    assert tail.event_count >= len(batch.events)
+    assert tail.manifest()["start_cursor"]["run_key"] == run_key
 
     provider.release.set()
     outcome = await manager.wait(run_key)
     final_batch = manager.event_batch(run_key, batch.next_cursor())
+    final_tail = manager.event_tail(run_key, batch.next_cursor())
 
     assert outcome.result.status == "completed"
     assert any(event.type == "run_finished" for event in final_batch.events)
+    assert final_tail.terminal is True
 
 
 @pytest.mark.asyncio
