@@ -701,6 +701,20 @@ def test_run_trace_bundle_summarizes_preflight_report() -> None:
             "codes": ["empty_task", "missing_tool"],
             "blocking_codes": ["missing_tool"],
             "request": {
+                "provider_route_plan": {
+                    "schema_version": "agent-core-llm-provider-route-plan/v1",
+                    "ready": False,
+                    "streamed": True,
+                    "selected_route": None,
+                    "candidates": [
+                        {
+                            "provider_name": "mock",
+                            "reason": "unsupported_capabilities",
+                            "selected": False,
+                            "supported": False,
+                        }
+                    ],
+                },
                 "storage_backend_preflight": {
                     "schema_version": "agent-core-storage-backend-preflight/v1",
                     "ready": False,
@@ -717,10 +731,14 @@ def test_run_trace_bundle_summarizes_preflight_report() -> None:
     assert manifest["summary"]["preflight_blocked"] is True
     assert manifest["summary"]["preflight_issue_count"] == 2
     assert manifest["summary"]["preflight_blocking_count"] == 1
+    assert manifest["summary"]["has_provider_route_preflight"] is True
+    assert manifest["summary"]["provider_route_preflight_ready"] is False
+    assert manifest["summary"]["provider_route_preflight_candidate_count"] == 1
     assert manifest["summary"]["has_storage_backend_preflight"] is True
     assert manifest["summary"]["storage_backend_preflight_ready"] is False
     assert manifest["summary"]["storage_backend_preflight_blocking_count"] == 1
     assert manifest["preflight"]["blocking_codes"] == ["missing_tool"]
+    assert manifest["provider_route_preflight"]["streamed"] is True
     assert manifest["storage_backend_preflight"]["missing_roles"] == ["memory"]
 
 

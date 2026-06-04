@@ -177,7 +177,8 @@ records, embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
 provider-native tool-call presence/names, provider request-shape plans and
-output-token ceilings, provider-native tool-result presence/status/execution,
+output-token ceilings, provider route preflight readiness/candidates/reasons,
+provider-native tool-result presence/status/execution,
 required events, required tools,
 cost ceilings, event ordering, journal integrity, preflight status/issue-code constraints,
 resume-plan presence,
@@ -234,6 +235,12 @@ provider calls. Built-in checks validate request-local requirements such as
 task-byte limits, required tools/actions/skills/MCP servers, and memory
 availability. Runtime-owned tenant, RBAC, quota, ticket, or deployment gates can
 mount additional checks without changing `AgentRunner`.
+Provider route preflight uses the same static bus when a provider exposes
+`route_plan()`: the runner asks for an adapter-free `LLMProviderRoutePlan` using
+the requested provider/model, streaming flag, and structured-output
+requirements, then blocks before prompt shaping if no route is ready. This keeps
+model capability gates in the SDK while credentials, rate limits, concrete HTTP
+clients, and vendor fallback policy remain adapter/runtime concerns.
 Storage backend requirements use the same bus: a run request can provide
 `StorageBackendRequirement` entries, the runner builds a catalog from session
 component manifests, records a `StorageBackendPreflightReport`, and blocks

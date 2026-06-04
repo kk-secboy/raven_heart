@@ -845,6 +845,7 @@ class AgentRunner:
             available_skills=_available_skill_names(self.session.skills),
             available_mcp_servers=_available_mcp_server_names(self.session.mcp),
             memory_enabled=bool(self.session.profile.capabilities.memory_enabled),
+            provider_route_plan=_provider_route_plan_manifest(self.session, request),
             storage_backend_preflight=self._storage_backend_preflight(requirements),
             metadata={"request_metadata": dict(request.metadata)},
         )

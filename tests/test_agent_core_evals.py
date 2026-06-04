@@ -1311,6 +1311,88 @@ def test_trace_eval_reports_provider_route_plan_contract_failures() -> None:
     } <= {issue.code for issue in report.issues}
 
 
+def test_trace_eval_validates_provider_route_preflight_contracts() -> None:
+    trace = {
+        **_trace_manifest(),
+        "provider_route_preflight": {
+            "schema_version": "agent-core-llm-provider-route-plan/v1",
+            "ready": True,
+            "streamed": True,
+            "selected_route": {"provider_name": "strong", "model": "strong-pro"},
+            "candidates": [
+                {
+                    "provider_name": "small",
+                    "selected": False,
+                    "reason": "unsupported_capabilities",
+                },
+                {
+                    "provider_name": "strong",
+                    "selected": True,
+                    "reason": "selected",
+                },
+            ],
+        },
+    }
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_provider_route_preflight=True,
+            require_provider_route_preflight_ready=True,
+            required_provider_route_preflight_candidate_names=("small", "strong"),
+            forbidden_provider_route_preflight_reasons=("provider_not_registered",),
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_provider_route_preflight"] is True
+    assert report.summary["provider_route_preflight_ready"] is True
+    assert report.summary["provider_route_preflight_candidate_names"] == [
+        "small",
+        "strong",
+    ]
+    assert report.summary["provider_route_preflight_reasons"] == [
+        "selected",
+        "unsupported_capabilities",
+    ]
+
+
+def test_trace_eval_reports_provider_route_preflight_contract_failures() -> None:
+    missing = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(require_provider_route_preflight=True),
+    )
+    trace = {
+        **_trace_manifest(),
+        "provider_route_preflight": {
+            "schema_version": "agent-core-llm-provider-route-plan/v1",
+            "ready": False,
+            "candidates": [
+                {
+                    "provider_name": "small",
+                    "selected": False,
+                    "reason": "unsupported_capabilities",
+                }
+            ],
+        },
+    }
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            require_provider_route_preflight_ready=True,
+            required_provider_route_preflight_candidate_names=("strong",),
+            forbidden_provider_route_preflight_reasons=("unsupported_capabilities",),
+        ),
+    )
+
+    assert missing.issues[0].code == "provider_route_preflight_missing"
+    assert {
+        "provider_route_preflight_not_ready",
+        "missing_provider_route_preflight_candidate",
+        "forbidden_provider_route_preflight_reason",
+    } <= {issue.code for issue in report.issues}
+
+
 def test_trace_eval_validates_provider_request_shape_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),

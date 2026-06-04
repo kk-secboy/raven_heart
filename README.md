@@ -139,6 +139,9 @@ agent_core never imports runtime
 - `AgentRunPreflightRequirements` lets one request require actions, tools,
   skills, MCP servers, memory availability, task byte limits, or storage
   backend readiness.
+- Provider route plans are evaluated before prompt build, so a run that
+  requires unsupported streaming, structured output, JSON mode, tool calls, or
+  an unavailable provider/model is denied before any provider call.
 - Storage backend requirements are evaluated from session component manifests
   before prompt build or provider calls, so PG/vector/graph readiness can block
   a run without importing runtime adapters.
@@ -285,6 +288,7 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   iteration limits, provider call limits, required provider names/models,
   required provider model capabilities, provider stream event contracts,
   provider-native tool-call presence and tool-call names,
+  provider route plans and provider route preflight readiness,
   embedding call limits, required embedding providers/models/dimensions,
   required events, required tools, preflight presence/status/issue-code constraints,
   resume-plan presence, resume-plan readiness,
@@ -779,6 +783,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider transport contract | MVP implemented |
 | OpenAI-compatible provider codec | MVP implemented |
 | Provider route plan/preflight audit | MVP implemented |
+| Run provider route preflight gate | MVP implemented |
 | Provider model capabilities | MVP implemented |
 | Provider tool/response-format contracts | MVP implemented |
 | Provider-native tool-call loop | opt-in MVP implemented |

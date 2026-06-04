@@ -292,6 +292,38 @@ async def test_agent_runner_blocks_when_storage_backend_preflight_is_not_ready()
 
 
 @pytest.mark.asyncio
+async def test_agent_runner_blocks_when_provider_route_preflight_is_not_ready() -> None:
+    provider = MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}])
+    center = LLMProviderCenter(default_provider="mock")
+    center.register(
+        "mock",
+        provider,
+        default_model="mock-mini",
+        default_capabilities=LLMModelCapabilities(supports_streaming=False),
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="provider-route", model="mock-mini"),
+        provider=center,
+        tools=ToolRegistry(),
+    )
+
+    outcome = await AgentRunner(session).run(AgentRunRequest(task="scan target", stream=True))
+
+    assert outcome.result.status == "denied"
+    assert provider.requests == []
+    assert outcome.preflight_manifest["status"] == "blocked"
+    assert outcome.preflight_manifest["blocking_codes"] == ["provider_route_not_ready"]
+    route_plan = outcome.preflight_manifest["request"]["provider_route_plan"]
+    assert route_plan["ready"] is False
+    assert route_plan["streamed"] is True
+    assert route_plan["candidates"][0]["reason"] == "unsupported_capabilities"
+    issue = outcome.preflight_manifest["checks"][0]["issues"][0]
+    assert issue["metadata"]["candidate_reasons"] == ["unsupported_capabilities"]
+    assert outcome.trace_manifest["summary"]["has_preflight"] is True
+    assert outcome.trace_manifest["summary"]["preflight_blocked"] is True
+
+
+@pytest.mark.asyncio
 async def test_agent_runner_executes_react_with_profile_context_and_manifest() -> None:
     provider = MockLLMProvider(
         [

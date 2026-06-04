@@ -768,6 +768,7 @@ class AgentRunTraceBundle:
     resume: dict[str, Any] = field(default_factory=dict)
     resume_plan: dict[str, Any] = field(default_factory=dict)
     preflight: dict[str, Any] = field(default_factory=dict)
+    provider_route_preflight: dict[str, Any] = field(default_factory=dict)
     storage_backend_preflight: dict[str, Any] = field(default_factory=dict)
     timeline_reduction: dict[str, Any] = field(default_factory=dict)
     capability_discovery: dict[str, Any] = field(default_factory=dict)
@@ -823,6 +824,9 @@ class AgentRunTraceBundle:
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
+        provider_route_preflight = self.provider_route_preflight or _provider_route_preflight(
+            self.preflight
+        )
         storage_backend_preflight = self.storage_backend_preflight or _storage_backend_preflight(
             self.preflight
         )
@@ -902,6 +906,13 @@ class AgentRunTraceBundle:
                 "preflight_blocked": bool(self.preflight.get("status") == "blocked"),
                 "preflight_issue_count": int(self.preflight.get("issue_count") or 0),
                 "preflight_blocking_count": int(self.preflight.get("blocking_count") or 0),
+                "has_provider_route_preflight": bool(provider_route_preflight),
+                "provider_route_preflight_ready": bool(
+                    provider_route_preflight.get("ready")
+                ),
+                "provider_route_preflight_candidate_count": len(
+                    provider_route_preflight.get("candidates") or ()
+                ),
                 "resume_plan_ready": bool(self.resume_plan.get("ready"))
                 if self.resume_plan
                 else False,
@@ -989,6 +1000,7 @@ class AgentRunTraceBundle:
             "resume": dict(self.resume),
             "resume_plan": dict(self.resume_plan),
             "preflight": dict(self.preflight),
+            "provider_route_preflight": dict(provider_route_preflight),
             "storage_backend_preflight": dict(storage_backend_preflight),
             "timeline_reduction": dict(self.timeline_reduction),
             "capability_discovery": dict(self.capability_discovery),
@@ -1327,6 +1339,20 @@ def _prompt_semantic_trim(prompt: dict[str, Any]) -> dict[str, Any]:
     metadata = prompt.get("metadata") if isinstance(prompt.get("metadata"), dict) else {}
     semantic_trim = metadata.get("semantic_trim") if isinstance(metadata, dict) else {}
     return dict(semantic_trim) if isinstance(semantic_trim, dict) else {}
+
+
+def _provider_route_preflight(preflight: dict[str, Any]) -> dict[str, Any]:
+    request = preflight.get("request") if isinstance(preflight, dict) else {}
+    if isinstance(request, dict):
+        report = request.get("provider_route_plan")
+        if isinstance(report, dict) and report:
+            return dict(report)
+    metadata = preflight.get("metadata") if isinstance(preflight, dict) else {}
+    if isinstance(metadata, dict):
+        report = metadata.get("provider_route_plan")
+        if isinstance(report, dict) and report:
+            return dict(report)
+    return {}
 
 
 def _storage_backend_preflight(preflight: dict[str, Any]) -> dict[str, Any]:

@@ -97,6 +97,10 @@ class TraceEvalSpec:
     required_provider_route_candidate_names: tuple[str, ...] = ()
     required_provider_route_selected_names: tuple[str, ...] = ()
     forbidden_provider_route_reasons: tuple[str, ...] = ()
+    require_provider_route_preflight: bool = False
+    require_provider_route_preflight_ready: bool = False
+    required_provider_route_preflight_candidate_names: tuple[str, ...] = ()
+    forbidden_provider_route_preflight_reasons: tuple[str, ...] = ()
     require_provider_request_shape_plan: bool = False
     forbid_provider_request_shape_plan: bool = False
     require_provider_request_shape_adjusted: bool = False
@@ -318,6 +322,16 @@ class TraceEvalSpec:
                 self.required_provider_route_selected_names
             ),
             "forbidden_provider_route_reasons": list(self.forbidden_provider_route_reasons),
+            "require_provider_route_preflight": self.require_provider_route_preflight,
+            "require_provider_route_preflight_ready": (
+                self.require_provider_route_preflight_ready
+            ),
+            "required_provider_route_preflight_candidate_names": list(
+                self.required_provider_route_preflight_candidate_names
+            ),
+            "forbidden_provider_route_preflight_reasons": list(
+                self.forbidden_provider_route_preflight_reasons
+            ),
             "require_provider_request_shape_plan": self.require_provider_request_shape_plan,
             "forbid_provider_request_shape_plan": self.forbid_provider_request_shape_plan,
             "require_provider_request_shape_adjusted": (
@@ -926,6 +940,16 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         provider_route_candidate_names = _provider_route_candidate_names(provider_route_candidates)
         provider_route_selected_names = _provider_route_selected_names(provider_route_candidates)
         provider_route_reasons = _provider_route_reasons(provider_route_candidates)
+        provider_route_preflight = _provider_route_preflight(trace)
+        provider_route_preflight_candidates = _provider_route_candidates(
+            (provider_route_preflight,) if provider_route_preflight else ()
+        )
+        provider_route_preflight_candidate_names = _provider_route_candidate_names(
+            provider_route_preflight_candidates
+        )
+        provider_route_preflight_reasons = _provider_route_reasons(
+            provider_route_preflight_candidates
+        )
         provider_request_shape_plans = _provider_request_shape_plans(provider_call_records)
         provider_request_shape_provider_names = _provider_request_shape_values(
             provider_request_shape_plans,
@@ -1503,6 +1527,43 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         "error",
                         "forbidden_provider_route_reason",
                         f"forbidden provider route reason present: {reason}",
+                    )
+                )
+        if spec.require_provider_route_preflight and not provider_route_preflight:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_route_preflight_missing",
+                    "provider route preflight trace is required",
+                )
+            )
+        if (
+            spec.require_provider_route_preflight_ready
+            and provider_route_preflight.get("ready") is not True
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_route_preflight_not_ready",
+                    "provider route preflight is not ready",
+                )
+            )
+        for provider_name in spec.required_provider_route_preflight_candidate_names:
+            if provider_name not in provider_route_preflight_candidate_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_route_preflight_candidate",
+                        f"required provider route preflight candidate missing: {provider_name}",
+                    )
+                )
+        for reason in spec.forbidden_provider_route_preflight_reasons:
+            if reason in provider_route_preflight_reasons:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "forbidden_provider_route_preflight_reason",
+                        f"forbidden provider route preflight reason present: {reason}",
                     )
                 )
         if spec.require_provider_request_shape_plan and not provider_request_shape_plans:
@@ -3261,6 +3322,16 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "provider_route_candidate_names": sorted(provider_route_candidate_names),
                 "provider_route_selected_names": sorted(provider_route_selected_names),
                 "provider_route_reasons": sorted(provider_route_reasons),
+                "has_provider_route_preflight": bool(provider_route_preflight),
+                "provider_route_preflight_ready": (
+                    provider_route_preflight.get("ready") is True
+                ),
+                "provider_route_preflight_candidate_names": sorted(
+                    provider_route_preflight_candidate_names
+                ),
+                "provider_route_preflight_reasons": sorted(
+                    provider_route_preflight_reasons
+                ),
                 "provider_request_shape_plan_count": len(provider_request_shape_plans),
                 "provider_request_shape_adjusted_count": len(
                     adjusted_provider_request_shapes
@@ -4433,6 +4504,26 @@ def _provider_route_plans(calls: tuple[dict[str, Any], ...]) -> tuple[dict[str, 
         if isinstance(plan, dict):
             plans.append(dict(plan))
     return tuple(plans)
+
+
+def _provider_route_preflight(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("provider_route_preflight")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    preflight = trace.get("preflight")
+    if not isinstance(preflight, dict):
+        return {}
+    request = preflight.get("request")
+    if isinstance(request, dict):
+        manifest = request.get("provider_route_plan")
+        if isinstance(manifest, dict) and manifest:
+            return dict(manifest)
+    metadata = preflight.get("metadata")
+    if isinstance(metadata, dict):
+        manifest = metadata.get("provider_route_plan")
+        if isinstance(manifest, dict) and manifest:
+            return dict(manifest)
+    return {}
 
 
 def _provider_route_candidates(plans: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:

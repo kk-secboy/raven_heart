@@ -51,6 +51,7 @@ class AgentRunPreflightRequest:
     available_skills: tuple[str, ...] = ()
     available_mcp_servers: tuple[str, ...] = ()
     memory_enabled: bool = False
+    provider_route_plan: dict[str, Any] = field(default_factory=dict)
     storage_backend_preflight: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -69,6 +70,7 @@ class AgentRunPreflightRequest:
             "available_skills": list(self.available_skills),
             "available_mcp_servers": list(self.available_mcp_servers),
             "memory_enabled": self.memory_enabled,
+            "provider_route_plan": dict(self.provider_route_plan),
             "storage_backend_preflight": dict(self.storage_backend_preflight),
             "metadata": dict(self.metadata),
         }
@@ -237,6 +239,39 @@ class StaticRunPreflightCheck:
                     source=self.name,
                 )
             )
+        if request.provider_route_plan:
+            if request.provider_route_plan.get("error"):
+                issues.append(
+                    AgentRunPreflightIssue(
+                        "error",
+                        "provider_route_plan_error",
+                        "provider route preflight failed",
+                        source=self.name,
+                        metadata={"route_plan": dict(request.provider_route_plan)},
+                    )
+                )
+            elif request.provider_route_plan.get("ready") is not True:
+                issues.append(
+                    AgentRunPreflightIssue(
+                        "error",
+                        "provider_route_not_ready",
+                        "provider route preflight did not select a usable route",
+                        source=self.name,
+                        metadata={
+                            "requested_provider": request.provider_route_plan.get(
+                                "requested_provider"
+                            ),
+                            "requested_model": request.provider_route_plan.get(
+                                "requested_model"
+                            ),
+                            "streamed": request.provider_route_plan.get("streamed"),
+                            "candidate_reasons": _provider_route_candidate_reasons(
+                                request.provider_route_plan
+                            ),
+                            "route_plan": dict(request.provider_route_plan),
+                        },
+                    )
+                )
         if requirements.storage_backend_requirements:
             if not request.storage_backend_preflight:
                 issues.append(
@@ -333,3 +368,17 @@ def _missing_requirements(
         for name in required
         if name not in available_set
     )
+
+
+def _provider_route_candidate_reasons(route_plan: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    candidates = route_plan.get("candidates")
+    if not isinstance(candidates, list):
+        return reasons
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        reason = str(candidate.get("reason") or "")
+        if reason:
+            reasons.append(reason)
+    return sorted(set(reasons))
