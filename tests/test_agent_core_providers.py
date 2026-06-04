@@ -954,6 +954,8 @@ async def test_provider_center_retries_retryable_provider_errors() -> None:
     assert [call.status for call in center.calls] == ["failed", "failed", "completed"]
     assert center.manifest()["call_count"] == 3
     assert center.manifest()["calls"][0]["retryable"] is True
+    assert center.manifest()["calls"][0]["error_classification"]["kind"] == "provider_failed"
+    assert center.manifest()["calls"][0]["error_classification"]["retryable"] is True
     assert fallback.requests[0].metadata["provider"] == "fallback"
 
 

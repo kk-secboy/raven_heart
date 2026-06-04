@@ -8,6 +8,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Literal, Protocol
 from uuid import uuid4
 
+from agent_core.errors import classify_error
+
 
 MessageRole = Literal["system", "user", "assistant", "tool"]
 LLMContentPartKind = Literal["text", "image", "audio", "file", "binary", "json"]
@@ -1025,6 +1027,17 @@ class LLMCallRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def manifest(self) -> dict[str, Any]:
+        classification = (
+            classify_error(
+                stage="provider",
+                status=self.status,
+                message=self.error,
+                retryable=self.retryable,
+                metadata=self.metadata,
+            ).manifest()
+            if self.status == "failed" or self.error
+            else {}
+        )
         return {
             "schema_version": "agent-core-llm-call-record/v1",
             "provider_name": self.provider_name,
@@ -1035,6 +1048,7 @@ class LLMCallRecord:
             "usage": self.usage.manifest(),
             "error": self.error,
             "retryable": self.retryable,
+            "error_classification": classification,
             "metadata": dict(self.metadata),
         }
 

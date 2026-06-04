@@ -101,6 +101,7 @@ from agent_core.embeddings import (
     deterministic_text_embedding,
     rank_semantic_documents,
 )
+from agent_core.errors import ErrorClassification, FailureKind, classify_error
 from agent_core.events import (
     AgentEvent,
     EventLogPort,
@@ -541,9 +542,11 @@ __all__ = [
     "DefaultTraceEvaluator",
     "EventSinkPort",
     "EventLogPort",
+    "ErrorClassification",
     "EventStreamBatch",
     "EventStreamCursor",
     "EventStreamTail",
+    "FailureKind",
     "ExternalMemoryCallRecord",
     "ExternalMemoryStore",
     "HandoffDecision",
@@ -667,6 +670,7 @@ __all__ = [
     "RuntimeBudget",
     "SQLiteAgentJournal",
     "SQLiteEventSink",
+    "classify_error",
     "SQLiteJournalStore",
     "SkillRegistry",
     "SkillSpec",

@@ -94,6 +94,7 @@ async def test_tool_execution_center_retries_retryable_results_and_records_attem
     assert manifest["schema_version"] == "agent-core-tool-execution-center/v1"
     assert manifest["records"][0]["attempts"][0]["retryable"] is True
     assert manifest["records"][0]["attempts"][1]["status"] == "completed"
+    assert manifest["records"][0]["attempts"][0]["error_classification"]["kind"] == "tool_failed"
 
 
 @pytest.mark.asyncio
@@ -109,6 +110,7 @@ async def test_tool_execution_center_converts_retryable_exceptions_to_final_resu
     assert result.error == "network hiccup"
     assert result.metadata["exception_type"] == "RuntimeError"
     assert result.metadata["tool_execution"]["attempt_count"] == 1
+    assert result.metadata["tool_execution"]["error_classification"]["kind"] == "exception"
 
 
 @pytest.mark.asyncio
@@ -141,7 +143,9 @@ async def test_tool_execution_center_rejects_invalid_schema_before_runtime_call(
     assert result.metadata["tool_execution"]["final_status"] == "failed"
     assert result.metadata["tool_execution"]["attempt_statuses"] == ["schema_invalid"]
     assert result.metadata["tool_execution"]["schema_validation"]["ok"] is False
+    assert result.metadata["tool_execution"]["error_classification"]["kind"] == "schema_invalid"
     assert manifest["records"][0]["attempts"][0]["status"] == "schema_invalid"
+    assert manifest["records"][0]["attempts"][0]["error_classification"]["kind"] == "schema_invalid"
     assert manifest["records"][0]["metadata"]["schema_validation"]["schema_name"] == "tool:lookup"
     assert invocations == []
 

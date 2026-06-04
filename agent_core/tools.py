@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from agent_core.backends import storage_backend_manifest
+from agent_core.errors import classify_error
 from agent_core.prompt import estimate_tokens
 from agent_core.schema import SchemaValidationResult, validate_json_schema_subset
 from agent_core.search import SearchDocument, rank_documents
@@ -177,6 +178,7 @@ class ToolExecutionAttempt:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def manifest(self) -> dict[str, Any]:
+        classification = _tool_attempt_error_classification(self)
         return {
             "schema_version": "agent-core-tool-execution-attempt/v1",
             "attempt": self.attempt,
@@ -184,6 +186,7 @@ class ToolExecutionAttempt:
             "retryable": self.retryable,
             "error": self.error,
             "exception_type": self.exception_type,
+            "error_classification": classification,
             "result": self.result.manifest() if self.result is not None else None,
             "metadata": dict(self.metadata),
         }
@@ -206,6 +209,7 @@ class ToolExecutionRecord:
         return self.attempt_count > 1
 
     def summary_manifest(self) -> dict[str, Any]:
+        final_failure = _tool_record_error_classification(self)
         summary = {
             "schema_version": "agent-core-tool-execution-summary/v1",
             "tool_name": self.invocation.tool_name,
@@ -219,6 +223,8 @@ class ToolExecutionRecord:
                 attempt.attempt for attempt in self.attempts if attempt.retryable
             ],
         }
+        if final_failure:
+            summary["error_classification"] = final_failure
         schema_validation = self.metadata.get("schema_validation")
         if isinstance(schema_validation, dict):
             summary["schema_validation"] = dict(schema_validation)
@@ -232,9 +238,40 @@ class ToolExecutionRecord:
             "retried": self.retried,
             "attempts": [attempt.manifest() for attempt in self.attempts],
             "final_result": self.final_result.manifest(),
+            "error_classification": _tool_record_error_classification(self),
             "policy": self.policy.manifest(),
             "metadata": dict(self.metadata),
         }
+
+
+def _tool_attempt_error_classification(attempt: ToolExecutionAttempt) -> dict[str, Any]:
+    if not attempt.error and attempt.status == "completed":
+        return {}
+    metadata = dict(attempt.metadata)
+    if attempt.result is not None:
+        metadata = {**dict(attempt.result.metadata), **metadata}
+    return classify_error(
+        stage="tool",
+        status=attempt.status,
+        message=attempt.error,
+        retryable=attempt.retryable,
+        exception_type=attempt.exception_type,
+        metadata=metadata,
+    ).manifest()
+
+
+def _tool_record_error_classification(record: ToolExecutionRecord) -> dict[str, Any]:
+    if record.final_result.ok:
+        return {}
+    last_attempt = record.attempts[-1] if record.attempts else None
+    return classify_error(
+        stage="tool",
+        status=last_attempt.status if last_attempt is not None else record.final_result.status,
+        message=record.final_result.error,
+        retryable=bool(last_attempt.retryable) if last_attempt is not None else False,
+        exception_type=last_attempt.exception_type if last_attempt is not None else "",
+        metadata=record.final_result.metadata,
+    ).manifest()
 
 
 class ToolExecutionCenter:

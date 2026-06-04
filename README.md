@@ -421,6 +421,8 @@ ranking contract used by lightweight core stores.
   plus prompt-safe stream summaries.
 - Provider call audit records for completed and failed attempts, including the
   routed request manifest, original request manifest, and route plan manifest.
+- Failed provider calls include prompt-safe `ErrorClassification` manifests for
+  common retry/failure reporting.
 - Stream error events are treated as failed attempts for retry/fallback audit.
 - Streaming attempts are budget-checked before events are emitted by the center,
   and completed streamed calls record a standard stream summary.
@@ -479,6 +481,9 @@ calling any concrete model client.
 - `ToolCenterTrace` for run-level route/call summaries and eval contracts.
 - `ToolExecutionCenter`, `ToolRetryPolicy`, and tool execution attempt records
   for retryable failure recovery and audit.
+- Tool execution attempts and final failed results include prompt-safe
+  `ErrorClassification` manifests for schema, exception, and tool-result
+  failures.
 - `validate_tool_arguments()` and pre-execution schema validation for
   `ToolSpec.parameters_schema`.
 - Tool schema failures produce prompt-safe `SchemaValidationResult` manifests

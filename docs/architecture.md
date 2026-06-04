@@ -384,6 +384,9 @@ before yielding a successful stream to callers. Completed streamed calls include
 the standard stream summary in provider call metadata. Trace evals can require
 streaming calls, required or forbidden stream event types, and maximum stream
 error counts while keeping streamed content out of the trace.
+Failed provider call records also include `ErrorClassification` manifests so
+runtime UIs, evals, and policy code can reason about retryable provider failures
+without storing raw vendor payloads.
 Runner streaming is an SDK-level switch, not a runtime adapter:
 `AgentSession.stream` sets the default and `AgentRunRequest.stream` can override
 one run. The same ReAct loop, event log, journal model events, and trace
@@ -426,6 +429,8 @@ status, retryability, final result, schema validation, and summary metadata.
 Before dispatching to the runtime, core validates `ToolSpec.parameters_schema`
 when a matching spec is available; invalid arguments become a failed result with
 a `SchemaValidationResult` manifest and do not trigger tool side effects.
+Tool attempts and failed final results include `ErrorClassification` manifests
+for schema failures, exceptions, and failed tool results.
 `ReActExecutor` records this summary on tool results and `tool_finished` events.
 Runtime code still owns concrete tool implementations, side-effect safety,
 idempotency rules, and distributed retry scheduling.
