@@ -534,6 +534,7 @@ adapter packages.
 - Dependency-aware ready-step selection.
 - `PlanExecutor` for sequential ready-step execution through `AgentSessionManager`.
 - `PlanExecutionReport` and `PlanExecutionStep` manifests for audit.
+- `PlannerTrace` plus replay/eval contracts for plan ids, step status, and execution reports.
 - Manifest export with terminal state, ready steps, and status counts.
 
 The SDK owns generic plan state, update semantics, sequential step execution,
@@ -727,6 +728,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Unified storage backend manifests | MVP implemented |
 | Storage backend catalog/selection | MVP implemented |
 | Planner core | MVP implemented |
+| Planner trace/eval contracts | MVP implemented |
 | Approval core | MVP implemented |
 | Approval trace/eval contracts | MVP implemented |
 | Artifact trace/eval contracts | MVP implemented |

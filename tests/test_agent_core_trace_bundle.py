@@ -29,6 +29,7 @@ from agent_core.trace import (
     MarkdownRunTraceStore,
     MCPCenterTrace,
     MemoryGovernanceTrace,
+    PlannerTrace,
     SQLiteRunTraceStore,
     SkillCenterTrace,
     StorageBackendTrace,
@@ -130,6 +131,49 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
         timeline_reduction={"compressed_bytes": 10},
         capability_discovery={"match_count": 4},
         memory_search={"hit_count": 2},
+        planner_trace={
+            "schema_version": "agent-core-planner-trace/v1",
+            "plan_count": 1,
+            "step_count": 2,
+            "execution_report_count": 1,
+            "execution_step_count": 2,
+            "failed_step_count": 0,
+            "blocked_report_count": 0,
+            "plans": [
+                {
+                    "schema_version": "agent-core-plan/v1",
+                    "plan_id": "plan-1",
+                    "goal": "ship sdk",
+                    "terminal": True,
+                    "ready_steps": [],
+                    "status_counts": {"completed": 2},
+                    "steps": [
+                        {"step_id": "audit", "goal": "Audit", "status": "completed"},
+                        {"step_id": "ship", "goal": "Ship", "status": "completed"},
+                    ],
+                }
+            ],
+            "reports": [
+                {
+                    "schema_version": "agent-core-plan-execution-report/v1",
+                    "status": "completed",
+                    "steps": [
+                        {
+                            "plan_id": "plan-1",
+                            "step_id": "audit",
+                            "session_name": "worker",
+                            "status": "completed",
+                        },
+                        {
+                            "plan_id": "plan-1",
+                            "step_id": "ship",
+                            "session_name": "worker",
+                            "status": "completed",
+                        },
+                    ],
+                }
+            ],
+        },
         session={
             "capabilities": {
                 "mcp": {
@@ -343,6 +387,12 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
     assert manifest["summary"]["structured_output_repair_count"] == 1
     assert manifest["summary"]["structured_output_failed_count"] == 1
     assert manifest["structured_output_trace"]["schema_names"] == {"risk_summary": 1}
+    assert manifest["summary"]["planner_plan_count"] == 1
+    assert manifest["summary"]["planner_step_count"] == 2
+    assert manifest["summary"]["planner_execution_report_count"] == 1
+    assert manifest["summary"]["planner_execution_step_count"] == 2
+    assert manifest["summary"]["planner_failed_step_count"] == 0
+    assert manifest["planner_trace"]["plans"][0]["plan_id"] == "plan-1"
     assert manifest["approval_trace"]["statuses"] == {
         "approved": 1,
         "pending": 1,
@@ -426,6 +476,53 @@ def test_structured_output_trace_summarizes_journal_checkpoints() -> None:
     assert trace["failed_count"] == 1
     assert trace["statuses"] == {"finished": 1, "structured_output_failed": 1}
     assert trace["errors"] == {"invalid json": 1}
+
+
+def test_planner_trace_summarizes_executor_manifest() -> None:
+    trace = PlannerTrace.from_manifest(
+        {
+            "schema_version": "agent-core-plan-executor/v1",
+            "default_session": "worker",
+            "max_steps": 8,
+            "reports": [
+                {
+                    "schema_version": "agent-core-plan-execution-report/v1",
+                    "status": "blocked",
+                    "plan": {
+                        "schema_version": "agent-core-plan/v1",
+                        "plan_id": "plan-1",
+                        "goal": "ship",
+                        "terminal": False,
+                        "ready_steps": ["audit"],
+                        "status_counts": {"failed": 1, "pending": 1},
+                        "steps": [
+                            {"step_id": "audit", "goal": "Audit", "status": "pending"},
+                            {"step_id": "build", "goal": "Build", "status": "failed"},
+                        ],
+                    },
+                    "steps": [
+                        {
+                            "plan_id": "plan-1",
+                            "step_id": "build",
+                            "session_name": "worker",
+                            "status": "failed",
+                        }
+                    ],
+                }
+            ],
+        }
+    ).manifest()
+
+    assert trace["schema_version"] == "agent-core-planner-trace/v1"
+    assert trace["plan_count"] == 1
+    assert trace["ready_step_count"] == 1
+    assert trace["step_count"] == 2
+    assert trace["execution_report_count"] == 1
+    assert trace["execution_step_count"] == 1
+    assert trace["failed_step_count"] == 2
+    assert trace["blocked_report_count"] == 1
+    assert trace["step_statuses"] == {"failed": 1, "pending": 1}
+    assert trace["execution_statuses"] == {"blocked": 1}
 
 
 def test_trace_correlation_index_cross_references_trace_materials() -> None:

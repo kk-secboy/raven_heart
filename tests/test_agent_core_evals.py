@@ -506,6 +506,49 @@ def _trace_manifest() -> dict[str, object]:
                 },
             ],
         },
+        "planner_trace": {
+            "schema_version": "agent-core-planner-trace/v1",
+            "plan_count": 1,
+            "step_count": 2,
+            "execution_report_count": 1,
+            "execution_step_count": 2,
+            "failed_step_count": 0,
+            "blocked_report_count": 0,
+            "plans": [
+                {
+                    "schema_version": "agent-core-plan/v1",
+                    "plan_id": "plan-1",
+                    "goal": "ship sdk",
+                    "terminal": True,
+                    "ready_steps": [],
+                    "status_counts": {"completed": 2},
+                    "steps": [
+                        {"step_id": "audit", "goal": "Audit core", "status": "completed"},
+                        {"step_id": "ship", "goal": "Ship sdk", "status": "completed"},
+                    ],
+                }
+            ],
+            "reports": [
+                {
+                    "schema_version": "agent-core-plan-execution-report/v1",
+                    "status": "completed",
+                    "steps": [
+                        {
+                            "plan_id": "plan-1",
+                            "step_id": "audit",
+                            "session_name": "worker",
+                            "status": "completed",
+                        },
+                        {
+                            "plan_id": "plan-1",
+                            "step_id": "ship",
+                            "session_name": "worker",
+                            "status": "completed",
+                        },
+                    ],
+                }
+            ],
+        },
         "storage_backends": {
             "schema_version": "agent-core-storage-backend-trace/v1",
             "backend_count": 3,
@@ -609,6 +652,8 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "run_finished",
         "tool_started",
         "tool_finished",
+        "plan_created",
+        "plan_execution_completed",
         "handoff_selected",
         "context_material_selection_applied",
         "prompt_bucket_budget_applied",
@@ -628,29 +673,33 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
         "provider_call_completed",
     )
     assert manifest["steps"][2]["source"] == "event_log"
-    assert manifest["steps"][4]["source"] == "handoff_trace"
-    assert manifest["steps"][4]["payload"]["selected_session"] == "code-reviewer"
-    assert manifest["steps"][5]["source"] == "context_material_selection"
-    assert manifest["steps"][5]["payload"]["selected_names"] == ["auth_trace"]
-    assert manifest["steps"][6]["source"] == "prompt_bucket_budget"
-    assert manifest["steps"][7]["source"] == "prompt_semantic_trim"
-    assert manifest["steps"][7]["payload"]["roles"] == ["dynamic", "timeline_open"]
-    assert manifest["steps"][7]["payload"]["dropped_units"] == 3
-    assert manifest["steps"][9]["source"] == "mcp_center"
-    assert manifest["steps"][9]["payload"]["server_name"] == "fs"
-    assert manifest["steps"][11]["source"] == "skill_center"
-    assert manifest["steps"][12]["payload"]["view_id"] == "review:rules.md:abcd"
-    assert manifest["steps"][13]["source"] == "approval_trace"
-    assert manifest["steps"][13]["payload"]["subject"] == "tool:deploy"
+    assert manifest["steps"][4]["source"] == "planner_trace"
+    assert manifest["steps"][4]["payload"]["plan_id"] == "plan-1"
+    assert manifest["steps"][5]["source"] == "planner_trace"
+    assert manifest["steps"][5]["payload"]["status"] == "completed"
+    assert manifest["steps"][6]["source"] == "handoff_trace"
+    assert manifest["steps"][6]["payload"]["selected_session"] == "code-reviewer"
+    assert manifest["steps"][7]["source"] == "context_material_selection"
+    assert manifest["steps"][7]["payload"]["selected_names"] == ["auth_trace"]
+    assert manifest["steps"][8]["source"] == "prompt_bucket_budget"
+    assert manifest["steps"][9]["source"] == "prompt_semantic_trim"
+    assert manifest["steps"][9]["payload"]["roles"] == ["dynamic", "timeline_open"]
+    assert manifest["steps"][9]["payload"]["dropped_units"] == 3
+    assert manifest["steps"][11]["source"] == "mcp_center"
+    assert manifest["steps"][11]["payload"]["server_name"] == "fs"
+    assert manifest["steps"][13]["source"] == "skill_center"
+    assert manifest["steps"][14]["payload"]["view_id"] == "review:rules.md:abcd"
     assert manifest["steps"][15]["source"] == "approval_trace"
-    assert manifest["steps"][16]["source"] == "artifact_trace"
-    assert manifest["steps"][16]["payload"]["artifact_id"] == "artifact-1"
-    assert manifest["steps"][17]["source"] == "structured_output"
-    assert manifest["steps"][17]["payload"]["error"] == "$.risk is required"
-    assert manifest["steps"][18]["source"] == "structured_output"
-    assert manifest["steps"][18]["payload"]["schema_name"] == "risk_summary"
-    assert manifest["steps"][19]["source"] == "provider"
-    assert manifest["steps"][19]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][15]["payload"]["subject"] == "tool:deploy"
+    assert manifest["steps"][17]["source"] == "approval_trace"
+    assert manifest["steps"][18]["source"] == "artifact_trace"
+    assert manifest["steps"][18]["payload"]["artifact_id"] == "artifact-1"
+    assert manifest["steps"][19]["source"] == "structured_output"
+    assert manifest["steps"][19]["payload"]["error"] == "$.risk is required"
+    assert manifest["steps"][20]["source"] == "structured_output"
+    assert manifest["steps"][20]["payload"]["schema_name"] == "risk_summary"
+    assert manifest["steps"][21]["source"] == "provider"
+    assert manifest["steps"][21]["payload"]["provider_name"] == "mock"
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1817,6 +1866,93 @@ def test_trace_eval_reports_structured_output_contract_failures() -> None:
     }
 
 
+def test_trace_eval_validates_planner_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_planner_trace=True,
+            required_plan_ids=("plan-1",),
+            required_plan_step_ids=("audit", "ship"),
+            required_plan_step_statuses=("completed",),
+            required_plan_execution_statuses=("completed",),
+            max_failed_plan_steps=0,
+            max_blocked_plan_reports=0,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["has_planner_trace"] is True
+    assert report.summary["planner_plan_count"] == 1
+    assert report.summary["planner_step_count"] == 2
+    assert report.summary["planner_execution_report_count"] == 1
+    assert report.summary["planner_execution_step_count"] == 2
+    assert report.summary["planner_plan_ids"] == ["plan-1"]
+    assert report.summary["planner_step_ids"] == ["audit", "ship"]
+    assert report.summary["planner_step_statuses"] == ["completed"]
+    assert report.summary["planner_execution_statuses"] == ["completed"]
+    assert report.metadata["spec"]["require_planner_trace"] is True
+
+
+def test_trace_eval_reports_planner_contract_failures() -> None:
+    trace = _trace_manifest()
+    planner = dict(trace["planner_trace"])
+    planner["plans"] = [
+        {
+            "schema_version": "agent-core-plan/v1",
+            "plan_id": "bad-plan",
+            "goal": "blocked",
+            "terminal": False,
+            "ready_steps": [],
+            "status_counts": {"failed": 1},
+            "steps": [{"step_id": "bad-step", "goal": "Fail", "status": "failed"}],
+        }
+    ]
+    planner["reports"] = [
+        {
+            "schema_version": "agent-core-plan-execution-report/v1",
+            "status": "blocked",
+            "steps": [
+                {
+                    "plan_id": "bad-plan",
+                    "step_id": "bad-step",
+                    "session_name": "worker",
+                    "status": "failed",
+                }
+            ],
+        }
+    ]
+    trace["planner_trace"] = planner
+
+    report = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(
+            required_plan_ids=("plan-1",),
+            required_plan_step_ids=("audit",),
+            required_plan_step_statuses=("completed",),
+            required_plan_execution_statuses=("completed",),
+            max_failed_plan_steps=0,
+            max_blocked_plan_reports=0,
+        ),
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        {key: value for key, value in _trace_manifest().items() if key != "planner_trace"},
+        TraceEvalSpec(require_planner_trace=True),
+    )
+    codes = {issue.code for issue in report.issues}
+
+    assert not report.ok
+    assert {
+        "missing_plan_id",
+        "missing_plan_step_id",
+        "missing_plan_step_status",
+        "missing_plan_execution_status",
+        "failed_plan_step_limit_exceeded",
+        "blocked_plan_report_limit_exceeded",
+    } <= codes
+    assert not missing.ok
+    assert {issue.code for issue in missing.issues} == {"planner_trace_missing"}
+
+
 def test_trace_eval_validates_mcp_and_skill_center_contracts() -> None:
     report = DefaultTraceEvaluator().evaluate(
         _trace_manifest(),
@@ -2368,7 +2504,7 @@ def test_trace_replay_comparator_accepts_matching_trace() -> None:
     report = TraceReplayComparator().compare(trace, trace)
 
     assert report.ok
-    assert report.summary["baseline_step_count"] == 21
+    assert report.summary["baseline_step_count"] == 23
     assert report.manifest()["schema_version"] == "agent-core-trace-replay-diff-report/v1"
     assert report.metadata["spec"]["schema_version"] == "agent-core-trace-replay-diff-spec/v1"
 
@@ -2399,6 +2535,8 @@ def test_trace_replay_comparator_reports_ordered_differences() -> None:
         "run_finished",
         "tool_finished",
         "tool_started",
+        "plan_created",
+        "plan_execution_completed",
         "handoff_selected",
         "context_material_selection_applied",
         "prompt_bucket_budget_applied",

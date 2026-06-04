@@ -382,7 +382,9 @@ prompt metadata.
 updates, and manifests are reusable across agent domains. The core ships
 `InMemoryPlanner`, `PersistentPlanner`, lightweight in-memory/SQLite/Markdown
 planner stores, and `PlanExecutor` for sequential ready-step execution through
-`AgentSessionManager`. Raven-specific decomposition, code repair plans, approval
+`AgentSessionManager`. `PlannerTrace` turns planner/executor manifests into
+replayable and evaluable plan ids, step statuses, execution statuses, and
+failure/blockage counts. Raven-specific decomposition, code repair plans, approval
 flows, distributed scheduling, PG-backed workflow state, and product planner
 audit policy should live in a runtime or adapter package that implements the
 same ports.

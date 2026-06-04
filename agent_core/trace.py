@@ -249,6 +249,76 @@ class HandoffTrace:
 
 
 @dataclass(frozen=True)
+class PlannerTrace:
+    """Run-level summary of planner state and plan execution reports."""
+
+    plans: tuple[dict[str, Any], ...] = ()
+    reports: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_manifest(cls, manifest: dict[str, Any]) -> "PlannerTrace":
+        plans, reports = _planner_trace_materials(manifest)
+        metadata = {
+            key: value
+            for key, value in manifest.items()
+            if key not in {"plans", "reports", "plan", "steps"}
+        }
+        return cls(plans=plans, reports=reports, metadata=metadata)
+
+    @classmethod
+    def from_session(cls, session: dict[str, Any]) -> "PlannerTrace":
+        manifests: list[dict[str, Any]] = []
+        for key in ("planner", "plan_executor", "planner_trace"):
+            value = session.get(key) if isinstance(session, dict) else None
+            if isinstance(value, dict):
+                manifests.append(value)
+        if not manifests:
+            return cls()
+        plans: list[dict[str, Any]] = []
+        reports: list[dict[str, Any]] = []
+        for manifest in manifests:
+            trace = cls.from_manifest(manifest)
+            plans.extend(trace.plans)
+            reports.extend(trace.reports)
+        return cls(plans=tuple(plans), reports=tuple(reports))
+
+    def manifest(self) -> dict[str, Any]:
+        plans = tuple(dict(item) for item in self.plans)
+        reports = tuple(dict(item) for item in self.reports)
+        steps = tuple(_planner_step_records(plans))
+        execution_steps = tuple(_planner_execution_step_records(reports))
+        failed_steps = tuple(
+            item
+            for item in (*steps, *execution_steps)
+            if str(item.get("status") or "") == "failed"
+        )
+        blocked_reports = tuple(
+            item for item in reports if str(item.get("status") or "") == "blocked"
+        )
+        return {
+            "schema_version": "agent-core-planner-trace/v1",
+            "plan_count": len(plans),
+            "terminal_plan_count": sum(1 for item in plans if item.get("terminal") is True),
+            "ready_step_count": sum(len(item.get("ready_steps") or ()) for item in plans),
+            "step_count": len(steps),
+            "execution_report_count": len(reports),
+            "execution_step_count": len(execution_steps),
+            "failed_step_count": len(failed_steps),
+            "blocked_report_count": len(blocked_reports),
+            "plan_ids": _count_injection_field(plans, "plan_id"),
+            "step_statuses": _count_injection_field(steps, "status"),
+            "step_ids": _count_injection_field(steps, "step_id"),
+            "execution_statuses": _count_injection_field(reports, "status"),
+            "execution_step_statuses": _count_injection_field(execution_steps, "status"),
+            "execution_sessions": _count_injection_field(execution_steps, "session_name"),
+            "plans": list(plans),
+            "reports": list(reports),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class MemoryGovernanceTrace:
     """Run-level inventory of memory write governance decisions."""
 
@@ -646,6 +716,7 @@ class AgentRunTraceBundle:
     storage_backends: dict[str, Any] = field(default_factory=dict)
     artifact_trace: dict[str, Any] = field(default_factory=dict)
     structured_output_trace: dict[str, Any] = field(default_factory=dict)
+    planner_trace: dict[str, Any] = field(default_factory=dict)
     context_injections: dict[str, Any] = field(default_factory=dict)
     context_material_selection: dict[str, Any] = field(default_factory=dict)
     handoff_trace: dict[str, Any] = field(default_factory=dict)
@@ -683,6 +754,7 @@ class AgentRunTraceBundle:
         structured_output_trace = self.structured_output_trace or StructuredOutputTrace.from_journal(
             self.journal_replay
         ).manifest()
+        planner_trace = self.planner_trace or PlannerTrace.from_session(self.session).manifest()
         memory_governance = self.memory_governance or MemoryGovernanceTrace.from_session(
             self.session
         ).manifest()
@@ -740,6 +812,18 @@ class AgentRunTraceBundle:
                 ),
                 "structured_output_failed_count": int(
                     structured_output_trace.get("failed_count") or 0
+                ),
+                "planner_plan_count": int(planner_trace.get("plan_count") or 0),
+                "planner_step_count": int(planner_trace.get("step_count") or 0),
+                "planner_execution_report_count": int(
+                    planner_trace.get("execution_report_count") or 0
+                ),
+                "planner_execution_step_count": int(
+                    planner_trace.get("execution_step_count") or 0
+                ),
+                "planner_failed_step_count": int(planner_trace.get("failed_step_count") or 0),
+                "planner_blocked_report_count": int(
+                    planner_trace.get("blocked_report_count") or 0
                 ),
                 "event_log_count": int(self.event_log.get("event_count") or 0),
                 "correlation_entry_count": int(correlation.get("entry_count") or 0),
@@ -813,6 +897,7 @@ class AgentRunTraceBundle:
             "approval_trace": dict(approval_trace),
             "artifact_trace": dict(artifact_trace),
             "structured_output_trace": dict(structured_output_trace),
+            "planner_trace": dict(planner_trace),
             "event_log": dict(self.event_log),
             "resume": dict(self.resume),
             "resume_plan": dict(self.resume_plan),
@@ -1021,6 +1106,64 @@ def _handoff_trace_record(record: dict[str, Any]) -> dict[str, Any]:
         ],
         "metadata": dict(record.get("metadata") if isinstance(record.get("metadata"), dict) else {}),
     }
+
+
+def _planner_trace_materials(
+    manifest: dict[str, Any],
+) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    schema = str(manifest.get("schema_version") or "")
+    if schema == "agent-core-planner-trace/v1":
+        return (
+            tuple(dict(item) for item in _dict_items(manifest.get("plans"))),
+            tuple(dict(item) for item in _dict_items(manifest.get("reports"))),
+        )
+    if schema == "agent-core-plan/v1":
+        return ((dict(manifest),), ())
+    if schema == "agent-core-plan-execution-report/v1":
+        plan = manifest.get("plan") if isinstance(manifest.get("plan"), dict) else {}
+        return ((dict(plan),) if plan else (), (dict(manifest),))
+    if schema == "agent-core-plan-executor/v1":
+        reports = tuple(dict(item) for item in _dict_items(manifest.get("reports")))
+        plans = tuple(
+            dict(item.get("plan"))
+            for item in reports
+            if isinstance(item.get("plan"), dict)
+        )
+        return plans, reports
+
+    raw_reports = tuple(dict(item) for item in _dict_items(manifest.get("reports")))
+    raw_plans = tuple(dict(item) for item in _dict_items(manifest.get("plans")))
+    if raw_reports:
+        report_plans = tuple(
+            dict(item.get("plan"))
+            for item in raw_reports
+            if isinstance(item.get("plan"), dict)
+        )
+        return (*raw_plans, *report_plans), raw_reports
+    if raw_plans:
+        return raw_plans, ()
+    plan = manifest.get("plan") if isinstance(manifest.get("plan"), dict) else {}
+    return ((dict(plan),) if plan else (), ())
+
+
+def _planner_step_records(plans: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    records: list[dict[str, Any]] = []
+    for plan in plans:
+        plan_id = str(plan.get("plan_id") or "")
+        for step in _dict_items(plan.get("steps")):
+            records.append({"plan_id": plan_id, **dict(step)})
+    return tuple(records)
+
+
+def _planner_execution_step_records(
+    reports: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    records: list[dict[str, Any]] = []
+    for report in reports:
+        status = str(report.get("status") or "")
+        for step in _dict_items(report.get("steps")):
+            records.append({"report_status": status, **dict(step)})
+    return tuple(records)
 
 
 def _safe_int(value: Any) -> int:

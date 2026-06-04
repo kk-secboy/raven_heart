@@ -142,6 +142,13 @@ class TraceEvalSpec:
     forbidden_structured_output_errors: tuple[str, ...] = ()
     max_structured_output_repairs: int | None = None
     max_structured_output_failures: int | None = None
+    require_planner_trace: bool = False
+    required_plan_ids: tuple[str, ...] = ()
+    required_plan_step_ids: tuple[str, ...] = ()
+    required_plan_step_statuses: tuple[str, ...] = ()
+    required_plan_execution_statuses: tuple[str, ...] = ()
+    max_failed_plan_steps: int | None = None
+    max_blocked_plan_reports: int | None = None
     required_tool_names: tuple[str, ...] = ()
     required_tool_execution_names: tuple[str, ...] = ()
     required_tool_execution_ok_names: tuple[str, ...] = ()
@@ -320,6 +327,13 @@ class TraceEvalSpec:
             "forbidden_structured_output_errors": list(self.forbidden_structured_output_errors),
             "max_structured_output_repairs": self.max_structured_output_repairs,
             "max_structured_output_failures": self.max_structured_output_failures,
+            "require_planner_trace": self.require_planner_trace,
+            "required_plan_ids": list(self.required_plan_ids),
+            "required_plan_step_ids": list(self.required_plan_step_ids),
+            "required_plan_step_statuses": list(self.required_plan_step_statuses),
+            "required_plan_execution_statuses": list(self.required_plan_execution_statuses),
+            "max_failed_plan_steps": self.max_failed_plan_steps,
+            "max_blocked_plan_reports": self.max_blocked_plan_reports,
             "required_tool_names": list(self.required_tool_names),
             "required_tool_execution_names": list(self.required_tool_execution_names),
             "required_tool_execution_ok_names": list(self.required_tool_execution_ok_names),
@@ -599,6 +613,16 @@ class TraceReplayHarness:
                     run_id=str(item.get("run_id") or run_id),
                     turn_id=str(item.get("turn_id") or ""),
                     payload=_payload(item),
+                )
+            )
+        for item in _planner_replay_steps(trace):
+            steps.append(
+                TraceReplayStep(
+                    sequence=len(steps) + 1,
+                    source="planner_trace",
+                    event_type=str(item.get("event_type") or ""),
+                    run_id=run_id,
+                    payload=dict(item.get("payload") or {}),
                 )
             )
         for item in _handoff_replay_steps(trace):
@@ -963,6 +987,23 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
             record for record in structured_output_records if record.get("ok") is False
         )
         structured_output_ok = any(record.get("ok") is True for record in structured_output_records)
+        planner_trace = _planner_trace(trace)
+        planner_plans = _planner_plans(planner_trace)
+        planner_reports = _planner_reports(planner_trace)
+        planner_steps = _planner_steps(planner_plans)
+        planner_execution_steps = _planner_execution_steps(planner_reports)
+        planner_plan_ids = _planner_values(planner_plans, "plan_id")
+        planner_step_ids = _planner_values(planner_steps, "step_id")
+        planner_step_statuses = _planner_values(planner_steps, "status")
+        planner_execution_statuses = _planner_values(planner_reports, "status")
+        failed_plan_steps = tuple(
+            item
+            for item in (*planner_steps, *planner_execution_steps)
+            if str(item.get("status") or "") == "failed"
+        )
+        blocked_plan_reports = tuple(
+            item for item in planner_reports if str(item.get("status") or "") == "blocked"
+        )
 
         status = str(run.get("status") or "")
         if spec.expected_status and status != spec.expected_status:
@@ -2237,6 +2278,80 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                     },
                 )
             )
+        if spec.require_planner_trace and not planner_trace:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "planner_trace_missing",
+                    "planner trace is required",
+                )
+            )
+        for plan_id in spec.required_plan_ids:
+            if plan_id not in planner_plan_ids:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_plan_id",
+                        f"required plan id missing: {plan_id}",
+                    )
+                )
+        for step_id in spec.required_plan_step_ids:
+            if step_id not in planner_step_ids:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_plan_step_id",
+                        f"required plan step id missing: {step_id}",
+                    )
+                )
+        for status_value in spec.required_plan_step_statuses:
+            if status_value not in planner_step_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_plan_step_status",
+                        f"required plan step status missing: {status_value}",
+                    )
+                )
+        for status_value in spec.required_plan_execution_statuses:
+            if status_value not in planner_execution_statuses:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_plan_execution_status",
+                        f"required plan execution status missing: {status_value}",
+                    )
+                )
+        if (
+            spec.max_failed_plan_steps is not None
+            and len(failed_plan_steps) > spec.max_failed_plan_steps
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "failed_plan_step_limit_exceeded",
+                    "failed plan step count exceeded limit",
+                    metadata={
+                        "actual": len(failed_plan_steps),
+                        "limit": spec.max_failed_plan_steps,
+                    },
+                )
+            )
+        if (
+            spec.max_blocked_plan_reports is not None
+            and len(blocked_plan_reports) > spec.max_blocked_plan_reports
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "blocked_plan_report_limit_exceeded",
+                    "blocked plan report count exceeded limit",
+                    metadata={
+                        "actual": len(blocked_plan_reports),
+                        "limit": spec.max_blocked_plan_reports,
+                    },
+                )
+            )
         tool_names = _tool_names(trace)
         for tool_name in spec.required_tool_names:
             if tool_name not in tool_names:
@@ -2689,6 +2804,17 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "structured_output_errors": sorted(structured_output_errors),
                 "structured_output_repair_count": len(structured_output_repairs),
                 "structured_output_failure_count": len(structured_output_failures),
+                "has_planner_trace": bool(planner_trace),
+                "planner_plan_count": len(planner_plans),
+                "planner_step_count": len(planner_steps),
+                "planner_execution_report_count": len(planner_reports),
+                "planner_execution_step_count": len(planner_execution_steps),
+                "planner_failed_step_count": len(failed_plan_steps),
+                "planner_blocked_report_count": len(blocked_plan_reports),
+                "planner_plan_ids": sorted(planner_plan_ids),
+                "planner_step_ids": sorted(planner_step_ids),
+                "planner_step_statuses": sorted(planner_step_statuses),
+                "planner_execution_statuses": sorted(planner_execution_statuses),
                 "terminal_event_types": sorted(
                     {str(event.get("type") or "") for event in terminal_events}
                 ),
@@ -3011,6 +3137,42 @@ def _prompt_shaping_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any],
                 "source": "prompt_trim",
                 "event_type": "prompt_trim_applied",
                 "payload": _prompt_trim_replay_payload(trim),
+            }
+        )
+    return tuple(steps)
+
+
+def _planner_replay_steps(trace: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    planner = _planner_trace(trace)
+    if not planner:
+        return ()
+    steps: list[dict[str, Any]] = []
+    for plan in _planner_plans(planner):
+        steps.append(
+            {
+                "event_type": "plan_created",
+                "payload": {
+                    "plan_id": str(plan.get("plan_id") or ""),
+                    "terminal": bool(plan.get("terminal")),
+                    "ready_steps": list(plan.get("ready_steps") or ()),
+                    "status_counts": dict(plan.get("status_counts") or {}),
+                },
+            }
+        )
+    for report in _planner_reports(planner):
+        status = str(report.get("status") or "unknown")
+        plan = report.get("plan") if isinstance(report.get("plan"), dict) else {}
+        steps.append(
+            {
+                "event_type": f"plan_execution_{status}",
+                "payload": {
+                    "status": status,
+                    "plan_id": str(plan.get("plan_id") or ""),
+                    "step_count": len(_dict_items(report.get("steps"))),
+                    "metadata": dict(report.get("metadata") or {})
+                    if isinstance(report.get("metadata"), dict)
+                    else {},
+                },
             }
         )
     return tuple(steps)
@@ -3685,6 +3847,110 @@ def _context_material_selection_records(manifest: dict[str, Any]) -> tuple[dict[
 
 
 def _context_material_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
+    return {str(item.get(key) or "") for item in records if item.get(key)}
+
+
+def _planner_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    manifest = trace.get("planner_trace")
+    if isinstance(manifest, dict) and manifest:
+        return dict(manifest)
+    session = trace.get("session") if isinstance(trace.get("session"), dict) else {}
+    for key in ("planner_trace", "planner", "plan_executor"):
+        value = session.get(key) if isinstance(session, dict) else None
+        if isinstance(value, dict) and value:
+            return _planner_trace_from_manifest(value)
+    return {}
+
+
+def _planner_trace_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    schema = str(manifest.get("schema_version") or "")
+    if schema == "agent-core-planner-trace/v1":
+        return dict(manifest)
+    plans, reports = _planner_materials_from_manifest(manifest)
+    steps = _planner_steps(plans)
+    execution_steps = _planner_execution_steps(reports)
+    failed_steps = tuple(
+        item
+        for item in (*steps, *execution_steps)
+        if str(item.get("status") or "") == "failed"
+    )
+    blocked_reports = tuple(
+        item for item in reports if str(item.get("status") or "") == "blocked"
+    )
+    return {
+        "schema_version": "agent-core-planner-trace/v1",
+        "plan_count": len(plans),
+        "step_count": len(steps),
+        "execution_report_count": len(reports),
+        "execution_step_count": len(execution_steps),
+        "failed_step_count": len(failed_steps),
+        "blocked_report_count": len(blocked_reports),
+        "plans": list(plans),
+        "reports": list(reports),
+    }
+
+
+def _planner_materials_from_manifest(
+    manifest: dict[str, Any],
+) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    schema = str(manifest.get("schema_version") or "")
+    if schema == "agent-core-plan/v1":
+        return ((dict(manifest),), ())
+    if schema == "agent-core-plan-execution-report/v1":
+        plan = manifest.get("plan") if isinstance(manifest.get("plan"), dict) else {}
+        return ((dict(plan),) if plan else (), (dict(manifest),))
+    if schema == "agent-core-plan-executor/v1":
+        reports = tuple(dict(item) for item in _dict_items(manifest.get("reports")))
+        plans = tuple(
+            dict(item.get("plan"))
+            for item in reports
+            if isinstance(item.get("plan"), dict)
+        )
+        return plans, reports
+    reports = tuple(dict(item) for item in _dict_items(manifest.get("reports")))
+    plans = tuple(dict(item) for item in _dict_items(manifest.get("plans")))
+    if reports:
+        report_plans = tuple(
+            dict(item.get("plan"))
+            for item in reports
+            if isinstance(item.get("plan"), dict)
+        )
+        return (*plans, *report_plans), reports
+    if plans:
+        return plans, ()
+    plan = manifest.get("plan") if isinstance(manifest.get("plan"), dict) else {}
+    return ((dict(plan),) if plan else (), ())
+
+
+def _planner_plans(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("plans")))
+
+
+def _planner_reports(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(item) for item in _dict_items(manifest.get("reports")))
+
+
+def _planner_steps(plans: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    records: list[dict[str, Any]] = []
+    for plan in plans:
+        plan_id = str(plan.get("plan_id") or "")
+        for step in _dict_items(plan.get("steps")):
+            records.append({"plan_id": plan_id, **dict(step)})
+    return tuple(records)
+
+
+def _planner_execution_steps(
+    reports: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    records: list[dict[str, Any]] = []
+    for report in reports:
+        status = str(report.get("status") or "")
+        for step in _dict_items(report.get("steps")):
+            records.append({"report_status": status, **dict(step)})
+    return tuple(records)
+
+
+def _planner_values(records: tuple[dict[str, Any], ...], key: str) -> set[str]:
     return {str(item.get(key) or "") for item in records if item.get(key)}
 
 
