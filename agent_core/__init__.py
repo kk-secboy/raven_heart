@@ -104,6 +104,12 @@ from agent_core.context_acceptance import (
     AgentCoreContextAcceptanceReport,
     run_agent_core_context_acceptance,
 )
+from agent_core.coordination_acceptance import (
+    AgentCoreCoordinationAcceptanceHarness,
+    AgentCoreCoordinationAcceptanceIssue,
+    AgentCoreCoordinationAcceptanceReport,
+    run_agent_core_coordination_acceptance as _run_agent_core_coordination_acceptance,
+)
 from agent_core.orchestration_acceptance import (
     AgentCoreOrchestrationAcceptanceHarness,
     AgentCoreOrchestrationAcceptanceIssue,
@@ -530,6 +536,9 @@ __all__ = [
     "AgentCoreContextAcceptanceHarness",
     "AgentCoreContextAcceptanceIssue",
     "AgentCoreContextAcceptanceReport",
+    "AgentCoreCoordinationAcceptanceHarness",
+    "AgentCoreCoordinationAcceptanceIssue",
+    "AgentCoreCoordinationAcceptanceReport",
     "AgentCoreOrchestrationAcceptanceHarness",
     "AgentCoreOrchestrationAcceptanceIssue",
     "AgentCoreOrchestrationAcceptanceReport",
@@ -925,6 +934,7 @@ __all__ = [
     "run_agent_core_acceptance",
     "run_agent_core_approval_acceptance",
     "run_agent_core_context_acceptance",
+    "run_agent_core_coordination_acceptance",
     "run_agent_core_orchestration_acceptance",
     "run_agent_core_provider_acceptance",
     "run_agent_core_recovery_acceptance",
@@ -1009,6 +1019,15 @@ async def run_agent_core_acceptance(
         task=task,
         metadata=metadata,
     )
+
+
+async def run_agent_core_coordination_acceptance(
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreCoordinationAcceptanceReport:
+    """Run the default pure-SDK coordination acceptance scenario."""
+
+    return await _run_agent_core_coordination_acceptance(metadata=metadata)
 
 
 async def run_agent_core_validation(

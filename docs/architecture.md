@@ -93,6 +93,14 @@ trace summaries. The SDK owns the portable registry, center, discovery, and
 trace contracts; runtimes own concrete tools, MCP process lifecycle, secrets,
 network sessions, sandboxing, and product workflow queues.
 
+`AgentCoreCoordinationAcceptanceHarness` is the generic multi-agent
+coordination gate. It verifies dependency-aware plan execution, capability-based
+handoff selection, managed agent sessions exposed through `AgentToolRuntime`,
+prompt-safe artifact records for large coordination evidence, and trace/eval
+contracts for planner, handoff, agent-as-tool, and artifacts. The SDK owns the
+portable coordination semantics; runtimes own distributed scheduling, workflow
+queues, tenant policy, and domain-specific planning strategy.
+
 `AgentCoreProviderAcceptanceHarness` is the provider-compatibility gate. It runs
 a deterministic matrix for text, multimodal, structured-output, native-tool,
 OpenAI-compatible codec, transport fallback, and streaming routes. It proves the
@@ -127,8 +135,9 @@ selection, UI recovery flows, and product workflow state.
 
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, approval acceptance, orchestration acceptance, provider acceptance,
-storage acceptance, recovery acceptance, and resume acceptance, then returns one
+acceptance, approval acceptance, orchestration acceptance, coordination
+acceptance, provider acceptance, storage acceptance, recovery acceptance, and
+resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.

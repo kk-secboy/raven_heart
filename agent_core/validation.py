@@ -10,6 +10,7 @@ from typing import Any
 from agent_core.acceptance import run_agent_core_acceptance
 from agent_core.approval_acceptance import run_agent_core_approval_acceptance
 from agent_core.context_acceptance import run_agent_core_context_acceptance
+from agent_core.coordination_acceptance import run_agent_core_coordination_acceptance
 from agent_core.manifest import (
     AgentCoreSDKManifest,
     FORBIDDEN_RUNTIME_DEPENDENCIES,
@@ -116,6 +117,7 @@ class AgentCoreValidationReport:
     approval_acceptance: dict[str, Any] = field(default_factory=dict)
     context_acceptance: dict[str, Any] = field(default_factory=dict)
     orchestration_acceptance: dict[str, Any] = field(default_factory=dict)
+    coordination_acceptance: dict[str, Any] = field(default_factory=dict)
     provider_acceptance: dict[str, Any] = field(default_factory=dict)
     storage_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
@@ -146,6 +148,7 @@ class AgentCoreValidationReport:
             "approval_acceptance": dict(self.approval_acceptance),
             "context_acceptance": dict(self.context_acceptance),
             "orchestration_acceptance": dict(self.orchestration_acceptance),
+            "coordination_acceptance": dict(self.coordination_acceptance),
             "provider_acceptance": dict(self.provider_acceptance),
             "storage_acceptance": dict(self.storage_acceptance),
             "recovery": dict(self.recovery),
@@ -195,6 +198,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "orchestration_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        coordination_acceptance = (
+            await run_agent_core_coordination_acceptance(
+                metadata={"validation_gate": "coordination_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         provider_acceptance = (
             await run_agent_core_provider_acceptance(
                 metadata={"validation_gate": "provider_acceptance", **dict(self.metadata)}
@@ -223,6 +231,7 @@ class AgentCoreValidationSuite:
             approval_acceptance=approval_acceptance,
             context_acceptance=context_acceptance,
             orchestration_acceptance=orchestration_acceptance,
+            coordination_acceptance=coordination_acceptance,
             provider_acceptance=provider_acceptance,
             storage_acceptance=storage_acceptance,
             recovery=recovery,
@@ -238,6 +247,7 @@ class AgentCoreValidationSuite:
             approval_acceptance=approval_acceptance,
             context_acceptance=context_acceptance,
             orchestration_acceptance=orchestration_acceptance,
+            coordination_acceptance=coordination_acceptance,
             provider_acceptance=provider_acceptance,
             storage_acceptance=storage_acceptance,
             recovery=recovery,
@@ -357,6 +367,7 @@ def _validation_issues(
     approval_acceptance: dict[str, Any],
     context_acceptance: dict[str, Any],
     orchestration_acceptance: dict[str, Any],
+    coordination_acceptance: dict[str, Any],
     provider_acceptance: dict[str, Any],
     storage_acceptance: dict[str, Any],
     recovery: dict[str, Any],
@@ -373,6 +384,11 @@ def _validation_issues(
         issues,
         source="orchestration_acceptance",
         report=orchestration_acceptance,
+    )
+    _extend_report_issues(
+        issues,
+        source="coordination_acceptance",
+        report=coordination_acceptance,
     )
     _extend_report_issues(issues, source="provider_acceptance", report=provider_acceptance)
     _extend_report_issues(issues, source="storage_acceptance", report=storage_acceptance)

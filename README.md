@@ -162,6 +162,14 @@ and ToolCenter/MCP/skill trace summaries. Concrete tools, MCP processes,
 credentials, network sessions, and product workflow queues remain outside the
 SDK.
 
+`agent_core.run_agent_core_coordination_acceptance()` runs deterministic
+planner/handoff/agent-as-tool/artifact checks. It executes a two-step plan
+through `PlanExecutor`, routes a handoff to a capable reviewer session, exposes
+that reviewer as an agent tool, stores coordination evidence as an artifact, and
+evaluates planner, handoff, agent-tool, and artifact traces. Distributed
+scheduling, product workflow queues, and runtime-specific worker policy remain
+outside the SDK.
+
 `agent_core.run_agent_core_provider_acceptance()` runs a deterministic provider
 compatibility matrix. It checks provider routing for text, multimodal,
 structured-output, and native-tool requests; OpenAI-compatible codec
@@ -194,8 +202,9 @@ flows remain outside the SDK.
 
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
-acceptance, approval acceptance, orchestration acceptance, provider acceptance,
-storage acceptance, recovery acceptance, and resume acceptance, then returns one
+acceptance, approval acceptance, orchestration acceptance, coordination
+acceptance, provider acceptance, storage acceptance, recovery acceptance, and
+resume acceptance, then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
 
@@ -929,6 +938,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK provider acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | SDK resume acceptance harness | MVP implemented |
+| SDK coordination acceptance harness | MVP implemented |
 | SDK aggregate validation suite | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
