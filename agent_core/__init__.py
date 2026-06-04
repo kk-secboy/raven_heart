@@ -373,6 +373,12 @@ from agent_core.resume_acceptance import (
     AgentCoreResumeAcceptanceReport,
     run_agent_core_resume_acceptance,
 )
+from agent_core.storage_acceptance import (
+    AgentCoreStorageAcceptanceHarness,
+    AgentCoreStorageAcceptanceIssue,
+    AgentCoreStorageAcceptanceReport,
+    run_agent_core_storage_acceptance,
+)
 from agent_core.runner import (
     AgentManagerCapacityError,
     AgentManagerCapacityStatus,
@@ -543,6 +549,9 @@ __all__ = [
     "AgentCoreRuntimeBoundaryReport",
     "AgentCoreRuntimeBoundary",
     "AgentCoreSDKManifest",
+    "AgentCoreStorageAcceptanceHarness",
+    "AgentCoreStorageAcceptanceIssue",
+    "AgentCoreStorageAcceptanceReport",
     "AgentCoreValidationIssue",
     "AgentCoreValidationReport",
     "AgentCoreValidationSuite",
@@ -920,6 +929,7 @@ __all__ = [
     "run_agent_core_provider_acceptance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
+    "run_agent_core_storage_acceptance",
     "run_agent_core_validation",
 ]
 

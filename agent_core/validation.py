@@ -22,6 +22,7 @@ from agent_core.orchestration_acceptance import run_agent_core_orchestration_acc
 from agent_core.provider_acceptance import run_agent_core_provider_acceptance
 from agent_core.recovery import run_agent_core_recovery_acceptance
 from agent_core.resume_acceptance import run_agent_core_resume_acceptance
+from agent_core.storage_acceptance import run_agent_core_storage_acceptance
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,7 @@ class AgentCoreValidationReport:
     context_acceptance: dict[str, Any] = field(default_factory=dict)
     orchestration_acceptance: dict[str, Any] = field(default_factory=dict)
     provider_acceptance: dict[str, Any] = field(default_factory=dict)
+    storage_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
     issues: tuple[AgentCoreValidationIssue, ...] = ()
@@ -145,6 +147,7 @@ class AgentCoreValidationReport:
             "context_acceptance": dict(self.context_acceptance),
             "orchestration_acceptance": dict(self.orchestration_acceptance),
             "provider_acceptance": dict(self.provider_acceptance),
+            "storage_acceptance": dict(self.storage_acceptance),
             "recovery": dict(self.recovery),
             "resume": dict(self.resume),
             "metadata": dict(self.metadata),
@@ -197,6 +200,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "provider_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        storage_acceptance = (
+            await run_agent_core_storage_acceptance(
+                metadata={"validation_gate": "storage_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         recovery = (
             await run_agent_core_recovery_acceptance(
                 metadata={"validation_gate": "recovery", **dict(self.metadata)}
@@ -216,6 +224,7 @@ class AgentCoreValidationSuite:
             context_acceptance=context_acceptance,
             orchestration_acceptance=orchestration_acceptance,
             provider_acceptance=provider_acceptance,
+            storage_acceptance=storage_acceptance,
             recovery=recovery,
             resume=resume,
         )
@@ -230,6 +239,7 @@ class AgentCoreValidationSuite:
             context_acceptance=context_acceptance,
             orchestration_acceptance=orchestration_acceptance,
             provider_acceptance=provider_acceptance,
+            storage_acceptance=storage_acceptance,
             recovery=recovery,
             resume=resume,
             issues=issues,
@@ -348,6 +358,7 @@ def _validation_issues(
     context_acceptance: dict[str, Any],
     orchestration_acceptance: dict[str, Any],
     provider_acceptance: dict[str, Any],
+    storage_acceptance: dict[str, Any],
     recovery: dict[str, Any],
     resume: dict[str, Any],
 ) -> tuple[AgentCoreValidationIssue, ...]:
@@ -364,6 +375,7 @@ def _validation_issues(
         report=orchestration_acceptance,
     )
     _extend_report_issues(issues, source="provider_acceptance", report=provider_acceptance)
+    _extend_report_issues(issues, source="storage_acceptance", report=storage_acceptance)
     _extend_report_issues(issues, source="recovery", report=recovery)
     _extend_report_issues(issues, source="resume", report=resume)
     return tuple(issues)

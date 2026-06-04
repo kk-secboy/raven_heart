@@ -100,6 +100,15 @@ SDK can choose providers by capability and preserve portable call manifests
 without embedding concrete HTTP clients, credentials, rate limits, or
 vendor-specific adapters in core.
 
+`AgentCoreStorageAcceptanceHarness` is the storage-portability gate. It verifies
+SDK built-in in-memory, SQLite, Markdown, and none backend manifests across
+store roles; SQLite and Markdown memory/context roundtrips; backend extraction
+from component manifests; runtime-owned Postgres, vector, object-storage, and
+product backend contracts; positive multi-role storage preflight; and negative
+blocked preflight behavior. The SDK owns backend metadata, selection, and
+preflight contracts; runtimes own concrete PG/vector/graph/object-store/product
+clients, migrations, tenancy, retention, and operational policy.
+
 `AgentCoreRecoveryHarness` adds the recovery gate. It runs provider fallback and
 tool retry scenarios with deterministic failures, then returns an
 `AgentCoreRecoveryReport` containing retry counts, fallback use, attempt
@@ -119,7 +128,7 @@ selection, UI recovery flows, and product workflow state.
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, provider acceptance,
-recovery acceptance, and resume acceptance, then returns one
+storage acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.

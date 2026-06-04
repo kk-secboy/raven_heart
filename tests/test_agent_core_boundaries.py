@@ -77,6 +77,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreRuntimeBoundaryReport",
         "AgentCoreRuntimeBoundary",
         "AgentCoreSDKManifest",
+        "AgentCoreStorageAcceptanceHarness",
+        "AgentCoreStorageAcceptanceIssue",
+        "AgentCoreStorageAcceptanceReport",
         "AgentCoreValidationIssue",
         "AgentCoreValidationReport",
         "AgentCoreValidationSuite",
@@ -309,6 +312,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_provider_acceptance",
         "run_agent_core_recovery_acceptance",
         "run_agent_core_resume_acceptance",
+        "run_agent_core_storage_acceptance",
         "run_agent_core_validation",
         "UsageInfo",
         "ToolReplayRecord",
@@ -368,6 +372,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "context_acceptance_harness" in capability_names
     assert "orchestration_acceptance_harness" in capability_names
     assert "provider_acceptance_harness" in capability_names
+    assert "storage_acceptance_harness" in capability_names
     assert "recovery_acceptance_harness" in capability_names
     assert "resume_acceptance_harness" in capability_names
     assert "validation_suite" in capability_names
@@ -429,6 +434,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "context_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "storage_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "recovery_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "resume_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "validation_suite" in manifest["matched"]["capabilities"]
