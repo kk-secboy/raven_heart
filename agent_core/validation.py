@@ -27,6 +27,7 @@ from agent_core.manifest import (
 )
 from agent_core.native_tool_acceptance import run_agent_core_native_tool_acceptance
 from agent_core.orchestration_acceptance import run_agent_core_orchestration_acceptance
+from agent_core.packaging_acceptance import run_agent_core_packaging_acceptance
 from agent_core.provider_acceptance import run_agent_core_provider_acceptance
 from agent_core.recovery import run_agent_core_recovery_acceptance
 from agent_core.resume_acceptance import run_agent_core_resume_acceptance
@@ -130,6 +131,7 @@ class AgentCoreValidationReport:
     guardrail_acceptance: dict[str, Any] = field(default_factory=dict)
     lifecycle_acceptance: dict[str, Any] = field(default_factory=dict)
     native_tool_acceptance: dict[str, Any] = field(default_factory=dict)
+    packaging_acceptance: dict[str, Any] = field(default_factory=dict)
     provider_acceptance: dict[str, Any] = field(default_factory=dict)
     storage_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
@@ -166,6 +168,7 @@ class AgentCoreValidationReport:
             "guardrail_acceptance": dict(self.guardrail_acceptance),
             "lifecycle_acceptance": dict(self.lifecycle_acceptance),
             "native_tool_acceptance": dict(self.native_tool_acceptance),
+            "packaging_acceptance": dict(self.packaging_acceptance),
             "provider_acceptance": dict(self.provider_acceptance),
             "storage_acceptance": dict(self.storage_acceptance),
             "recovery": dict(self.recovery),
@@ -253,6 +256,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "provider_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        packaging_acceptance = (
+            await run_agent_core_packaging_acceptance(
+                metadata={"validation_gate": "packaging_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         storage_acceptance = (
             await run_agent_core_storage_acceptance(
                 metadata={"validation_gate": "storage_acceptance", **dict(self.metadata)}
@@ -282,6 +290,7 @@ class AgentCoreValidationSuite:
             guardrail_acceptance=guardrail_acceptance,
             lifecycle_acceptance=lifecycle_acceptance,
             native_tool_acceptance=native_tool_acceptance,
+            packaging_acceptance=packaging_acceptance,
             provider_acceptance=provider_acceptance,
             storage_acceptance=storage_acceptance,
             recovery=recovery,
@@ -303,6 +312,7 @@ class AgentCoreValidationSuite:
             guardrail_acceptance=guardrail_acceptance,
             lifecycle_acceptance=lifecycle_acceptance,
             native_tool_acceptance=native_tool_acceptance,
+            packaging_acceptance=packaging_acceptance,
             provider_acceptance=provider_acceptance,
             storage_acceptance=storage_acceptance,
             recovery=recovery,
@@ -428,6 +438,7 @@ def _validation_issues(
     guardrail_acceptance: dict[str, Any],
     lifecycle_acceptance: dict[str, Any],
     native_tool_acceptance: dict[str, Any],
+    packaging_acceptance: dict[str, Any],
     provider_acceptance: dict[str, Any],
     storage_acceptance: dict[str, Any],
     recovery: dict[str, Any],
@@ -474,6 +485,11 @@ def _validation_issues(
         issues,
         source="native_tool_acceptance",
         report=native_tool_acceptance,
+    )
+    _extend_report_issues(
+        issues,
+        source="packaging_acceptance",
+        report=packaging_acceptance,
     )
     _extend_report_issues(issues, source="provider_acceptance", report=provider_acceptance)
     _extend_report_issues(issues, source="storage_acceptance", report=storage_acceptance)

@@ -28,6 +28,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["guardrail_acceptance"]["ready"] is True
     assert manifest["lifecycle_acceptance"]["ready"] is True
     assert manifest["native_tool_acceptance"]["ready"] is True
+    assert manifest["packaging_acceptance"]["ready"] is True
     assert manifest["provider_acceptance"]["ready"] is True
     assert manifest["storage_acceptance"]["ready"] is True
     assert manifest["recovery"]["ready"] is True
@@ -81,6 +82,9 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
         "provider_tool_result_execution_count"
     ] == 1
     assert manifest["native_tool_acceptance"]["trace_eval"]["ok"] is True
+    assert manifest["packaging_acceptance"]["project_metadata"]["name"] == "raven-heart"
+    assert manifest["packaging_acceptance"]["build_metadata"]["includes_agent_core"] is True
+    assert manifest["packaging_acceptance"]["public_api"]["stability_ready"] is True
     assert manifest["provider_acceptance"]["route_matrix"]["selected"]["vision"] == "vision"
     assert manifest["storage_acceptance"]["preflight"]["ready"] is True
     assert manifest["recovery"]["provider_recovery"]["fallback_used"] is True
@@ -122,6 +126,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "guardrail_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "lifecycle_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "native_tool_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "packaging_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "provider_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "storage_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "validation_suite" in readiness["matched"]["capabilities"]
@@ -145,6 +150,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_lifecycle_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreNativeToolAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_native_tool_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCorePackagingAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_packaging_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreProviderAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_provider_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreStorageAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -171,6 +178,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_lifecycle_acceptance" in stability["present_stable_api"]
     assert "AgentCoreNativeToolAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_native_tool_acceptance" in stability["present_stable_api"]
+    assert "AgentCorePackagingAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_packaging_acceptance" in stability["present_stable_api"]
     assert "AgentCoreProviderAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_provider_acceptance" in stability["present_stable_api"]
     assert "AgentCoreStorageAcceptanceHarness" in stability["present_stable_api"]

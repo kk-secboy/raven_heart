@@ -240,12 +240,19 @@ evaluates the run trace, and verifies strict terminal checkpoints are rejected
 when `allow_terminal=False`. Runtime worker scheduling and user-facing recovery
 flows remain outside the SDK.
 
+`agent_core.run_agent_core_packaging_acceptance()` runs deterministic package
+readiness checks. It verifies `pyproject.toml` metadata, explicit build-system
+configuration, zero runtime dependencies, package discovery for `agent_core`,
+stable public imports, required repository files, and example entrypoint smoke
+structure. Release automation, publishing credentials, signing, and adapter
+wheels remain outside the SDK.
+
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
-lifecycle acceptance, native-tool acceptance, provider acceptance, storage
-acceptance, recovery acceptance, and resume acceptance, then returns one
+lifecycle acceptance, native-tool acceptance, packaging acceptance, provider
+acceptance, storage acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
 
@@ -977,6 +984,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK replacement-readiness profile | MVP implemented |
 | SDK public API stability contract | MVP implemented |
 | SDK runtime boundary audit | MVP implemented |
+| SDK packaging acceptance harness | MVP implemented |
 | SDK replacement acceptance harness | MVP implemented |
 | SDK context acceptance harness | MVP implemented |
 | SDK provider acceptance harness | MVP implemented |

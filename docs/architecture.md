@@ -174,12 +174,19 @@ requires trace eval coverage for provider tool calls and provider tool results.
 The SDK owns the provider-neutral loop contract; host runtimes own vendor HTTP
 payloads, credentials, deployment routing, and concrete provider adapters.
 
+`AgentCorePackagingAcceptanceHarness` adds the package-readiness gate. It checks
+`pyproject.toml` project metadata, explicit build-system configuration, zero
+runtime dependencies, package discovery for `agent_core`, stable public imports,
+required repository files, and example entrypoint smoke structure. The SDK owns
+these release-facing contracts; release automation, package indexes, signing,
+and adapter wheels stay outside core.
+
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
-lifecycle acceptance, native-tool acceptance, provider acceptance, storage
-acceptance, recovery acceptance, and resume acceptance, then returns one
+lifecycle acceptance, native-tool acceptance, packaging acceptance, provider
+acceptance, storage acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.
