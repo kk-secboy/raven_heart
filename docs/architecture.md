@@ -44,6 +44,16 @@ core-SDK readiness check; product wiring, RavenStorm adapter behavior,
 credentials, UI streams, and production data stores still need runtime-level
 acceptance tests outside this repository.
 
+`AgentCoreAcceptanceHarness` is the next gate after manifest readiness. It runs a
+deterministic pure-core scenario through `AgentRunner`: a provider requests a
+tool call, `ToolCenter` routes it, memory recall injects context, the run writes
+journal/event/tool-replay/trace records, and `DefaultTraceEvaluator` checks the
+resulting trace. `AgentCoreAcceptanceReport` aggregates readiness, trace eval,
+trace summary, run summary, and blocking issues. The harness proves that the SDK
+base can execute the generic agent loop end to end, while RavenStorm-specific
+routes, credentials, distributed workers, UI streaming, and production storage
+remain separate adapter/runtime acceptance concerns.
+
 ## Boundary Table
 
 | Core area | Runtime responsibility |

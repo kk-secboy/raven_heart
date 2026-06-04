@@ -118,6 +118,14 @@ contracts, storage backend roles/kinds, and runtime-boundary declarations. It
 does not validate RavenStorm-specific wiring, credentials, UI behavior, or
 production adapters; those remain runtime acceptance tests.
 
+`agent_core.run_agent_core_acceptance()` runs a deterministic pure-SDK
+acceptance scenario. It exercises readiness, ReAct, provider routing, ToolCenter,
+memory recall, context injection, journal persistence, event logging, tool
+replay, trace bundling, and trace eval without importing a host runtime. The
+result is an `AgentCoreAcceptanceReport` with blocking issues, run summary,
+readiness report, and trace-eval report. This is the package-level gate before a
+runtime starts adapter-specific migration tests.
+
 ## Core Capabilities
 
 ### Harness
@@ -841,6 +849,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Run failure summary trace/eval | MVP implemented |
 | SDK capability/boundary manifest | MVP implemented |
 | SDK replacement-readiness profile | MVP implemented |
+| SDK replacement acceptance harness | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
 | Manager run event paging | MVP implemented |

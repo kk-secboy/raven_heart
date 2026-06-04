@@ -6,6 +6,12 @@ OpenAI Agents SDK, FastAPI, Redis, databases, and concrete tool implementations.
 
 from typing import Any
 
+from agent_core.acceptance import (
+    AgentCoreAcceptanceHarness,
+    AgentCoreAcceptanceIssue,
+    AgentCoreAcceptanceReport,
+    run_agent_core_acceptance as _run_agent_core_acceptance,
+)
 from agent_core.actions import (
     ActionRegistry,
     ActionSpec,
@@ -457,6 +463,9 @@ __all__ = [
     "AllowAllPolicy",
     "AllowAllMemoryGovernance",
     "AgentContextPack",
+    "AgentCoreAcceptanceHarness",
+    "AgentCoreAcceptanceIssue",
+    "AgentCoreAcceptanceReport",
     "AgentCoreCapability",
     "AgentCoreReadinessIssue",
     "AgentCoreReadinessProfile",
@@ -827,6 +836,7 @@ __all__ = [
     "UsageInfo",
     "validate_tool_arguments",
     "agent_core_sdk_manifest",
+    "run_agent_core_acceptance",
 ]
 
 
@@ -855,5 +865,19 @@ def evaluate_agent_core_readiness(
     return _evaluate_agent_core_readiness(
         agent_core_sdk_manifest(package_version=package_version, metadata=metadata),
         profile=profile,
+    )
+
+
+async def run_agent_core_acceptance(
+    *,
+    task: str = "inspect target",
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreAcceptanceReport:
+    """Run the default pure-SDK acceptance scenario against the package root."""
+
+    return await _run_agent_core_acceptance(
+        sdk_manifest=agent_core_sdk_manifest(metadata=metadata),
+        task=task,
+        metadata=metadata,
     )
 
