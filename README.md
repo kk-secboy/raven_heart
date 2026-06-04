@@ -271,7 +271,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   prompt-semantic-trim, prompt-trim, context-material-selection, MCP inventory/server,
   skill-load/resource-view, handoff decision, approval request/decision,
   artifact-store, structured-output validation/repair, provider-call,
-  provider-stream, embedding-call, and lifecycle-hook steps.
+  provider request-shape payloads, provider-stream, embedding-call, and
+  lifecycle-hook steps.
 - `TraceReplayComparator` compares two trace manifests and reports deterministic
   replay diffs for regression baselines.
 - `TraceEvalSpec` defines provider-neutral expectations such as status,
@@ -292,7 +293,8 @@ multi-tenant audit storage, retention policy, and observability pipelines.
   excluded injection source constraints, context material selection constraints,
   memory governance constraints, prompt
   budget constraints, bucket budget constraints, runtime semantic prompt trim
-  constraints, and global prompt trim constraints.
+  constraints, provider request-shape constraints, and global prompt trim
+  constraints.
 - `DefaultTraceEvaluator` evaluates one trace manifest without calling a model.
 - `TraceEvalHarness` evaluates traces from any `RunTraceStorePort`.
 - `TraceEvalReport` exports replay, summary counters, and contract failures.
@@ -437,6 +439,9 @@ modalities.
 The request shape plan records whether `max_output_tokens` was capped, the
 original and final output limit, provider/model identity, and declared context
 window. This keeps provider limits auditable without importing vendor SDKs.
+Trace replay includes the request shape plan in provider-call payloads, and
+trace evals can require adjusted plans, specific decisions, provider names, or
+final output-token ceilings.
 The route plan manifest records the full provider preflight decision, so a
 runtime can explain why a cheap/default model was skipped, which provider was
 selected, and which compatible providers remain available for fallback without

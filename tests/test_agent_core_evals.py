@@ -83,7 +83,23 @@ def _trace_manifest() -> dict[str, object]:
                     "model": "mock-mini",
                     "usage": {"cost_usd": 0.01},
                     "metadata": {
+                        "request_shape_plan": {
+                            "schema_version": "agent-core-llm-request-shape-plan/v1",
+                            "requested_provider": "",
+                            "requested_model": "",
+                            "provider_name": "mock",
+                            "model": "mock-mini",
+                            "streamed": False,
+                            "original_max_output_tokens": 256,
+                            "final_max_output_tokens": 64,
+                            "provider_max_output_tokens": 64,
+                            "context_window_tokens": 4096,
+                            "adjusted": True,
+                            "decisions": ["max_output_tokens_capped_to_provider_limit"],
+                            "metadata": {"provider_priority": 10},
+                        },
                         "request": {
+                            "max_output_tokens": 64,
                             "metadata": {
                                 "model_capabilities": {
                                     "schema_version": "agent-core-llm-model-capabilities/v1",
@@ -715,6 +731,11 @@ def test_trace_replay_harness_combines_journal_and_event_log() -> None:
     assert manifest["steps"][21]["payload"]["schema_name"] == "risk_summary"
     assert manifest["steps"][22]["source"] == "provider"
     assert manifest["steps"][22]["payload"]["provider_name"] == "mock"
+    assert manifest["steps"][22]["payload"]["request_shape_plan"]["adjusted"] is True
+    assert (
+        manifest["steps"][22]["payload"]["request_shape_plan"]["final_max_output_tokens"]
+        == 64
+    )
 
 
 def test_trace_replay_harness_includes_lifecycle_hook_steps() -> None:
@@ -1161,6 +1182,65 @@ def test_trace_eval_reports_provider_route_plan_contract_failures() -> None:
         "missing_provider_route_selected",
         "forbidden_provider_route_reason",
     } <= {issue.code for issue in report.issues}
+
+
+def test_trace_eval_validates_provider_request_shape_contracts() -> None:
+    report = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            require_provider_request_shape_plan=True,
+            require_provider_request_shape_adjusted=True,
+            required_provider_request_shape_provider_names=("mock",),
+            required_provider_request_shape_decisions=(
+                "max_output_tokens_capped_to_provider_limit",
+            ),
+            max_provider_request_shape_final_output_tokens=64,
+        ),
+    )
+
+    assert report.ok
+    assert report.summary["provider_request_shape_plan_count"] == 1
+    assert report.summary["provider_request_shape_adjusted_count"] == 1
+    assert report.summary["provider_request_shape_provider_names"] == ["mock"]
+    assert report.summary["provider_request_shape_decisions"] == [
+        "max_output_tokens_capped_to_provider_limit"
+    ]
+    assert report.summary["provider_request_shape_max_final_output_tokens"] == 64
+    assert report.metadata["spec"]["require_provider_request_shape_plan"] is True
+
+
+def test_trace_eval_reports_provider_request_shape_contract_failures() -> None:
+    trace = _trace_manifest()
+    trace["provider"]["calls"][0]["metadata"].pop("request_shape_plan")
+    trace["provider"]["calls"][0]["metadata"]["request"]["metadata"].pop(
+        "request_shape_plan",
+        None,
+    )
+    missing = DefaultTraceEvaluator().evaluate(
+        trace,
+        TraceEvalSpec(require_provider_request_shape_plan=True),
+    )
+    forbidden = DefaultTraceEvaluator().evaluate(
+        _trace_manifest(),
+        TraceEvalSpec(
+            forbid_provider_request_shape_plan=True,
+            forbid_provider_request_shape_adjusted=True,
+            required_provider_request_shape_provider_names=("other",),
+            required_provider_request_shape_decisions=("other_decision",),
+            max_provider_request_shape_final_output_tokens=32,
+        ),
+    )
+
+    assert {issue.code for issue in missing.issues} == {
+        "provider_request_shape_plan_missing"
+    }
+    assert {
+        "provider_request_shape_plan_forbidden",
+        "provider_request_shape_adjusted_forbidden",
+        "missing_provider_request_shape_provider",
+        "missing_provider_request_shape_decision",
+        "provider_request_shape_final_output_tokens_exceeded",
+    } <= {issue.code for issue in forbidden.issues}
 
 
 def test_trace_eval_validates_lifecycle_hook_contracts() -> None:

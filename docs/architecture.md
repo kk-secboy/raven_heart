@@ -159,13 +159,14 @@ trace indexes can implement the same port without changing replay/eval code.
 trace manifests into deterministic replay steps, baseline diff reports, and
 provider-neutral evaluation reports. Replay steps include resume selection,
 checkpoint loading, journal events, event-log entries, provider calls, provider
-streaming calls using prompt-safe summaries, prompt budget, prompt bucket
-budget, semantic prompt trim, global prompt trim, preflight reports, approval records, artifact
-records, structured output validation/repair records, handoff records,
-embedding calls, and lifecycle hook records. The core
+request-shape payloads, provider streaming calls using prompt-safe summaries,
+prompt budget, prompt bucket budget, semantic prompt trim, global prompt trim,
+preflight reports, approval records, artifact records, structured output
+validation/repair records, handoff records, embedding calls, and lifecycle hook records. The core
 checks generic contracts such as final status, iteration limits, provider call
 limits, embedding call limits, required embedding providers/models/dimensions,
-provider-native tool-call presence/names, required events, required tools,
+provider-native tool-call presence/names, provider request-shape plans and
+output-token ceilings, required events, required tools,
 cost ceilings, event ordering, journal integrity, preflight status/issue-code constraints,
 resume-plan presence,
 resume-plan readiness, expected resume checkpoint ids, handoff status/session constraints, tool execution presence,
@@ -305,6 +306,9 @@ in prompt and run trace manifests.
 budget: the runner can shrink the prompt, while the provider center constrains
 the outgoing generation request. Concrete adapters still own HTTP payloads,
 credentials, deployment names, tenant routing, and vendor-specific quota logic.
+Replay payloads include this plan on provider call steps, and trace evals can
+require adjusted plans, specific shape decisions, provider names, and final
+output-token ceilings.
 `LLMToolContract`, `LLMToolChoice`, and `LLMResponseFormat` are request-level
 contracts for native model tools and constrained output. They deliberately stop
 at the provider-neutral shape: OpenAI-compatible tools/response formats,

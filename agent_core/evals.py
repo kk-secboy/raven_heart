@@ -92,6 +92,13 @@ class TraceEvalSpec:
     required_provider_route_candidate_names: tuple[str, ...] = ()
     required_provider_route_selected_names: tuple[str, ...] = ()
     forbidden_provider_route_reasons: tuple[str, ...] = ()
+    require_provider_request_shape_plan: bool = False
+    forbid_provider_request_shape_plan: bool = False
+    require_provider_request_shape_adjusted: bool = False
+    forbid_provider_request_shape_adjusted: bool = False
+    required_provider_request_shape_decisions: tuple[str, ...] = ()
+    required_provider_request_shape_provider_names: tuple[str, ...] = ()
+    max_provider_request_shape_final_output_tokens: int | None = None
     require_lifecycle_hooks: bool = False
     required_lifecycle_event_types: tuple[str, ...] = ()
     forbidden_lifecycle_event_types: tuple[str, ...] = ()
@@ -290,6 +297,23 @@ class TraceEvalSpec:
                 self.required_provider_route_selected_names
             ),
             "forbidden_provider_route_reasons": list(self.forbidden_provider_route_reasons),
+            "require_provider_request_shape_plan": self.require_provider_request_shape_plan,
+            "forbid_provider_request_shape_plan": self.forbid_provider_request_shape_plan,
+            "require_provider_request_shape_adjusted": (
+                self.require_provider_request_shape_adjusted
+            ),
+            "forbid_provider_request_shape_adjusted": (
+                self.forbid_provider_request_shape_adjusted
+            ),
+            "required_provider_request_shape_decisions": list(
+                self.required_provider_request_shape_decisions
+            ),
+            "required_provider_request_shape_provider_names": list(
+                self.required_provider_request_shape_provider_names
+            ),
+            "max_provider_request_shape_final_output_tokens": (
+                self.max_provider_request_shape_final_output_tokens
+            ),
             "require_lifecycle_hooks": self.require_lifecycle_hooks,
             "required_lifecycle_event_types": list(self.required_lifecycle_event_types),
             "forbidden_lifecycle_event_types": list(self.forbidden_lifecycle_event_types),
@@ -825,6 +849,26 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
         provider_route_candidate_names = _provider_route_candidate_names(provider_route_candidates)
         provider_route_selected_names = _provider_route_selected_names(provider_route_candidates)
         provider_route_reasons = _provider_route_reasons(provider_route_candidates)
+        provider_request_shape_plans = _provider_request_shape_plans(provider_call_records)
+        provider_request_shape_provider_names = _provider_request_shape_values(
+            provider_request_shape_plans,
+            "provider_name",
+        )
+        provider_request_shape_decisions = _provider_request_shape_decisions(
+            provider_request_shape_plans
+        )
+        adjusted_provider_request_shapes = tuple(
+            plan for plan in provider_request_shape_plans if plan.get("adjusted") is True
+        )
+        provider_request_shape_final_output_tokens = tuple(
+            _safe_int(plan.get("final_max_output_tokens"))
+            for plan in provider_request_shape_plans
+            if plan.get("final_max_output_tokens") is not None
+        )
+        provider_request_shape_max_final_output_tokens = max(
+            provider_request_shape_final_output_tokens,
+            default=0,
+        )
         lifecycle_hooks = _lifecycle_hooks(trace)
         lifecycle_hook_records = _lifecycle_hook_records(lifecycle_hooks)
         lifecycle_event_types = _lifecycle_event_types(lifecycle_hook_records)
@@ -1322,6 +1366,75 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                         f"forbidden provider route reason present: {reason}",
                     )
                 )
+        if spec.require_provider_request_shape_plan and not provider_request_shape_plans:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_request_shape_plan_missing",
+                    "provider request shape plan trace is required",
+                )
+            )
+        if spec.forbid_provider_request_shape_plan and provider_request_shape_plans:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_request_shape_plan_forbidden",
+                    "provider request shape plan trace is forbidden",
+                )
+            )
+        if (
+            spec.require_provider_request_shape_adjusted
+            and not adjusted_provider_request_shapes
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_request_shape_adjusted_missing",
+                    "adjusted provider request shape is required",
+                )
+            )
+        if spec.forbid_provider_request_shape_adjusted and adjusted_provider_request_shapes:
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_request_shape_adjusted_forbidden",
+                    "adjusted provider request shape is forbidden",
+                )
+            )
+        for decision in spec.required_provider_request_shape_decisions:
+            if decision not in provider_request_shape_decisions:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_request_shape_decision",
+                        f"required provider request shape decision missing: {decision}",
+                    )
+                )
+        for provider_name in spec.required_provider_request_shape_provider_names:
+            if provider_name not in provider_request_shape_provider_names:
+                issues.append(
+                    TraceEvalIssue(
+                        "error",
+                        "missing_provider_request_shape_provider",
+                        f"required provider request shape provider missing: {provider_name}",
+                    )
+                )
+        if (
+            spec.max_provider_request_shape_final_output_tokens is not None
+            and provider_request_shape_max_final_output_tokens
+            > spec.max_provider_request_shape_final_output_tokens
+        ):
+            issues.append(
+                TraceEvalIssue(
+                    "error",
+                    "provider_request_shape_final_output_tokens_exceeded",
+                    "provider request shape final output tokens exceeded limit",
+                    metadata={
+                        "actual": provider_request_shape_max_final_output_tokens,
+                        "limit": spec.max_provider_request_shape_final_output_tokens,
+                    },
+                )
+            )
         if spec.require_lifecycle_hooks and not lifecycle_hook_records:
             issues.append(
                 TraceEvalIssue(
@@ -2949,6 +3062,19 @@ class DefaultTraceEvaluator(TraceEvaluatorPort):
                 "provider_route_candidate_names": sorted(provider_route_candidate_names),
                 "provider_route_selected_names": sorted(provider_route_selected_names),
                 "provider_route_reasons": sorted(provider_route_reasons),
+                "provider_request_shape_plan_count": len(provider_request_shape_plans),
+                "provider_request_shape_adjusted_count": len(
+                    adjusted_provider_request_shapes
+                ),
+                "provider_request_shape_provider_names": sorted(
+                    provider_request_shape_provider_names
+                ),
+                "provider_request_shape_decisions": sorted(
+                    provider_request_shape_decisions
+                ),
+                "provider_request_shape_max_final_output_tokens": (
+                    provider_request_shape_max_final_output_tokens
+                ),
                 "lifecycle_hook_record_count": len(lifecycle_hook_records),
                 "lifecycle_event_types": sorted(lifecycle_event_types),
                 "lifecycle_hook_statuses": sorted(lifecycle_hook_statuses),
@@ -3807,6 +3933,7 @@ def _provider_call_replay_payload(call: dict[str, Any]) -> dict[str, Any]:
     request = metadata.get("request") if isinstance(metadata, dict) else None
     response = metadata.get("response") if isinstance(metadata, dict) else None
     request_metadata = request.get("metadata") if isinstance(request, dict) else {}
+    request_shape_plan = _provider_request_shape_plan(call)
     payload = {
         "provider_name": str(call.get("provider_name") or ""),
         "model": str(call.get("model") or ""),
@@ -3821,6 +3948,8 @@ def _provider_call_replay_payload(call: dict[str, Any]) -> dict[str, Any]:
         and isinstance(request_metadata.get("model_capabilities"), dict)
         else {},
     }
+    if request_shape_plan:
+        payload["request_shape_plan"] = request_shape_plan
     if isinstance(stream_summary, dict):
         payload["stream_summary"] = dict(stream_summary)
     if isinstance(response, dict):
@@ -3990,6 +4119,54 @@ def _tool_call_manifests(manifest: dict[str, Any]) -> tuple[dict[str, Any], ...]
 
 def _provider_tool_call_names(tool_calls: tuple[dict[str, Any], ...]) -> set[str]:
     return {str(item.get("tool_name") or "") for item in tool_calls if item.get("tool_name")}
+
+
+def _provider_request_shape_plan(call: dict[str, Any]) -> dict[str, Any]:
+    metadata = call.get("metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    direct = metadata.get("request_shape_plan")
+    if isinstance(direct, dict):
+        return dict(direct)
+    request = metadata.get("request")
+    if isinstance(request, dict):
+        request_metadata = request.get("metadata")
+        if isinstance(request_metadata, dict):
+            plan = request_metadata.get("request_shape_plan")
+            if isinstance(plan, dict):
+                return dict(plan)
+    route_plan = metadata.get("route_plan")
+    if isinstance(route_plan, dict):
+        selected_route = route_plan.get("selected_route")
+        if isinstance(selected_route, dict):
+            route_metadata = selected_route.get("metadata")
+            if isinstance(route_metadata, dict):
+                plan = route_metadata.get("request_shape_plan")
+                if isinstance(plan, dict):
+                    return dict(plan)
+    return {}
+
+
+def _provider_request_shape_plans(
+    calls: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(plan for call in calls if (plan := _provider_request_shape_plan(call)))
+
+
+def _provider_request_shape_values(
+    plans: tuple[dict[str, Any], ...],
+    key: str,
+) -> set[str]:
+    return {str(item.get(key) or "") for item in plans if item.get(key)}
+
+
+def _provider_request_shape_decisions(plans: tuple[dict[str, Any], ...]) -> set[str]:
+    decisions: set[str] = set()
+    for plan in plans:
+        raw = plan.get("decisions")
+        if isinstance(raw, (list, tuple)):
+            decisions.update(str(item) for item in raw if item)
+    return decisions
 
 
 def _provider_route_plans(calls: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
