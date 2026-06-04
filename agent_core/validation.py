@@ -22,6 +22,7 @@ from agent_core.manifest import (
     FORBIDDEN_RUNTIME_DEPENDENCIES,
     FORBIDDEN_RUNTIME_PACKAGES,
     agent_core_sdk_manifest,
+    evaluate_agent_core_api_lifecycle,
     evaluate_agent_core_api_stability,
     evaluate_agent_core_readiness,
 )
@@ -121,6 +122,7 @@ class AgentCoreValidationReport:
     status: str
     runtime_boundary: dict[str, Any] = field(default_factory=dict)
     readiness: dict[str, Any] = field(default_factory=dict)
+    api_lifecycle: dict[str, Any] = field(default_factory=dict)
     api_stability: dict[str, Any] = field(default_factory=dict)
     acceptance: dict[str, Any] = field(default_factory=dict)
     approval_acceptance: dict[str, Any] = field(default_factory=dict)
@@ -159,6 +161,7 @@ class AgentCoreValidationReport:
             "issues": [issue.manifest() for issue in self.issues],
             "runtime_boundary": dict(self.runtime_boundary),
             "readiness": dict(self.readiness),
+            "api_lifecycle": dict(self.api_lifecycle),
             "api_stability": dict(self.api_stability),
             "acceptance": dict(self.acceptance),
             "approval_acceptance": dict(self.approval_acceptance),
@@ -199,6 +202,7 @@ class AgentCoreValidationSuite:
             metadata={"validation_gate": "runtime_boundary", **dict(self.metadata)},
         ).manifest()
         readiness = evaluate_agent_core_readiness(manifest).manifest()
+        api_lifecycle = evaluate_agent_core_api_lifecycle(manifest).manifest()
         api_stability = evaluate_agent_core_api_stability(manifest).manifest()
         acceptance = (
             await run_agent_core_acceptance(
@@ -287,6 +291,7 @@ class AgentCoreValidationSuite:
         issues = _validation_issues(
             runtime_boundary=runtime_boundary,
             readiness=readiness,
+            api_lifecycle=api_lifecycle,
             api_stability=api_stability,
             acceptance=acceptance,
             approval_acceptance=approval_acceptance,
@@ -310,6 +315,7 @@ class AgentCoreValidationSuite:
             status=status,
             runtime_boundary=runtime_boundary,
             readiness=readiness,
+            api_lifecycle=api_lifecycle,
             api_stability=api_stability,
             acceptance=acceptance,
             approval_acceptance=approval_acceptance,
@@ -437,6 +443,7 @@ def _validation_issues(
     *,
     runtime_boundary: dict[str, Any],
     readiness: dict[str, Any],
+    api_lifecycle: dict[str, Any],
     api_stability: dict[str, Any],
     acceptance: dict[str, Any],
     approval_acceptance: dict[str, Any],
@@ -458,6 +465,7 @@ def _validation_issues(
     issues: list[AgentCoreValidationIssue] = []
     _extend_boundary_issues(issues, runtime_boundary)
     _extend_report_issues(issues, source="readiness", report=readiness)
+    _extend_report_issues(issues, source="api_lifecycle", report=api_lifecycle)
     _extend_api_stability_issues(issues, api_stability)
     _extend_report_issues(issues, source="acceptance", report=acceptance)
     _extend_report_issues(issues, source="approval_acceptance", report=approval_acceptance)

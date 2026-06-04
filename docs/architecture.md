@@ -51,6 +51,10 @@ exports as MVP surface, and documents the version policy.
 stable set and blocks if a stable name is missing. This does not freeze every
 implementation detail before 1.0; it freezes the SDK entrypoints that Raven,
 code agents, and ops agents need for migration work.
+`evaluate_agent_core_api_lifecycle()` checks the same package manifest against
+the API lifecycle policy. It keeps stable, MVP, experimental, and deprecated
+exports machine-readable, reports the package version and pre-1.0 status, and
+blocks unclassified or overlapping API groups before a runtime pins the SDK.
 
 `AgentCoreRuntimeBoundaryReport` is the executable boundary audit. It scans the
 SDK package for forbidden runtime imports and forbidden adapter package

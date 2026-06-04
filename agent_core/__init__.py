@@ -241,6 +241,9 @@ from agent_core.lifecycle import (
 )
 from agent_core.manifest import (
     AgentCoreAPIContract,
+    AgentCoreAPILifecycleIssue,
+    AgentCoreAPILifecyclePolicy,
+    AgentCoreAPILifecycleReport,
     AgentCoreAPIStabilityReport,
     AgentCoreCapability,
     AgentCoreReadinessIssue,
@@ -252,6 +255,7 @@ from agent_core.manifest import (
     agent_core_sdk_manifest as _build_agent_core_sdk_manifest,
     agent_core_replacement_readiness_profile,
     default_agent_core_capabilities,
+    evaluate_agent_core_api_lifecycle as _evaluate_agent_core_api_lifecycle,
     evaluate_agent_core_api_stability as _evaluate_agent_core_api_stability,
     evaluate_agent_core_readiness as _evaluate_agent_core_readiness,
 )
@@ -570,6 +574,9 @@ __all__ = [
     "AgentCoreAcceptanceIssue",
     "AgentCoreAcceptanceReport",
     "AgentCoreAPIContract",
+    "AgentCoreAPILifecycleIssue",
+    "AgentCoreAPILifecyclePolicy",
+    "AgentCoreAPILifecycleReport",
     "AgentCoreAPIStabilityReport",
     "AgentCoreApprovalAcceptanceHarness",
     "AgentCoreApprovalAcceptanceIssue",
@@ -944,6 +951,7 @@ __all__ = [
     "agent_core_api_contract",
     "agent_core_replacement_readiness_profile",
     "evaluate_agent_core_api_stability",
+    "evaluate_agent_core_api_lifecycle",
     "evaluate_agent_core_runtime_boundary",
     "evaluate_agent_core_readiness",
     "structured_output_feedback",
@@ -1048,6 +1056,22 @@ def evaluate_agent_core_api_stability(
     return _evaluate_agent_core_api_stability(
         agent_core_sdk_manifest(package_version=package_version, metadata=metadata),
         contract=contract,
+    )
+
+
+def evaluate_agent_core_api_lifecycle(
+    *,
+    package_version: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    contract: AgentCoreAPIContract | None = None,
+    policy: AgentCoreAPILifecyclePolicy | None = None,
+) -> AgentCoreAPILifecycleReport:
+    """Evaluate the current package root against the API lifecycle policy."""
+
+    return _evaluate_agent_core_api_lifecycle(
+        agent_core_sdk_manifest(package_version=package_version, metadata=metadata),
+        contract=contract,
+        policy=policy,
     )
 
 

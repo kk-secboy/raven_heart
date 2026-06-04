@@ -17,6 +17,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["runtime_boundary"]["ready"] is True
     assert manifest["runtime_boundary"]["hit_count"] == 0
     assert manifest["readiness"]["ready"] is True
+    assert manifest["api_lifecycle"]["ready"] is True
     assert manifest["api_stability"]["ready"] is True
     assert manifest["acceptance"]["ready"] is True
     assert manifest["approval_acceptance"]["ready"] is True
@@ -35,6 +36,10 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["recovery"]["ready"] is True
     assert manifest["resume"]["ready"] is True
     assert manifest["acceptance"]["run_summary"]["tool_call_count"] == 1
+    assert manifest["api_lifecycle"]["policy"][
+        "allow_mvp_breaking_changes_before_1"
+    ] is True
+    assert manifest["api_lifecycle"]["unknown_public_api_count"] == 0
     assert manifest["approval_acceptance"]["approval_resume"]["approved_count"] == 1
     assert manifest["context_acceptance"]["context_summary"][
         "prompt_semantic_trimmed_count"
@@ -128,6 +133,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "runtime_boundary_audit" in readiness["matched"]["capabilities"]
+    assert "api_lifecycle_policy" in readiness["matched"]["capabilities"]
     assert "approval_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in readiness["matched"]["capabilities"]
@@ -144,6 +150,9 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "validation_suite" in readiness["matched"]["capabilities"]
     assert "AgentCoreRuntimeBoundaryReport" in readiness["matched"]["public_api"]
     assert "evaluate_agent_core_runtime_boundary" in readiness["matched"]["public_api"]
+    assert "AgentCoreAPILifecyclePolicy" in readiness["matched"]["public_api"]
+    assert "AgentCoreAPILifecycleReport" in readiness["matched"]["public_api"]
+    assert "evaluate_agent_core_api_lifecycle" in readiness["matched"]["public_api"]
     assert "AgentCoreApprovalAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_approval_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreContextAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -174,6 +183,9 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_validation" in readiness["matched"]["public_api"]
     assert "AgentCoreRuntimeBoundaryReport" in stability["present_stable_api"]
     assert "evaluate_agent_core_runtime_boundary" in stability["present_stable_api"]
+    assert "AgentCoreAPILifecyclePolicy" in stability["present_stable_api"]
+    assert "AgentCoreAPILifecycleReport" in stability["present_stable_api"]
+    assert "evaluate_agent_core_api_lifecycle" in stability["present_stable_api"]
     assert "AgentCoreApprovalAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_approval_acceptance" in stability["present_stable_api"]
     assert "AgentCoreContextAcceptanceHarness" in stability["present_stable_api"]

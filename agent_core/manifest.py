@@ -137,6 +137,8 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "TraceEvalHarness",
     "TraceReplayHarness",
     "AgentCoreSDKManifest",
+    "AgentCoreAPILifecyclePolicy",
+    "AgentCoreAPILifecycleReport",
     "AgentCoreReadinessProfile",
     "AgentCoreReadinessReport",
     "AgentCoreAcceptanceHarness",
@@ -175,6 +177,7 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "AgentCoreValidationSuite",
     "AgentCoreValidationReport",
     "agent_core_sdk_manifest",
+    "evaluate_agent_core_api_lifecycle",
     "evaluate_agent_core_readiness",
     "evaluate_agent_core_runtime_boundary",
     "run_agent_core_acceptance",
@@ -287,6 +290,7 @@ class AgentCoreSDKManifest:
             "public_api_count": len(self.public_api),
             "public_api": list(self.public_api),
             "api_contract": agent_core_api_contract(self.public_api).manifest(),
+            "api_lifecycle_policy": AgentCoreAPILifecyclePolicy().manifest(),
             "metadata": dict(self.metadata),
         }
 
@@ -348,6 +352,111 @@ class AgentCoreAPIStabilityReport:
             "present_stable_api": list(self.present_stable_api),
             "deprecated_public_api": list(self.deprecated_public_api),
             "mvp_public_api": list(self.mvp_public_api),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentCoreAPILifecyclePolicy:
+    """Machine-readable API lifecycle and compatibility policy."""
+
+    stable_api_change_policy: str = (
+        "Stable API names require compatibility-preserving changes or a documented "
+        "minor-version migration path."
+    )
+    mvp_api_change_policy: str = (
+        "MVP API names may evolve before 1.0, but must remain visible in the API "
+        "contract so runtime migrations can audit changes."
+    )
+    experimental_api_change_policy: str = (
+        "Experimental API names are opt-in and must not be required by the default "
+        "replacement-readiness profile."
+    )
+    deprecated_api_change_policy: str = (
+        "Deprecated API names must remain exported through at least one minor "
+        "release before removal."
+    )
+    min_deprecation_minor_versions: int = 1
+    allow_mvp_breaking_changes_before_1: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-api-lifecycle-policy/v1",
+            "stable_api_change_policy": self.stable_api_change_policy,
+            "mvp_api_change_policy": self.mvp_api_change_policy,
+            "experimental_api_change_policy": self.experimental_api_change_policy,
+            "deprecated_api_change_policy": self.deprecated_api_change_policy,
+            "min_deprecation_minor_versions": self.min_deprecation_minor_versions,
+            "allow_mvp_breaking_changes_before_1": self.allow_mvp_breaking_changes_before_1,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentCoreAPILifecycleIssue:
+    """One API lifecycle policy issue."""
+
+    code: str
+    message: str
+    severity: SDKReadinessIssueSeverity = "error"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-api-lifecycle-issue/v1",
+            "code": self.code,
+            "message": self.message,
+            "severity": self.severity,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentCoreAPILifecycleReport:
+    """Report for package-root API lifecycle and compatibility policy."""
+
+    status: SDKReadinessStatus
+    package: str = ""
+    version: str = ""
+    pre_1_0: bool = True
+    policy: AgentCoreAPILifecyclePolicy = field(default_factory=AgentCoreAPILifecyclePolicy)
+    stable_api_count: int = 0
+    mvp_api_count: int = 0
+    experimental_api_count: int = 0
+    deprecated_api_count: int = 0
+    public_api_count: int = 0
+    unknown_public_api: tuple[str, ...] = ()
+    issues: tuple[AgentCoreAPILifecycleIssue, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ready(self) -> bool:
+        return self.status == "ready"
+
+    @property
+    def error_count(self) -> int:
+        return sum(1 for issue in self.issues if issue.severity == "error")
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-api-lifecycle-report/v1",
+            "status": self.status,
+            "ready": self.ready,
+            "error_count": self.error_count,
+            "issue_count": len(self.issues),
+            "package": self.package,
+            "version": self.version,
+            "pre_1_0": self.pre_1_0,
+            "policy": self.policy.manifest(),
+            "stable_api_count": self.stable_api_count,
+            "mvp_api_count": self.mvp_api_count,
+            "experimental_api_count": self.experimental_api_count,
+            "deprecated_api_count": self.deprecated_api_count,
+            "public_api_count": self.public_api_count,
+            "unknown_public_api_count": len(self.unknown_public_api),
+            "unknown_public_api": list(self.unknown_public_api),
+            "issues": [issue.manifest() for issue in self.issues],
             "metadata": dict(self.metadata),
         }
 
@@ -608,6 +717,17 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
             public_contracts=("AgentCoreAPIContract", "AgentCoreAPIStabilityReport"),
         ),
         AgentCoreCapability(
+            name="api_lifecycle_policy",
+            layer="boundary",
+            status="stable_contract",
+            summary="Package-root API lifecycle policy for stable, MVP, experimental, and deprecated exports.",
+            public_contracts=(
+                "AgentCoreAPILifecyclePolicy",
+                "AgentCoreAPILifecycleReport",
+                "evaluate_agent_core_api_lifecycle",
+            ),
+        ),
+        AgentCoreCapability(
             name="runtime_boundary_audit",
             layer="boundary",
             status="stable_contract",
@@ -826,6 +946,7 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "memory_governance",
             "storage_backend_contracts",
             "api_stability_contract",
+            "api_lifecycle_policy",
             "runtime_boundary_audit",
             "policy_approval",
             "trace_replay_eval",
@@ -874,6 +995,9 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "TraceEvalHarness",
             "AgentCoreSDKManifest",
             "AgentCoreAPIContract",
+            "AgentCoreAPILifecyclePolicy",
+            "AgentCoreAPILifecycleReport",
+            "evaluate_agent_core_api_lifecycle",
             "AgentCoreAPIStabilityReport",
             "agent_core_api_contract",
             "evaluate_agent_core_api_stability",
@@ -994,6 +1118,121 @@ def evaluate_agent_core_api_stability(
     )
 
 
+def evaluate_agent_core_api_lifecycle(
+    sdk_manifest: AgentCoreSDKManifest | dict[str, Any],
+    *,
+    contract: AgentCoreAPIContract | None = None,
+    policy: AgentCoreAPILifecyclePolicy | None = None,
+) -> AgentCoreAPILifecycleReport:
+    """Evaluate package-root API lifecycle and compatibility policy."""
+
+    manifest = (
+        sdk_manifest.manifest()
+        if isinstance(sdk_manifest, AgentCoreSDKManifest)
+        else sdk_manifest
+    )
+    public_api = {str(name) for name in manifest.get("public_api", ())}
+    api_contract = contract or agent_core_api_contract(tuple(sorted(public_api)))
+    lifecycle_policy = policy or AgentCoreAPILifecyclePolicy()
+    stable = set(api_contract.stable_api)
+    mvp = set(api_contract.mvp_api)
+    experimental = set(api_contract.experimental_api)
+    deprecated = set(api_contract.deprecated_api)
+    issues: list[AgentCoreAPILifecycleIssue] = []
+
+    missing_stable = tuple(sorted(stable - public_api))
+    for name in missing_stable:
+        issues.append(
+            AgentCoreAPILifecycleIssue(
+                code="stable_api_missing",
+                message=f"Stable API is missing from package root: {name}",
+                metadata={"api_name": name},
+            )
+        )
+
+    deprecated_public = tuple(sorted(deprecated & public_api))
+    for name in deprecated_public:
+        issues.append(
+            AgentCoreAPILifecycleIssue(
+                code="deprecated_api_exported",
+                message=f"Deprecated API is still exported: {name}",
+                severity="warning",
+                metadata={"api_name": name},
+            )
+        )
+
+    groups = {
+        "stable": stable,
+        "mvp": mvp,
+        "experimental": experimental,
+        "deprecated": deprecated,
+    }
+    for left_name, left in groups.items():
+        for right_name, right in groups.items():
+            if left_name >= right_name:
+                continue
+            overlap = tuple(sorted(left & right))
+            if overlap:
+                issues.append(
+                    AgentCoreAPILifecycleIssue(
+                        code="api_lifecycle_group_overlap",
+                        message=f"API lifecycle groups overlap: {left_name}/{right_name}",
+                        metadata={
+                            "left": left_name,
+                            "right": right_name,
+                            "api_names": list(overlap),
+                        },
+                    )
+                )
+
+    known = stable | mvp | experimental | deprecated
+    unknown_public = tuple(sorted(public_api - known))
+    if unknown_public:
+        issues.append(
+            AgentCoreAPILifecycleIssue(
+                code="unknown_public_api",
+                message="Public API names are not classified by lifecycle contract.",
+                metadata={"api_names": list(unknown_public)},
+            )
+        )
+
+    version = str(manifest.get("version") or "")
+    parsed_version = _parse_version_triplet(version)
+    if parsed_version is None:
+        issues.append(
+            AgentCoreAPILifecycleIssue(
+                code="package_version_unparseable",
+                message="Package version is not parseable as major.minor.patch.",
+                metadata={"version": version},
+            )
+        )
+        pre_1_0 = True
+    else:
+        pre_1_0 = parsed_version[0] == 0
+
+    status: SDKReadinessStatus = (
+        "blocked" if any(issue.severity == "error" for issue in issues) else "ready"
+    )
+    return AgentCoreAPILifecycleReport(
+        status=status,
+        package=str(manifest.get("package") or ""),
+        version=version,
+        pre_1_0=pre_1_0,
+        policy=lifecycle_policy,
+        stable_api_count=len(stable),
+        mvp_api_count=len(mvp),
+        experimental_api_count=len(experimental),
+        deprecated_api_count=len(deprecated),
+        public_api_count=len(public_api),
+        unknown_public_api=unknown_public,
+        issues=tuple(issues),
+        metadata={
+            "sdk_manifest_schema": str(manifest.get("schema_version") or ""),
+            "api_contract_schema": api_contract.manifest()["schema_version"],
+        },
+    )
+
+
 def agent_core_sdk_manifest(
     *,
     public_api: Sequence[str] = (),
@@ -1024,6 +1263,20 @@ def _package_version() -> str:
         return importlib_metadata.version("raven-heart")
     except importlib_metadata.PackageNotFoundError:
         return "0.1.0"
+
+
+def _parse_version_triplet(version: str) -> tuple[int, int, int] | None:
+    core = version.split("+", 1)[0].split("-", 1)[0]
+    parts = core.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
+        return None
+    return (major, minor, patch)
 
 
 def _match_required(

@@ -125,6 +125,12 @@ exports that may still change before 1.0. The report blocks if a stable API name
 is missing, which lets host runtimes pin migration checks before depending on
 `raven_heart` as their agent base.
 
+`agent_core.evaluate_agent_core_api_lifecycle()` adds the API lifecycle gate. It
+checks the same package manifest against the stable/MVP/experimental/deprecated
+groups, reports the package version and pre-1.0 status, enforces that public API
+names are classified by the contract, and keeps deprecation policy
+machine-readable for future SDK releases.
+
 `agent_core.evaluate_agent_core_runtime_boundary()` audits the SDK package
 itself for forbidden runtime imports and adapter package directories. This is
 the self-check version of the boundary rule: it proves `agent_core` stayed pure
@@ -991,6 +997,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK capability/boundary manifest | MVP implemented |
 | SDK replacement-readiness profile | MVP implemented |
 | SDK public API stability contract | MVP implemented |
+| SDK API lifecycle policy | MVP implemented |
 | SDK runtime boundary audit | MVP implemented |
 | SDK packaging acceptance harness | MVP implemented |
 | SDK replacement acceptance harness | MVP implemented |
