@@ -78,6 +78,12 @@ when `allow_terminal=False`. The SDK owns resume tokens, plans, prompt-safe
 resume manifests, and the acceptance report; runtimes own distributed worker
 selection, UI recovery flows, and product workflow state.
 
+`AgentCoreValidationSuite` is the aggregate package gate. It runs readiness, API
+stability, replacement acceptance, recovery acceptance, and resume acceptance,
+then returns one `AgentCoreValidationReport` with all subreports and blocking
+issues. This is the SDK-level check a runtime should pass before adapter
+implementation or product-specific migration tests begin.
+
 ## Boundary Table
 
 | Core area | Runtime responsibility |

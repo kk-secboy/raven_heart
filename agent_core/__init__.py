@@ -434,6 +434,12 @@ from agent_core.trace import (
     TraceCorrelationEntry,
     TraceCorrelationIndex,
 )
+from agent_core.validation import (
+    AgentCoreValidationIssue,
+    AgentCoreValidationReport,
+    AgentCoreValidationSuite,
+    run_agent_core_validation as _run_agent_core_validation,
+)
 from agent_core.tools import (
     InMemoryToolReplay,
     InMemoryToolReplayStore,
@@ -496,6 +502,9 @@ __all__ = [
     "AgentCoreResumeAcceptanceReport",
     "AgentCoreRuntimeBoundary",
     "AgentCoreSDKManifest",
+    "AgentCoreValidationIssue",
+    "AgentCoreValidationReport",
+    "AgentCoreValidationSuite",
     "AgentEvent",
     "AgentHarness",
     "AgentJournalSnapshot",
@@ -865,6 +874,7 @@ __all__ = [
     "run_agent_core_acceptance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
+    "run_agent_core_validation",
 ]
 
 
@@ -929,6 +939,18 @@ async def run_agent_core_acceptance(
     return await _run_agent_core_acceptance(
         sdk_manifest=agent_core_sdk_manifest(metadata=metadata),
         task=task,
+        metadata=metadata,
+    )
+
+
+async def run_agent_core_validation(
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreValidationReport:
+    """Run all package-level SDK validation gates against the package root."""
+
+    return await _run_agent_core_validation(
+        sdk_manifest=agent_core_sdk_manifest(metadata=metadata),
         metadata=metadata,
     )
 

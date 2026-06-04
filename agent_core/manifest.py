@@ -145,11 +145,14 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "AgentCoreRecoveryReport",
     "AgentCoreResumeAcceptanceHarness",
     "AgentCoreResumeAcceptanceReport",
+    "AgentCoreValidationSuite",
+    "AgentCoreValidationReport",
     "agent_core_sdk_manifest",
     "evaluate_agent_core_readiness",
     "run_agent_core_acceptance",
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
+    "run_agent_core_validation",
 )
 
 
@@ -601,6 +604,14 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
             runtime_notes=("Runtime-specific worker scheduling and UI recovery stay outside core.",),
         ),
         AgentCoreCapability(
+            name="validation_suite",
+            layer="eval",
+            status="stable_contract",
+            summary="Aggregate SDK validation suite for readiness, API, run, recovery, and resume gates.",
+            public_contracts=("AgentCoreValidationSuite", "AgentCoreValidationReport"),
+            runtime_notes=("Runtime-specific adapter acceptance suites run after this SDK gate.",),
+        ),
+        AgentCoreCapability(
             name="planner_handoff_artifacts",
             layer="coordination",
             summary="Planner protocol, handoff records, agent-as-tool contracts, and artifact stores.",
@@ -639,6 +650,7 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "replacement_acceptance_harness",
             "recovery_acceptance_harness",
             "resume_acceptance_harness",
+            "validation_suite",
             "planner_handoff_artifacts",
             "runtime_boundary",
         ),
@@ -679,6 +691,9 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "AgentCoreResumeAcceptanceHarness",
             "AgentCoreResumeAcceptanceReport",
             "run_agent_core_resume_acceptance",
+            "AgentCoreValidationSuite",
+            "AgentCoreValidationReport",
+            "run_agent_core_validation",
         ),
         required_storage_roles=CORE_STORAGE_ROLES,
         required_builtin_storage_kinds=BUILTIN_STORAGE_KINDS,

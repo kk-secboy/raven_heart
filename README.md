@@ -147,6 +147,12 @@ evaluates the run trace, and verifies strict terminal checkpoints are rejected
 when `allow_terminal=False`. Runtime worker scheduling and user-facing recovery
 flows remain outside the SDK.
 
+`agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
+readiness, API stability, replacement acceptance, recovery acceptance, and resume
+acceptance, then returns one `AgentCoreValidationReport`. This is the default
+package-level check a host runtime should pass before starting adapter-specific
+migration tests.
+
 ## Core Capabilities
 
 ### Harness
@@ -874,6 +880,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK replacement acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | SDK resume acceptance harness | MVP implemented |
+| SDK aggregate validation suite | MVP implemented |
 | Run trace query | MVP implemented |
 | Manager run state query | MVP implemented |
 | Manager run event paging | MVP implemented |
