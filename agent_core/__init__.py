@@ -421,6 +421,12 @@ from agent_core.storage_acceptance import (
     AgentCoreStorageAcceptanceReport,
     run_agent_core_storage_acceptance,
 )
+from agent_core.task_profile_acceptance import (
+    AgentCoreTaskProfileAcceptanceHarness,
+    AgentCoreTaskProfileAcceptanceIssue,
+    AgentCoreTaskProfileAcceptanceReport,
+    run_agent_core_task_profile_acceptance,
+)
 from agent_core.runner import (
     AgentManagerCapacityError,
     AgentManagerCapacityStatus,
@@ -615,6 +621,9 @@ __all__ = [
     "AgentCoreStorageAcceptanceHarness",
     "AgentCoreStorageAcceptanceIssue",
     "AgentCoreStorageAcceptanceReport",
+    "AgentCoreTaskProfileAcceptanceHarness",
+    "AgentCoreTaskProfileAcceptanceIssue",
+    "AgentCoreTaskProfileAcceptanceReport",
     "AgentCoreValidationIssue",
     "AgentCoreValidationReport",
     "AgentCoreValidationSuite",
@@ -1000,6 +1009,7 @@ __all__ = [
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
     "run_agent_core_storage_acceptance",
+    "run_agent_core_task_profile_acceptance",
     "run_agent_core_validation",
 ]
 

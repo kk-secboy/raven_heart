@@ -169,6 +169,8 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "AgentCoreResumeAcceptanceReport",
     "AgentCoreStorageAcceptanceHarness",
     "AgentCoreStorageAcceptanceReport",
+    "AgentCoreTaskProfileAcceptanceHarness",
+    "AgentCoreTaskProfileAcceptanceReport",
     "AgentCoreRuntimeBoundaryReport",
     "AgentCoreValidationSuite",
     "AgentCoreValidationReport",
@@ -190,6 +192,7 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "run_agent_core_recovery_acceptance",
     "run_agent_core_resume_acceptance",
     "run_agent_core_storage_acceptance",
+    "run_agent_core_task_profile_acceptance",
     "run_agent_core_validation",
 )
 
@@ -772,6 +775,16 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
             runtime_notes=("Concrete PostgreSQL, vector, graph, object-store, and product clients stay outside core.",),
         ),
         AgentCoreCapability(
+            name="task_profile_acceptance_harness",
+            layer="eval",
+            summary="Pure-SDK code, ops, and security task-profile portability checks through one agent core.",
+            public_contracts=(
+                "AgentCoreTaskProfileAcceptanceHarness",
+                "AgentCoreTaskProfileAcceptanceReport",
+            ),
+            runtime_notes=("Domain prompts, concrete tools, production schedulers, and product workflows stay outside core.",),
+        ),
+        AgentCoreCapability(
             name="validation_suite",
             layer="eval",
             status="stable_contract",
@@ -829,6 +842,7 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "packaging_acceptance_harness",
             "provider_acceptance_harness",
             "storage_acceptance_harness",
+            "task_profile_acceptance_harness",
             "recovery_acceptance_harness",
             "resume_acceptance_harness",
             "validation_suite",
@@ -904,6 +918,9 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "AgentCoreStorageAcceptanceHarness",
             "AgentCoreStorageAcceptanceReport",
             "run_agent_core_storage_acceptance",
+            "AgentCoreTaskProfileAcceptanceHarness",
+            "AgentCoreTaskProfileAcceptanceReport",
+            "run_agent_core_task_profile_acceptance",
             "AgentCoreRecoveryHarness",
             "AgentCoreRecoveryReport",
             "run_agent_core_recovery_acceptance",

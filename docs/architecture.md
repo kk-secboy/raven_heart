@@ -181,12 +181,20 @@ required repository files, and example entrypoint smoke structure. The SDK owns
 these release-facing contracts; release automation, package indexes, signing,
 and adapter wheels stay outside core.
 
+`AgentCoreTaskProfileAcceptanceHarness` adds the cross-runtime task-profile
+gate. It runs code, ops, and security task profiles through the same
+`AgentRunner`, provider center, ToolCenter, SkillsContext, memory recall,
+context-material selection, event log, and trace-eval pipeline. The SDK owns the
+portable task mechanics; runtimes own concrete code tools, ops integrations,
+security tooling, domain prompts, and product workflows.
+
 `AgentCoreValidationSuite` is the aggregate package gate. It runs runtime
 boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
 lifecycle acceptance, native-tool acceptance, packaging acceptance, provider
-acceptance, storage acceptance, recovery acceptance, and resume acceptance, then returns one
+acceptance, storage acceptance, task-profile acceptance, recovery acceptance,
+and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. This is the
 SDK-level check a runtime should pass before adapter implementation or
 product-specific migration tests begin.

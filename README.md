@@ -247,12 +247,20 @@ stable public imports, required repository files, and example entrypoint smoke
 structure. Release automation, publishing credentials, signing, and adapter
 wheels remain outside the SDK.
 
+`agent_core.run_agent_core_task_profile_acceptance()` runs deterministic
+cross-runtime task-profile checks. It runs code, ops, and security task profiles
+through the same `AgentRunner`, provider center, ToolCenter, SkillsContext,
+memory recall, context-material selection, event log, and trace-eval pipeline.
+Concrete code tools, ops integrations, security tooling, domain prompts, and
+product workflows remain runtime responsibilities.
+
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
 acceptance, approval acceptance, orchestration acceptance, coordination
 acceptance, event acceptance, external-backend acceptance, guardrail acceptance,
 lifecycle acceptance, native-tool acceptance, packaging acceptance, provider
-acceptance, storage acceptance, recovery acceptance, and resume acceptance, then returns one
+acceptance, storage acceptance, task-profile acceptance, recovery acceptance,
+and resume acceptance, then returns one
 `AgentCoreValidationReport`. This is the default package-level check a host
 runtime should pass before starting adapter-specific migration tests.
 
@@ -988,6 +996,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | SDK replacement acceptance harness | MVP implemented |
 | SDK context acceptance harness | MVP implemented |
 | SDK provider acceptance harness | MVP implemented |
+| SDK task profile acceptance harness | MVP implemented |
 | SDK recovery acceptance harness | MVP implemented |
 | SDK resume acceptance harness | MVP implemented |
 | SDK coordination acceptance harness | MVP implemented |
