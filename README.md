@@ -158,6 +158,8 @@ agent_core never imports runtime
 - `MultiAgentCoordinator` runs the selected `AgentSessionManager` session and
   records a `HandoffRecord`.
 - `handoff_spec_from_session()` builds a handoff spec from an `AgentSession`.
+- `AgentToolRuntime` exposes managed agent sessions as `ToolRuntimePort`
+  tools, so a parent ReAct agent can delegate through the normal tool loop.
 
 The SDK owns handoff contracts, routing decisions, and manifests. Runtimes own
 workflow queues, distributed workers, UI orchestration, retry policy, and
@@ -740,6 +742,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Trace observability manifests | MVP implemented |
 | Lifecycle hook contracts | MVP implemented |
 | Lifecycle hook trace/eval contracts | MVP implemented |
+| Agent-as-tool runtime | MVP implemented |
 | Handoff trace/eval contracts | MVP implemented |
 | Interrupt/cancel/timeout semantics | MVP implemented |
 | Tool center | MVP implemented |

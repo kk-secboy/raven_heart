@@ -317,6 +317,8 @@ from agent_core.schema import (
     validate_json_schema_subset,
 )
 from agent_core.handoff import (
+    AgentToolRuntime,
+    AgentToolSpec,
     HandoffDecision,
     HandoffDecisionStatus,
     HandoffRecord,
@@ -325,6 +327,7 @@ from agent_core.handoff import (
     HandoffRouterPort,
     HandoffSpec,
     MultiAgentCoordinator,
+    agent_tool_spec_from_session,
     handoff_spec_from_session,
 )
 from agent_core.skills import (
@@ -439,6 +442,8 @@ __all__ = [
     "ArtifactTrace",
     "AgentSession",
     "AgentSessionManager",
+    "AgentToolRuntime",
+    "AgentToolSpec",
     "ArtifactRecord",
     "ArtifactStorePort",
     "ApprovalRequest",
@@ -640,6 +645,7 @@ __all__ = [
     "StorageBackendSpec",
     "StorageBackendTrace",
     "StructuredOutputTrace",
+    "agent_tool_spec_from_session",
     "compute_skill_hash",
     "apply_reduction_to_timeline",
     "handoff_spec_from_session",

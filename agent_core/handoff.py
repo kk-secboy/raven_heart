@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from agent_core.runner import AgentRunOutcome, AgentRunRequest, AgentSession, AgentSessionManager
+from agent_core.tools import ToolInvocation, ToolResult, ToolSpec
 
 
 HandoffDecisionStatus = Literal["selected", "not_found", "denied"]
@@ -110,6 +111,54 @@ class HandoffRecord:
             "decision": self.decision.manifest(),
             "outcome": outcome_manifest,
             "error": self.error,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentToolSpec:
+    """Expose one managed agent session as a provider-neutral tool."""
+
+    tool_name: str
+    session_name: str
+    description: str = ""
+    task_argument: str = "task"
+    enabled: bool = True
+    tags: tuple[str, ...] = ("agent",)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def tool_spec(self) -> ToolSpec:
+        return ToolSpec(
+            name=self.tool_name,
+            description=self.description or f"Delegate a task to agent session {self.session_name}.",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    self.task_argument: {
+                        "type": "string",
+                        "description": "Task for the delegated agent session.",
+                    },
+                },
+                "required": [self.task_argument],
+                "additionalProperties": True,
+            },
+            tags=tuple(dict.fromkeys((*self.tags, "agent_tool"))),
+            enabled=self.enabled,
+            metadata={
+                **dict(self.metadata),
+                "agent_tool": self.manifest(),
+            },
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-agent-tool-spec/v1",
+            "tool_name": self.tool_name,
+            "session_name": self.session_name,
+            "description": self.description,
+            "task_argument": self.task_argument,
+            "enabled": self.enabled,
+            "tags": list(self.tags),
             "metadata": dict(self.metadata),
         }
 
@@ -231,6 +280,103 @@ class MultiAgentCoordinator:
         }
 
 
+class AgentToolRuntime:
+    """Tool runtime that delegates tool invocations to managed agent sessions."""
+
+    def __init__(
+        self,
+        *,
+        manager: AgentSessionManager,
+        specs: tuple[AgentToolSpec, ...] = (),
+    ) -> None:
+        self.manager = manager
+        self._specs: dict[str, AgentToolSpec] = {}
+        self.records: list[dict[str, Any]] = []
+        for spec in specs:
+            self.register(spec)
+
+    @classmethod
+    def from_manager(cls, manager: AgentSessionManager) -> "AgentToolRuntime":
+        runtime = cls(manager=manager)
+        for session_name in manager.sessions():
+            session = manager.session(session_name)
+            runtime.register(agent_tool_spec_from_session(session, session_name=session_name))
+        return runtime
+
+    def register(self, spec: AgentToolSpec) -> None:
+        if not spec.tool_name.strip():
+            raise ValueError("agent tool_name is required")
+        if not spec.session_name.strip():
+            raise ValueError("agent tool session_name is required")
+        self._specs[spec.tool_name] = spec
+
+    def specs(self) -> tuple[ToolSpec, ...]:
+        return tuple(
+            spec.tool_spec()
+            for spec in sorted(self._specs.values(), key=lambda item: item.tool_name)
+            if spec.enabled
+        )
+
+    async def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        spec = self._specs.get(invocation.tool_name)
+        if spec is None or not spec.enabled:
+            return ToolResult(
+                call_id=invocation.call_id,
+                tool_name=invocation.tool_name,
+                status="failed",
+                error=f"agent tool not found: {invocation.tool_name}",
+                metadata={"agent_tool_missing": True},
+            )
+        task = _agent_tool_task(invocation, spec)
+        request = AgentRunRequest(
+            task=task,
+            metadata={
+                "agent_tool": spec.manifest(),
+                "parent_tool_invocation": invocation.manifest(),
+            },
+        )
+        try:
+            outcome = await self.manager.run(spec.session_name, request)
+        except Exception as exc:
+            record = _agent_tool_record(spec, invocation, task=task, error=str(exc))
+            self.records.append(record)
+            return ToolResult(
+                call_id=invocation.call_id,
+                tool_name=invocation.tool_name,
+                status="failed",
+                error=str(exc),
+                metadata=record,
+            )
+        record = _agent_tool_record(spec, invocation, task=task, outcome=outcome)
+        self.records.append(record)
+        status = "completed" if outcome.result.status == "completed" else "failed"
+        return ToolResult(
+            call_id=invocation.call_id,
+            tool_name=invocation.tool_name,
+            status=status,
+            content=outcome.result.output,
+            data={
+                "run_id": outcome.result.run_id,
+                "status": outcome.result.status,
+                "iterations": outcome.result.iterations,
+            },
+            error="" if status == "completed" else outcome.result.status,
+            metadata=record,
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-agent-tool-runtime/v1",
+            "tool_count": len(self._specs),
+            "tools": [
+                spec.manifest()
+                for spec in sorted(self._specs.values(), key=lambda item: item.tool_name)
+            ],
+            "record_count": len(self.records),
+            "records": [dict(record) for record in self.records],
+        }
+
+
 def handoff_spec_from_session(session: AgentSession, *, session_name: str = "") -> HandoffSpec:
     capabilities = session.profile.capabilities
     metadata = {
@@ -249,6 +395,24 @@ def handoff_spec_from_session(session: AgentSession, *, session_name: str = "") 
     )
 
 
+def agent_tool_spec_from_session(
+    session: AgentSession,
+    *,
+    session_name: str = "",
+    tool_name: str = "",
+) -> AgentToolSpec:
+    resolved_session_name = session_name or session.profile.name
+    metadata = {"profile": session.profile.name, **dict(session.metadata)}
+    return AgentToolSpec(
+        tool_name=tool_name or _agent_tool_name(resolved_session_name),
+        session_name=resolved_session_name,
+        description=session.profile.instructions,
+        enabled=bool(metadata.get("agent_tool_enabled", True)),
+        tags=tuple(str(item) for item in metadata.get("tags", ()) or ()),
+        metadata=metadata,
+    )
+
+
 def _matches(spec: HandoffSpec, request: HandoffRequest) -> bool:
     if not spec.enabled:
         return False
@@ -260,3 +424,43 @@ def _matches(spec: HandoffSpec, request: HandoffRequest) -> bool:
         and set(request.required_tools) <= tools
         and set(request.required_skills) <= skills
     )
+
+
+def _agent_tool_task(invocation: ToolInvocation, spec: AgentToolSpec) -> str:
+    value = invocation.arguments.get(spec.task_argument)
+    if value is None:
+        value = invocation.arguments.get("task") or invocation.arguments.get("input") or ""
+    return str(value)
+
+
+def _agent_tool_record(
+    spec: AgentToolSpec,
+    invocation: ToolInvocation,
+    *,
+    task: str,
+    outcome: AgentRunOutcome | None = None,
+    error: str = "",
+) -> dict[str, Any]:
+    result = {}
+    if outcome is not None:
+        result = {
+            "run_id": outcome.result.run_id,
+            "status": outcome.result.status,
+            "iterations": outcome.result.iterations,
+            "output_bytes": len(outcome.result.output.encode("utf-8")),
+            "trace_run_id": outcome.trace_manifest.get("run", {}).get("run_id", ""),
+        }
+    return {
+        "schema_version": "agent-core-agent-tool-call/v1",
+        "tool": spec.manifest(),
+        "invocation": invocation.manifest(),
+        "task_bytes": len(task.encode("utf-8")),
+        "result": result,
+        "error": error,
+    }
+
+
+def _agent_tool_name(session_name: str) -> str:
+    normalized = "".join(char if char.isalnum() else "_" for char in session_name.lower())
+    normalized = "_".join(part for part in normalized.split("_") if part)
+    return f"agent_{normalized or 'session'}"

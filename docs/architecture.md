@@ -209,6 +209,11 @@ session capabilities, select targets by tags/tools/skills/priority, run the
 selected session through `AgentSessionManager`, and record handoff manifests.
 Runtime code owns product queues, cross-process scheduling, retries, UI
 orchestration, and domain delegation strategy.
+`AgentToolRuntime` is the agent-as-tool variant of the same boundary: it turns
+managed sessions into ordinary `ToolSpec` entries and invokes them through
+`AgentSessionManager`, so parent agents can delegate using the existing ReAct
+tool loop. Distributed worker pools, process isolation, queueing, and tenant
+routing still live outside core.
 
 `CapabilityCatalog.discover()` is the SDK-level discovery surface across
 actions, local tools, skills, MCP tools, MCP resources, MCP prompts, and MCP
