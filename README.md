@@ -419,7 +419,12 @@ eval-suite checks, storage acceptance, task-profile acceptance, recovery accepta
 then returns one
 `AgentCoreValidationReport`. Its top-level `summary` is the migration gate view:
 gate counts, blocked gates, runtime-boundary status, API counts, executed
-examples, provider conformance checks, and storage backend role/kind coverage.
+examples, provider conformance checks, storage backend role/kind coverage, and
+a `migration_readiness` block. That block says whether the SDK core is usable
+for live provider tests, whether runtime adapter work can start, and which
+checks are deliberately not covered by this SDK repository: real LLM credentials,
+RavenStorm adapter acceptance, production backend drivers, and domain eval
+suites.
 This is the default package-level check a host runtime should pass before
 starting adapter-specific migration tests.
 

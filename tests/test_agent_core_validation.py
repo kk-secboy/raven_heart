@@ -49,6 +49,36 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert {"postgres", "vector", "graph", "product"} <= set(
         manifest["summary"]["storage_backend_interfaces"]["external_kinds"]
     )
+    migration = manifest["summary"]["migration_readiness"]
+    assert (
+        migration["schema_version"]
+        == "agent-core-migration-readiness-summary/v1"
+    )
+    assert migration["sdk_core_status"] == "usable_for_live_provider_tests"
+    assert migration["sdk_core_usable"] is True
+    assert migration["ready_for_runtime_adapter_work"] is True
+    assert migration["ready_for_live_provider_conformance"] is True
+    assert migration["live_provider_conformance_status"] == "requires_external_provider"
+    assert migration["runtime_adapters_in_scope"] is False
+    assert migration["ravenstorm_adapter_in_scope"] is False
+    assert migration["evidence"]["runtime_free"] is True
+    assert migration["evidence"]["examples_ok"] is True
+    assert migration["evidence"]["deterministic_provider_ok"] is True
+    assert migration["evidence"]["storage_contracts_ready"] is True
+    assert migration["evidence"]["context_pipeline_ready"] is True
+    assert migration["blocked_gates"] == []
+    assert {
+        item["item"] for item in migration["not_covered_by_sdk_validation"]
+    } == {
+        "live_llm_provider_conformance",
+        "ravenstorm_runtime_adapter_acceptance",
+        "production_backend_drivers",
+        "domain_eval_suites",
+    }
+    assert (
+        migration["next_validation_step"]
+        == "run_agent_core_provider_conformance(provider=runtime_provider)"
+    )
     assert manifest["error_count"] == 0
     assert manifest["runtime_boundary"]["ready"] is True
     assert manifest["runtime_boundary"]["hit_count"] == 0

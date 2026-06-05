@@ -1074,6 +1074,123 @@ def _validation_summary(
             "external_kinds": list(storage_interfaces.get("external_kinds") or ()),
             "role_contract_count": len(storage_interfaces.get("role_contracts") or ()),
         },
+        "migration_readiness": _migration_readiness_summary(
+            status=status,
+            ready_gates=ready_gates,
+            blocked_gates=blocked_gates,
+            runtime_free=(
+                runtime_boundary.get("ready") is True
+                and repository_boundary.get("ready") is True
+                and int(runtime_boundary.get("hit_count") or 0) == 0
+                and int(repository_boundary.get("hit_count") or 0) == 0
+            ),
+            packaging_examples=packaging_examples,
+            provider_matrix=provider_matrix,
+            storage_interfaces=storage_interfaces,
+            context_pipeline=context_pipeline,
+        ),
+    }
+
+
+def _migration_readiness_summary(
+    *,
+    status: str,
+    ready_gates: tuple[str, ...],
+    blocked_gates: tuple[str, ...],
+    runtime_free: bool,
+    packaging_examples: dict[str, Any],
+    provider_matrix: dict[str, Any],
+    storage_interfaces: dict[str, Any],
+    context_pipeline: dict[str, Any],
+) -> dict[str, Any]:
+    examples_ok = all(
+        isinstance(info, dict)
+        and ((info.get("run") or {}).get("exit_code")) == 0
+        and bool((info.get("run") or {}).get("json_valid"))
+        for info in packaging_examples.values()
+    )
+    deterministic_provider_ok = (
+        provider_matrix.get("provider_source") == "deterministic"
+        and not list(provider_matrix.get("failed_required_checks") or ())
+        and not list(provider_matrix.get("error_issue_codes") or ())
+    )
+    live_provider_ok = (
+        provider_matrix.get("provider_source") == "external"
+        and bool(provider_matrix.get("ready_for_real_provider_smoke"))
+    )
+    storage_contracts_ready = (
+        len(storage_interfaces.get("roles") or ()) > 0
+        and len(storage_interfaces.get("role_contracts") or ())
+        == len(storage_interfaces.get("roles") or ())
+        and {"in_memory", "sqlite", "markdown"}
+        <= set(str(kind) for kind in storage_interfaces.get("builtin_kinds") or ())
+        and {"postgres", "vector", "graph", "product"}
+        <= set(str(kind) for kind in storage_interfaces.get("external_kinds") or ())
+    )
+    context_pipeline_ready = int(context_pipeline.get("stage_count") or 0) >= 7
+    sdk_core_usable = (
+        status == "ready"
+        and runtime_free
+        and examples_ok
+        and deterministic_provider_ok
+        and storage_contracts_ready
+        and context_pipeline_ready
+    )
+    not_covered = [
+        {
+            "item": "live_llm_provider_conformance",
+            "status": "covered" if live_provider_ok else "not_run_in_sdk_validation",
+            "owner": "runtime_or_provider_adapter",
+            "reason": "requires a runtime-supplied LLMProviderPort plus credentials",
+        },
+        {
+            "item": "ravenstorm_runtime_adapter_acceptance",
+            "status": "out_of_scope_for_sdk_repo",
+            "owner": "ravenstorm_or_adapter_repo",
+            "reason": "SDK validation intentionally excludes Raven/OpenAI Agents SDK/Graphiti/FastAPI adapters",
+        },
+        {
+            "item": "production_backend_drivers",
+            "status": "out_of_scope_for_sdk_repo",
+            "owner": "runtime_or_storage_adapter",
+            "reason": "PG, vector, graph, object storage, and product stores implement SDK ports outside core",
+        },
+        {
+            "item": "domain_eval_suites",
+            "status": "out_of_scope_for_sdk_repo",
+            "owner": "runtime",
+            "reason": "code, ops, security, and Raven-specific scoring datasets are product policy",
+        },
+    ]
+    return {
+        "schema_version": "agent-core-migration-readiness-summary/v1",
+        "sdk_core_status": (
+            "usable_for_live_provider_tests" if sdk_core_usable else "blocked"
+        ),
+        "sdk_core_usable": sdk_core_usable,
+        "ready_for_runtime_adapter_work": sdk_core_usable,
+        "ready_for_live_provider_conformance": sdk_core_usable,
+        "live_provider_conformance_status": (
+            "passed" if live_provider_ok else "requires_external_provider"
+        ),
+        "runtime_adapters_in_scope": False,
+        "ravenstorm_adapter_in_scope": False,
+        "evidence": {
+            "ready_gate_count": len(ready_gates),
+            "blocked_gate_count": len(blocked_gates),
+            "runtime_free": runtime_free,
+            "examples_ok": examples_ok,
+            "deterministic_provider_ok": deterministic_provider_ok,
+            "storage_contracts_ready": storage_contracts_ready,
+            "context_pipeline_ready": context_pipeline_ready,
+        },
+        "blocked_gates": list(blocked_gates),
+        "not_covered_by_sdk_validation": not_covered,
+        "next_validation_step": (
+            "run_agent_core_provider_conformance(provider=runtime_provider)"
+            if sdk_core_usable and not live_provider_ok
+            else ""
+        ),
     }
 
 
