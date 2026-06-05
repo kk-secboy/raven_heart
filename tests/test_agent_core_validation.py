@@ -49,6 +49,23 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert {"postgres", "vector", "graph", "product"} <= set(
         manifest["summary"]["storage_backend_interfaces"]["external_kinds"]
     )
+    task_profiles = manifest["summary"]["task_profile_coverage"]
+    assert task_profiles["profile_count"] == 3
+    assert task_profiles["profile_names"] == ["code", "ops", "security"]
+    assert task_profiles["completed_profiles"] == ["code", "ops", "security"]
+    assert task_profiles["tool_enabled_profiles"] == ["code", "ops", "security"]
+    assert task_profiles["memory_enabled_profiles"] == ["code", "ops", "security"]
+    assert task_profiles["context_enabled_profiles"] == ["code", "ops", "security"]
+    assert task_profiles["skill_names"] == [
+        "code-review",
+        "ops-triage",
+        "security-review",
+    ]
+    assert task_profiles["provider_names"] == [
+        "code-provider",
+        "ops-provider",
+        "security-provider",
+    ]
     migration = manifest["summary"]["migration_readiness"]
     assert (
         migration["schema_version"]
@@ -68,6 +85,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert migration["evidence"]["provider_conformance_ok"] is True
     assert migration["evidence"]["storage_contracts_ready"] is True
     assert migration["evidence"]["context_pipeline_ready"] is True
+    assert migration["evidence"]["task_profiles_ready"] is True
     assert migration["blocked_gates"] == []
     assert {
         item["item"] for item in migration["not_covered_by_sdk_validation"]

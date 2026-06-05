@@ -1042,6 +1042,7 @@ def _validation_summary(
     provider_matrix = provider_conformance.get("check_matrix") or {}
     storage_interfaces = sdk_manifest.get("storage_backend_interfaces") or {}
     context_pipeline = sdk_manifest.get("context_pipeline") or {}
+    task_profile_matrix = task_profile_acceptance.get("matrix") or {}
     return {
         "schema_version": "agent-core-validation-summary/v1",
         "status": status,
@@ -1089,6 +1090,24 @@ def _validation_summary(
             "external_kinds": list(storage_interfaces.get("external_kinds") or ()),
             "role_contract_count": len(storage_interfaces.get("role_contracts") or ()),
         },
+        "task_profile_coverage": {
+            "profile_count": int(task_profile_matrix.get("profile_count") or 0),
+            "profile_names": list(task_profile_matrix.get("profile_names") or ()),
+            "completed_profiles": list(
+                task_profile_matrix.get("completed_profiles") or ()
+            ),
+            "tool_enabled_profiles": list(
+                task_profile_matrix.get("tool_enabled_profiles") or ()
+            ),
+            "memory_enabled_profiles": list(
+                task_profile_matrix.get("memory_enabled_profiles") or ()
+            ),
+            "context_enabled_profiles": list(
+                task_profile_matrix.get("context_enabled_profiles") or ()
+            ),
+            "skill_names": list(task_profile_matrix.get("skill_names") or ()),
+            "provider_names": list(task_profile_matrix.get("provider_names") or ()),
+        },
         "migration_readiness": _migration_readiness_summary(
             status=status,
             ready_gates=ready_gates,
@@ -1103,6 +1122,7 @@ def _validation_summary(
             provider_matrix=provider_matrix,
             storage_interfaces=storage_interfaces,
             context_pipeline=context_pipeline,
+            task_profile_matrix=task_profile_matrix,
         ),
     }
 
@@ -1117,6 +1137,7 @@ def _migration_readiness_summary(
     provider_matrix: dict[str, Any],
     storage_interfaces: dict[str, Any],
     context_pipeline: dict[str, Any],
+    task_profile_matrix: dict[str, Any],
 ) -> dict[str, Any]:
     examples_ok = all(
         isinstance(info, dict)
@@ -1144,6 +1165,16 @@ def _migration_readiness_summary(
         <= set(str(kind) for kind in storage_interfaces.get("external_kinds") or ())
     )
     context_pipeline_ready = int(context_pipeline.get("stage_count") or 0) >= 7
+    expected_task_profiles = {"code", "ops", "security"}
+    task_profiles_ready = all(
+        expected_task_profiles <= set(task_profile_matrix.get(key) or ())
+        for key in (
+            "completed_profiles",
+            "tool_enabled_profiles",
+            "memory_enabled_profiles",
+            "context_enabled_profiles",
+        )
+    )
     sdk_core_usable = (
         status == "ready"
         and runtime_free
@@ -1151,6 +1182,7 @@ def _migration_readiness_summary(
         and provider_conformance_ok
         and storage_contracts_ready
         and context_pipeline_ready
+        and task_profiles_ready
     )
     not_covered = [
         {
@@ -1201,6 +1233,7 @@ def _migration_readiness_summary(
             "provider_conformance_ok": provider_conformance_ok,
             "storage_contracts_ready": storage_contracts_ready,
             "context_pipeline_ready": context_pipeline_ready,
+            "task_profiles_ready": task_profiles_ready,
         },
         "blocked_gates": list(blocked_gates),
         "not_covered_by_sdk_validation": not_covered,

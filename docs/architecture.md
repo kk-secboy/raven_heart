@@ -255,12 +255,13 @@ acceptance, recovery acceptance, and resume acceptance, then returns one
 `AgentCoreValidationReport` with all subreports and blocking issues. Its
 top-level `summary` gives the adapter-migration view: gate counts, blocked
 gates, runtime-boundary status, API counts, executed examples, provider
-conformance checks, storage backend coverage, and a `migration_readiness`
-block. That readiness block separates SDK-core usability from work that must
-stay in runtime or adapter repositories: live LLM provider conformance with
-credentials, RavenStorm adapter acceptance, production backend drivers, and
-domain eval suites. This is the SDK-level check a runtime should pass before
-adapter implementation or product-specific migration tests begin.
+conformance checks, storage backend coverage, and `task_profile_coverage` for
+code, ops, and security profile portability. Its `migration_readiness` block
+separates SDK-core usability from work that must stay in runtime or adapter
+repositories: live LLM provider conformance with credentials, RavenStorm
+adapter acceptance, production backend drivers, and domain eval suites. This is
+the SDK-level check a runtime should pass before adapter implementation or
+product-specific migration tests begin.
 
 ## Boundary Table
 
