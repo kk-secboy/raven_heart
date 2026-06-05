@@ -25,6 +25,7 @@ ops agents, research agents, and future automation systems.
 - Prompt bucket budget policy for per-bucket caps and audit manifests.
 - Context reducer port and deterministic timeline reduction.
 - Runner-level automatic timeline reduction before prompt assembly.
+- Timeline store port plus in-memory, SQLite, and Markdown timeline stores.
 - Context material store center for SDK/runtime-owned candidate context backends.
 - Context injection records for resume, memory, runtime hints, and other bucketed material.
 - Context injection policy for bucket allow-lists, per-injection trimming, total injection budget, and audit manifests.
@@ -868,6 +869,7 @@ The SDK core treats data backends as ports, not as product commitments:
 | Data area | Core port | Built-in lightweight implementations | External/runtime implementations |
 | --- | --- | --- | --- |
 | Memory | `MemoryPort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product knowledge stores |
+| Timeline / short-term state | `TimelineStorePort` | In-memory, SQLite, Markdown | Postgres, product conversation store, event log, object storage |
 | Context material | `ContextMaterialStorePort` | In-memory, SQLite, Markdown | Postgres, vector DB, graph/RAG, product APIs |
 | Harness journal | `AgentJournalStorePort` | In-memory snapshot store, SQLite snapshot store, Markdown snapshot store | Postgres, object storage, event log, workflow database |
 | Tool replay | `ToolReplayStorePort` | In-memory, SQLite, Markdown | Postgres, object storage, workflow replay DB |
@@ -1180,6 +1182,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Memory governance trace/eval | MVP implemented |
 | Unified storage backend manifests | MVP implemented |
 | Storage backend catalog/selection | MVP implemented |
+| Timeline storage backends | MVP implemented |
 | SDK storage acceptance harness | MVP implemented |
 | Planner core | MVP implemented |
 | Planner trace/eval contracts | MVP implemented |

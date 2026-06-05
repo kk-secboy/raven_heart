@@ -31,6 +31,7 @@ StorageBackendRole = Literal[
     "approval",
     "policy_decision",
     "event_log",
+    "timeline",
 ]
 
 

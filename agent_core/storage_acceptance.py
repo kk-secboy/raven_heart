@@ -43,6 +43,7 @@ from agent_core.policy import (
     SQLitePolicyDecisionStore,
 )
 from agent_core.runner import InMemoryAgentRunStore, MarkdownAgentRunStore, SQLiteAgentRunStore
+from agent_core.timeline import MarkdownTimelineStore, SQLiteTimelineStore, TimelineStore
 from agent_core.tools import InMemoryToolReplayStore, MarkdownToolReplayStore, SQLiteToolReplayStore
 from agent_core.trace import InMemoryRunTraceStore, MarkdownRunTraceStore, NullRunTraceStore, SQLiteRunTraceStore
 
@@ -222,6 +223,9 @@ def _builtin_store_manifests(root: Path) -> tuple[dict[str, Any], ...]:
         InMemoryArtifactStore(),
         SQLiteArtifactStore(root / "artifacts.sqlite"),
         MarkdownArtifactStore(root / "artifacts.md"),
+        TimelineStore(),
+        SQLiteTimelineStore(root / "timeline.sqlite"),
+        MarkdownTimelineStore(root / "timeline.md"),
     )
     return tuple(store.manifest() for store in stores)
 

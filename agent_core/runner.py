@@ -75,7 +75,7 @@ from agent_core.reducer import ContextReducerPort, ReducerRequest, apply_reducti
 from agent_core.skills import SkillsContext
 from agent_core.structured import StructuredOutputSpec, StructuredOutputValidatorPort
 from agent_core.task_contract import AgentTaskContract
-from agent_core.timeline import TimelineBudget, TimelineStore
+from agent_core.timeline import TimelineBudget, TimelineStore, TimelineStorePort
 from agent_core.tools import NullToolReplay, ToolReplayPort, ToolRuntimePort
 from agent_core.trace import AgentJournalReplay, AgentRunTraceBundle, NullRunTraceStore, RunTraceStorePort
 
@@ -92,7 +92,7 @@ class AgentSession:
     skills: SkillsContext | None = None
     mcp: MCPCenter | None = None
     memory: MemoryPort = field(default_factory=NullMemory)
-    timeline: TimelineStore = field(default_factory=TimelineStore)
+    timeline: TimelineStorePort = field(default_factory=TimelineStore)
     context_reducer: ContextReducerPort | None = None
     context_material_selector: ContextMaterialSelectorPort | None = None
     context_material_store: ContextMaterialStorePort | None = None
@@ -149,6 +149,7 @@ class AgentSession:
             "harness": _component_manifest_sync(self.harness),
             "capabilities": self.capability_catalog().manifest(),
             "memory": _component_manifest_sync(self.memory),
+            "timeline": _component_manifest_sync(self.timeline),
             "tool_replay": _component_manifest_sync(self.tool_replay),
             "policy_decisions": _component_manifest_sync(self.policy_decision_store),
             "approvals": _component_manifest_sync(self.approval_store),

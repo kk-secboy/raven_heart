@@ -528,6 +528,15 @@ from agent_core.task_profile_acceptance import (
     AgentCoreTaskProfileAcceptanceReport,
     run_agent_core_task_profile_acceptance,
 )
+from agent_core.timeline import (
+    MarkdownTimelineStore,
+    SQLiteTimelineStore,
+    TimelineBudget,
+    TimelineItem,
+    TimelineStore,
+    TimelineStorePort,
+    TimelineView,
+)
 from agent_core.runner import (
     AgentManagerCapacityError,
     AgentManagerCapacityStatus,
@@ -1198,6 +1207,13 @@ __all__ = [
     "TraceReplayResult",
     "TraceReplayStep",
     "TransportLLMProvider",
+    "TimelineBudget",
+    "TimelineItem",
+    "TimelineStore",
+    "TimelineStorePort",
+    "TimelineView",
+    "MarkdownTimelineStore",
+    "SQLiteTimelineStore",
     "ToolRegistry",
     "ToolResult",
     "ToolRuntimeMount",

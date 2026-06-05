@@ -38,6 +38,7 @@ CORE_STORAGE_ROLES: tuple[str, ...] = (
     "approval",
     "policy_decision",
     "event_log",
+    "timeline",
 )
 BUILTIN_STORAGE_KINDS: tuple[str, ...] = ("in_memory", "sqlite", "markdown")
 EXTERNAL_STORAGE_KINDS: tuple[str, ...] = (
@@ -132,6 +133,10 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "PromptBucket",
     "PromptBucketBudgetPolicy",
     "PromptSemanticReducerPort",
+    "TimelineStorePort",
+    "TimelineStore",
+    "SQLiteTimelineStore",
+    "MarkdownTimelineStore",
     "StorageBackendSpec",
     "StorageBackendRequirement",
     "StorageBackendCatalog",
@@ -783,6 +788,9 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
                 "PromptSemanticReducerPort",
                 "ContextInjectionPolicy",
                 "ContextMaterialCenter",
+                "TimelineStorePort",
+                "SQLiteTimelineStore",
+                "MarkdownTimelineStore",
             ),
         ),
         AgentCoreCapability(
@@ -1289,6 +1297,10 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "PromptIR",
             "PromptBucketBudgetPolicy",
             "PromptSemanticReducerPort",
+            "TimelineStorePort",
+            "TimelineStore",
+            "SQLiteTimelineStore",
+            "MarkdownTimelineStore",
             "ContextMaterialCenter",
             "ContextInjectionPolicy",
             "ContextWindowBuilder",

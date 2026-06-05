@@ -256,6 +256,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "MarkdownArtifactStore",
         "MarkdownPlannerStore",
         "MarkdownRunTraceStore",
+        "MarkdownTimelineStore",
         "InMemoryToolReplayStore",
         "ErrorClassification",
         "EventLogPort",
@@ -325,6 +326,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "SQLiteArtifactStore",
         "SQLiteJournalStore",
         "SQLiteRunTraceStore",
+        "SQLiteTimelineStore",
         "SQLiteToolReplayStore",
         "SQLiteMemoryStore",
         "SQLiteContextMaterialStore",
@@ -458,6 +460,11 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "TraceReplayHarness",
         "TraceReplayResult",
         "TraceReplayStep",
+        "TimelineBudget",
+        "TimelineItem",
+        "TimelineStore",
+        "TimelineStorePort",
+        "TimelineView",
         "TransportLLMProvider",
         "agent_tool_spec_from_session",
         "apply_reduction_to_timeline",
@@ -537,7 +544,9 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "openai_agents_runtime" in boundary["forbidden_packages"]
     assert "openai" in boundary["forbidden_dependencies"]
     assert "runtime adapters for RavenStorm or other hosts" in boundary["runtime_owns"]
-    assert {"memory", "journal", "run_trace", "event_log"} <= set(storage["roles"])
+    assert {"memory", "journal", "run_trace", "event_log", "timeline"} <= set(
+        storage["roles"]
+    )
     assert {"in_memory", "sqlite", "markdown"} <= set(storage["builtin_kinds"])
     assert {"postgres", "vector", "graph", "product", "custom"} <= set(
         storage["external_kinds"]

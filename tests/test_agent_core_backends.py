@@ -26,6 +26,7 @@ from agent_core import (
     MarkdownPlannerStore,
     MarkdownPolicyDecisionStore,
     MarkdownRunTraceStore,
+    MarkdownTimelineStore,
     MarkdownToolReplayStore,
     MemoryCenter,
     NullApprovalStore,
@@ -41,11 +42,13 @@ from agent_core import (
     SQLitePlannerStore,
     SQLitePolicyDecisionStore,
     SQLiteRunTraceStore,
+    SQLiteTimelineStore,
     SQLiteToolReplayStore,
     StorageBackendCatalog,
     StorageBackendPreflightReport,
     StorageBackendRequirement,
     StorageBackendSpec,
+    TimelineStore,
     storage_backend_catalog_from_components,
     storage_backend_manifests_from_components,
     storage_backend_manifest,
@@ -118,6 +121,9 @@ def test_core_store_manifests_include_unified_backend_metadata(tmp_path) -> None
         (InMemoryArtifactStore(), "artifact", "in_memory"),
         (SQLiteArtifactStore(tmp_path / "artifacts.sqlite"), "artifact", "sqlite"),
         (MarkdownArtifactStore(tmp_path / "artifacts.md"), "artifact", "markdown"),
+        (TimelineStore(), "timeline", "in_memory"),
+        (SQLiteTimelineStore(tmp_path / "timeline.sqlite"), "timeline", "sqlite"),
+        (MarkdownTimelineStore(tmp_path / "timeline.md"), "timeline", "markdown"),
     )
 
     for store, role, kind in stores:
@@ -126,6 +132,41 @@ def test_core_store_manifests_include_unified_backend_metadata(tmp_path) -> None
         assert backend["role"] == role
         assert backend["kind"] == kind
         assert backend["core_builtin"] is True
+
+
+def test_timeline_stores_persist_windows_and_backend_manifests(tmp_path) -> None:
+    sqlite = SQLiteTimelineStore(tmp_path / "timeline.sqlite")
+    sqlite.add("first observation", kind="task", source="sqlite")
+    second = sqlite.add("second observation " + ("x" * 80), kind="tool")
+    sqlite.compressed_head = "compressed old timeline"
+    sqlite.archive_refs.append("archive://timeline/old")
+    sqlite.save_state()
+    assert sqlite.soft_delete(second.item_id) is True
+
+    reopened_sqlite = SQLiteTimelineStore(tmp_path / "timeline.sqlite")
+    assert len(reopened_sqlite.items) == 2
+    assert reopened_sqlite.items[1].deleted is True
+    assert reopened_sqlite.compressed_head == "compressed old timeline"
+    assert reopened_sqlite.archive_refs == ["archive://timeline/old"]
+    assert reopened_sqlite.manifest()["backend"]["kind"] == "sqlite"
+    assert reopened_sqlite.manifest()["backend"]["role"] == "timeline"
+
+    markdown = MarkdownTimelineStore(tmp_path / "timeline.md")
+    markdown.add("markdown task", kind="task", source="markdown")
+    markdown.add("markdown observation", kind="observation")
+    markdown.compressed_head = "markdown compressed"
+    markdown.archive_refs.append("archive://timeline/md")
+    markdown.save()
+
+    reopened_markdown = MarkdownTimelineStore(tmp_path / "timeline.md")
+    assert [item.content for item in reopened_markdown.items] == [
+        "markdown task",
+        "markdown observation",
+    ]
+    assert reopened_markdown.compressed_head == "markdown compressed"
+    assert reopened_markdown.archive_refs == ["archive://timeline/md"]
+    assert reopened_markdown.view().render_open()
+    assert reopened_markdown.manifest()["backend"]["kind"] == "markdown"
 
 
 def test_storage_backend_catalog_selects_runtime_owned_backends_without_adapters() -> None:
