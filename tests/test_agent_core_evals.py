@@ -362,17 +362,17 @@ def _trace_manifest() -> dict[str, object]:
             "failed_servers": ["broken"],
             "disabled_servers": [],
             "partial_servers": ["fs"],
-            "transports": {"stdio": 2},
+            "transports": {"mock": 2},
             "servers": [
                 {
                     "name": "fs",
-                    "transport": "stdio",
+                    "transport": "mock",
                     "enabled": True,
                     "state": {"status": "refreshed", "tool_count": 1},
                 },
                 {
                     "name": "broken",
-                    "transport": "stdio",
+                    "transport": "mock",
                     "enabled": True,
                     "state": {"status": "failed", "last_error": "boom"},
                 },

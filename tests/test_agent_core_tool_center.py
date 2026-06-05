@@ -55,8 +55,8 @@ async def _build_tool_center() -> ToolCenter:
         _local_handler,
     )
     mcp = MCPCenter()
-    mcp.register_server(MCPServerSpec(name="fs", transport="stdio", tags=("remote",)))
-    mcp.register_connector("stdio", FakeMCPConnector())
+    mcp.register_server(MCPServerSpec(name="fs", transport="mock", tags=("remote",)))
+    mcp.register_connector("mock", FakeMCPConnector())
     await mcp.refresh()
 
     center = ToolCenter()
@@ -145,8 +145,8 @@ async def test_tool_center_rejects_name_and_alias_collisions() -> None:
 @pytest.mark.asyncio
 async def test_tool_center_refreshes_mounted_mcp_center() -> None:
     mcp = MCPCenter()
-    mcp.register_server(MCPServerSpec(name="fs", transport="stdio"))
-    mcp.register_connector("stdio", FakeMCPConnector())
+    mcp.register_server(MCPServerSpec(name="fs", transport="mock"))
+    mcp.register_connector("mock", FakeMCPConnector())
     center = ToolCenter()
     center.mount("mcp", mcp)
 

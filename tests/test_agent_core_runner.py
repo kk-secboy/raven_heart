@@ -1221,7 +1221,7 @@ async def test_agent_runner_refreshes_tools_and_tolerates_partial_mcp_refresh() 
 
     registry.register(ToolSpec(name="lookup"), lookup)
     mcp = MCPCenter()
-    mcp.register_server(MCPServerSpec(name="missing", transport="stdio"))
+    mcp.register_server(MCPServerSpec(name="missing", transport="mock"))
     session = AgentSession(
         profile=AgentProfile(name="refresh"),
         provider=MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}]),

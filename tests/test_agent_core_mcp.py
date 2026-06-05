@@ -131,12 +131,25 @@ class PartialMCPConnector(FakeMCPConnector):
         raise RuntimeError(f"cannot list resources for {server.name}")
 
 
+def test_mcp_server_spec_defaults_to_runtime_transport_without_deployment_fields() -> None:
+    center = MCPCenter()
+    center.register_server(MCPServerSpec(name="runtime-owned", tags=("external",)))
+    manifest = center.manifest()
+    server = manifest["servers"][0]
+
+    assert server["transport"] == "runtime"
+    assert "command" not in server
+    assert "args" not in server
+    assert "url" not in server
+    assert "env" not in server
+
+
 @pytest.mark.asyncio
 async def test_mcp_center_refreshes_searches_manifests_and_invokes_tools() -> None:
     center = MCPCenter()
     connector = FakeMCPConnector()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio", tags=("local",)))
-    center.register_connector("stdio", connector)
+    center.register_server(MCPServerSpec(name="fs", transport="mock", tags=("local",)))
+    center.register_connector("mock", connector)
 
     refreshed = await center.refresh()
     specs = center.specs()
@@ -164,8 +177,8 @@ async def test_mcp_center_refreshes_searches_manifests_and_invokes_tools() -> No
 @pytest.mark.asyncio
 async def test_mcp_center_refresh_inventory_records_tools_resources_and_prompts() -> None:
     center = MCPCenter()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio", tags=("local",)))
-    center.register_connector("stdio", FakeMCPConnector())
+    center.register_server(MCPServerSpec(name="fs", transport="mock", tags=("local",)))
+    center.register_connector("mock", FakeMCPConnector())
 
     results = await center.refresh_inventory()
     manifest = center.manifest()
@@ -190,8 +203,8 @@ async def test_mcp_center_refresh_inventory_records_tools_resources_and_prompts(
 @pytest.mark.asyncio
 async def test_mcp_center_refresh_inventory_records_partial_asset_failures() -> None:
     center = MCPCenter()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio"))
-    center.register_connector("stdio", PartialMCPConnector())
+    center.register_server(MCPServerSpec(name="fs", transport="mock"))
+    center.register_connector("mock", PartialMCPConnector())
 
     results = await center.refresh_inventory(fail_fast=False)
     manifest = results[0].manifest()
@@ -214,8 +227,8 @@ async def test_mcp_center_refresh_inventory_records_partial_asset_failures() -> 
 async def test_mcp_center_tracks_lifecycle_and_closes_servers() -> None:
     center = MCPCenter()
     connector = LifecycleMCPConnector()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio"))
-    center.register_connector("stdio", connector)
+    center.register_server(MCPServerSpec(name="fs", transport="mock"))
+    center.register_connector("mock", connector)
 
     results = await center.refresh_status()
     await center.close("fs")
@@ -231,10 +244,10 @@ async def test_mcp_center_tracks_lifecycle_and_closes_servers() -> None:
 async def test_mcp_center_records_refresh_failures_without_stale_tools() -> None:
     center = MCPCenter()
     connector = FakeMCPConnector()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio"))
-    center.register_connector("stdio", connector)
+    center.register_server(MCPServerSpec(name="fs", transport="mock"))
+    center.register_connector("mock", connector)
     await center.refresh()
-    center.register_connector("stdio", FailingMCPConnector())
+    center.register_connector("mock", FailingMCPConnector())
 
     results = await center.refresh_status(fail_fast=False)
 
@@ -247,8 +260,8 @@ async def test_mcp_center_records_refresh_failures_without_stale_tools() -> None
 @pytest.mark.asyncio
 async def test_mcp_center_refreshes_searches_manifests_and_reads_resources() -> None:
     center = MCPCenter()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio"))
-    center.register_connector("stdio", FakeMCPConnector())
+    center.register_server(MCPServerSpec(name="fs", transport="mock"))
+    center.register_connector("mock", FakeMCPConnector())
 
     resources = await center.refresh_resources()
     search = center.search_resources("readme docs")
@@ -265,8 +278,8 @@ async def test_mcp_center_refreshes_searches_manifests_and_reads_resources() -> 
 @pytest.mark.asyncio
 async def test_mcp_center_refreshes_searches_manifests_and_gets_prompts() -> None:
     center = MCPCenter()
-    center.register_server(MCPServerSpec(name="prompts", transport="stdio"))
-    center.register_connector("stdio", FakeMCPConnector())
+    center.register_server(MCPServerSpec(name="prompts", transport="mock"))
+    center.register_connector("mock", FakeMCPConnector())
 
     prompts = await center.refresh_prompts()
     search = center.search_prompts("summarize analysis")
@@ -282,8 +295,8 @@ async def test_mcp_center_refreshes_searches_manifests_and_gets_prompts() -> Non
 @pytest.mark.asyncio
 async def test_mcp_center_exports_resources_and_prompts_as_context_materials() -> None:
     center = MCPCenter()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio"))
-    center.register_connector("stdio", FakeMCPConnector())
+    center.register_server(MCPServerSpec(name="fs", transport="mock"))
+    center.register_connector("mock", FakeMCPConnector())
     await center.refresh_inventory()
 
     result = await center.context_materials(
@@ -319,8 +332,8 @@ async def test_mcp_center_exports_resources_and_prompts_as_context_materials() -
 async def test_react_executor_can_use_mcp_center_as_tool_runtime() -> None:
     center = MCPCenter()
     connector = FakeMCPConnector()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio"))
-    center.register_connector("stdio", connector)
+    center.register_server(MCPServerSpec(name="fs", transport="mock"))
+    center.register_connector("mock", connector)
     await center.refresh()
     provider = MockLLMProvider(
         [
@@ -353,8 +366,8 @@ async def test_react_executor_can_use_mcp_center_as_tool_runtime() -> None:
 @pytest.mark.asyncio
 async def test_react_executor_search_tools_uses_mcp_center_search() -> None:
     center = MCPCenter()
-    center.register_server(MCPServerSpec(name="fs", transport="stdio", tags=("local",)))
-    center.register_connector("stdio", FakeMCPConnector())
+    center.register_server(MCPServerSpec(name="fs", transport="mock", tags=("local",)))
+    center.register_connector("mock", FakeMCPConnector())
     await center.refresh()
     provider = MockLLMProvider(
         [

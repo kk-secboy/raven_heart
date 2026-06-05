@@ -17,11 +17,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class MCPServerSpec:
     name: str
-    transport: str = "stdio"
-    command: str = ""
-    args: tuple[str, ...] = ()
-    url: str = ""
-    env: dict[str, str] = field(default_factory=dict)
+    transport: str = "runtime"
     tags: tuple[str, ...] = ()
     enabled: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -837,9 +833,6 @@ class MCPCenter(ToolRuntimePort):
                 {
                     "name": server.name,
                     "transport": server.transport,
-                    "url": server.url,
-                    "command": server.command,
-                    "args": list(server.args),
                     "tags": list(server.tags),
                     "enabled": server.enabled,
                     "metadata": server.metadata,

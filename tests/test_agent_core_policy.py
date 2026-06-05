@@ -112,8 +112,8 @@ async def test_rule_based_policy_denies_tool_by_tag_before_execution() -> None:
 async def test_rule_based_policy_denies_mcp_tool_by_server_metadata() -> None:
     connector = FakeMCPConnector()
     mcp = MCPCenter()
-    mcp.register_server(MCPServerSpec(name="fs", transport="stdio"))
-    mcp.register_connector("stdio", connector)
+    mcp.register_server(MCPServerSpec(name="fs", transport="mock"))
+    mcp.register_connector("mock", connector)
     await mcp.refresh()
     center = ToolCenter()
     center.mount("mcp", mcp)

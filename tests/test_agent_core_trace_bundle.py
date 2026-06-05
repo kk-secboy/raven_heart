@@ -183,7 +183,7 @@ def test_agent_run_trace_bundle_summarizes_core_manifests() -> None:
                     "servers": [
                         {
                             "name": "fs",
-                            "transport": "stdio",
+                            "transport": "mock",
                             "enabled": True,
                             "state": {
                                 "status": "refreshed",
