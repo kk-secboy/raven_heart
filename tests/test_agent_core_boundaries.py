@@ -823,3 +823,21 @@ def test_examples_do_not_ship_concrete_runtime_or_provider_adapters() -> None:
 
     assert offenders == []
 
+
+def test_docs_do_not_use_legacy_openai_compatible_codec_name() -> None:
+    forbidden = (
+        "OpenAICompatibleLLMProviderCodec",
+        "OpenAI-compatible codec",
+        "OpenAI-compatible tool",
+        "OpenAI-compatible tools",
+    )
+    docs = (ROOT / "README.md", ROOT / "docs" / "architecture.md")
+    offenders = []
+    for path in docs:
+        text = path.read_text(encoding="utf-8")
+        hits = [item for item in forbidden if item in text]
+        if hits:
+            offenders.append({"path": path.relative_to(ROOT).as_posix(), "hits": hits})
+
+    assert offenders == []
+

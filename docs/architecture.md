@@ -141,7 +141,7 @@ leases, worker process control, UI controls, and operational policy.
 
 `AgentCoreProviderAcceptanceHarness` is the provider-compatibility gate. It runs
 a deterministic matrix for text, multimodal, structured-output, native-tool,
-OpenAI-compatible codec, the default provider-neutral transport codec,
+Chat Completions-compatible codec, the default provider-neutral transport codec,
 prompt-safe request manifests, streamed tool-call and retryable-error decoding,
 transport fallback, and streaming routes. It proves the SDK can choose
 providers by capability and preserve portable call manifests without embedding
@@ -604,7 +604,7 @@ require adjusted plans, specific shape decisions, provider names, and final
 output-token ceilings.
 `LLMToolContract`, `LLMToolChoice`, and `LLMResponseFormat` are request-level
 contracts for native model tools and constrained output. They deliberately stop
-at the provider-neutral shape: OpenAI-compatible tools/response formats,
+at the provider-neutral shape: Chat Completions-compatible tools/response formats,
 Anthropic tool use, Gemini function declarations, local-model JSON schemas, and
 gateway payload details remain adapter responsibilities. `LLMModelCapabilities`
 can reject routes that cannot satisfy these contracts before a provider call is
@@ -614,7 +614,7 @@ decode native tool calls into `LLMResponse.tool_calls` or stream `tool_call`
 events. When `ReActConfig.native_tool_calls` is enabled, the executor runs those
 calls through the same policy, approval, replay, retry, and tool-result
 compaction boundaries used by JSON ReAct actions, then appends provider-neutral
-`role=tool` messages for the next turn. This keeps OpenAI-compatible tool calls,
+`role=tool` messages for the next turn. This keeps Chat Completions-compatible tool calls,
 Anthropic tool use, and local model function calling behind the same core loop.
 The journal keeps each provider-native tool result tied to the originating
 `provider_tool_call` manifest plus any `tool_execution` summary. Trace replay
@@ -632,13 +632,13 @@ message part payloads.
 dependency-free adapter boundary: runtimes can provide a transport and optional
 vendor codec while the SDK keeps provider-neutral request, response, stream, and
 error/retry semantics.
-`OpenAICompatibleLLMProviderCodec` is a built-in codec for Chat
+`ChatCompletionsLLMProviderCodec` is a built-in codec for Chat
 Completions-style payloads. It maps SDK messages, multimodal parts, native tool
 contracts, tool choices, response formats, usage, tool calls, and basic stream
 chunks without depending on the OpenAI SDK; HTTP/auth/model deployment remain
 runtime responsibilities.
 `AgentCoreProviderAcceptanceHarness` exercises both the default transport codec
-and the OpenAI-compatible codec without network access. Its contract matrix
+and the Chat Completions-compatible codec without network access. Its contract matrix
 checks provider-neutral payload schemas, content-part preservation, prompt-safe
 request manifests, decoded native tool calls, streamed tool-call chunks, and
 retryable stream errors before a runtime brings real API keys or vendor clients.
