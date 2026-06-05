@@ -251,7 +251,11 @@ def _repository_files(root: Path) -> dict[str, Any]:
 
 
 def _examples_manifest(root: Path) -> dict[str, Any]:
-    expected = ("minimal_react.py", "memory_and_skills.py")
+    expected = (
+        "minimal_react.py",
+        "memory_and_skills.py",
+        "real_provider_conformance.py",
+    )
     example_root = root / "examples"
     examples = {}
     for name in expected:
