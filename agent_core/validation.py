@@ -22,6 +22,7 @@ from agent_core.external_backend_acceptance import (
 )
 from agent_core.guardrail_acceptance import run_agent_core_guardrail_acceptance
 from agent_core.interaction_acceptance import run_agent_core_interaction_acceptance
+from agent_core.interrupt_acceptance import run_agent_core_interrupt_acceptance
 from agent_core.lifecycle_acceptance import run_agent_core_lifecycle_acceptance
 from agent_core.manifest import (
     AgentCoreSDKManifest,
@@ -151,6 +152,7 @@ class AgentCoreValidationReport:
     external_backend_acceptance: dict[str, Any] = field(default_factory=dict)
     guardrail_acceptance: dict[str, Any] = field(default_factory=dict)
     interaction_acceptance: dict[str, Any] = field(default_factory=dict)
+    interrupt_acceptance: dict[str, Any] = field(default_factory=dict)
     lifecycle_acceptance: dict[str, Any] = field(default_factory=dict)
     native_tool_acceptance: dict[str, Any] = field(default_factory=dict)
     packaging_acceptance: dict[str, Any] = field(default_factory=dict)
@@ -202,6 +204,7 @@ class AgentCoreValidationReport:
             "external_backend_acceptance": dict(self.external_backend_acceptance),
             "guardrail_acceptance": dict(self.guardrail_acceptance),
             "interaction_acceptance": dict(self.interaction_acceptance),
+            "interrupt_acceptance": dict(self.interrupt_acceptance),
             "lifecycle_acceptance": dict(self.lifecycle_acceptance),
             "native_tool_acceptance": dict(self.native_tool_acceptance),
             "packaging_acceptance": dict(self.packaging_acceptance),
@@ -317,6 +320,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "interaction_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        interrupt_acceptance = (
+            await run_agent_core_interrupt_acceptance(
+                metadata={"validation_gate": "interrupt_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         lifecycle_acceptance = (
             await run_agent_core_lifecycle_acceptance(
                 metadata={"validation_gate": "lifecycle_acceptance", **dict(self.metadata)}
@@ -413,6 +421,7 @@ class AgentCoreValidationSuite:
             external_backend_acceptance=external_backend_acceptance,
             guardrail_acceptance=guardrail_acceptance,
             interaction_acceptance=interaction_acceptance,
+            interrupt_acceptance=interrupt_acceptance,
             lifecycle_acceptance=lifecycle_acceptance,
             native_tool_acceptance=native_tool_acceptance,
             packaging_acceptance=packaging_acceptance,
@@ -449,6 +458,7 @@ class AgentCoreValidationSuite:
             external_backend_acceptance=external_backend_acceptance,
             guardrail_acceptance=guardrail_acceptance,
             interaction_acceptance=interaction_acceptance,
+            interrupt_acceptance=interrupt_acceptance,
             lifecycle_acceptance=lifecycle_acceptance,
             native_tool_acceptance=native_tool_acceptance,
             packaging_acceptance=packaging_acceptance,
@@ -589,6 +599,7 @@ def _validation_issues(
     external_backend_acceptance: dict[str, Any],
     guardrail_acceptance: dict[str, Any],
     interaction_acceptance: dict[str, Any],
+    interrupt_acceptance: dict[str, Any],
     lifecycle_acceptance: dict[str, Any],
     native_tool_acceptance: dict[str, Any],
     packaging_acceptance: dict[str, Any],
@@ -658,6 +669,11 @@ def _validation_issues(
         issues,
         source="interaction_acceptance",
         report=interaction_acceptance,
+    )
+    _extend_report_issues(
+        issues,
+        source="interrupt_acceptance",
+        report=interrupt_acceptance,
     )
     _extend_report_issues(
         issues,

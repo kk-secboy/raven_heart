@@ -223,6 +223,14 @@ request timeouts, interrupt metadata, schedule snapshots, event logs, and trace
 eval. Distributed schedulers, leases, worker process control, and UI controls
 remain runtime responsibilities.
 
+`agent_core.run_agent_core_interrupt_acceptance()` runs deterministic
+interrupt/deadline checks. It verifies pre-cancelled runs do not consume
+provider capacity, provider and tool deadlines finish as terminal timeout
+states with checkpoint phases, manager-driven active cancellation records
+interrupt metadata, and the same session can run successfully after cancellation
+without a poisoned cancel token. Operator UX, distributed process cancellation,
+and product workflow controls remain runtime responsibilities.
+
 `agent_core.run_agent_core_native_tool_acceptance()` runs deterministic
 provider-native tool-call checks. It verifies that `AgentRunner` sends native
 tool contracts, receives provider tool calls, executes the referenced tool

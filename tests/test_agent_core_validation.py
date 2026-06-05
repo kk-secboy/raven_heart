@@ -32,6 +32,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["external_backend_acceptance"]["ready"] is True
     assert manifest["guardrail_acceptance"]["ready"] is True
     assert manifest["interaction_acceptance"]["ready"] is True
+    assert manifest["interrupt_acceptance"]["ready"] is True
     assert manifest["lifecycle_acceptance"]["ready"] is True
     assert manifest["native_tool_acceptance"]["ready"] is True
     assert manifest["packaging_acceptance"]["ready"] is True
@@ -116,6 +117,11 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
         "provider_tool_result_execution_count"
     ] == 1
     assert manifest["interaction_acceptance"]["trace_eval"]["ok"] is True
+    assert manifest["interrupt_acceptance"]["pre_cancel"]["provider_request_count"] == 0
+    assert manifest["interrupt_acceptance"]["provider_timeout"]["status"] == "timeout"
+    assert manifest["interrupt_acceptance"]["tool_timeout"]["tool_invocation_count"] == 1
+    assert manifest["interrupt_acceptance"]["manager_cancel_reset"]["second_status"] == "completed"
+    assert manifest["interrupt_acceptance"]["trace_evals"]["tool_timeout"]["ok"] is True
     assert manifest["lifecycle_acceptance"]["queue"]["before"]["queued_run_count"] == 1
     assert manifest["lifecycle_acceptance"]["queued_cancel"][
         "second_provider_request_count"
@@ -220,6 +226,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "external_backend_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "guardrail_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "interaction_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "interrupt_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "lifecycle_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "native_tool_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "packaging_acceptance_harness" in readiness["matched"]["capabilities"]
@@ -267,6 +274,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_guardrail_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreInteractionAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_interaction_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCoreInterruptAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_interrupt_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreLifecycleAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_lifecycle_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreNativeToolAcceptanceHarness" in readiness["matched"]["public_api"]
@@ -338,6 +347,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_guardrail_acceptance" in stability["present_stable_api"]
     assert "AgentCoreInteractionAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_interaction_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreInterruptAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_interrupt_acceptance" in stability["present_stable_api"]
     assert "AgentCoreLifecycleAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_lifecycle_acceptance" in stability["present_stable_api"]
     assert "AgentCoreNativeToolAcceptanceHarness" in stability["present_stable_api"]
