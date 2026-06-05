@@ -761,3 +761,30 @@ def test_repository_does_not_ship_runtime_adapter_packages() -> None:
 
     assert offenders == []
 
+
+def test_examples_do_not_ship_concrete_runtime_or_provider_adapters() -> None:
+    examples_root = ROOT / "examples"
+    forbidden = (
+        "import urllib",
+        "from urllib",
+        "import requests",
+        "from requests",
+        "import aiohttp",
+        "from aiohttp",
+        "api_key",
+        "authorization",
+        "bearer ",
+        "base_url",
+        "chat/completions",
+        "openai",
+        "anthropic",
+    )
+    offenders = []
+    for path in sorted(examples_root.glob("*.py")):
+        text = path.read_text(encoding="utf-8").lower()
+        hits = [item for item in forbidden if item in text]
+        if hits:
+            offenders.append({"path": path.name, "hits": hits})
+
+    assert offenders == []
+

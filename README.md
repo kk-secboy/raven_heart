@@ -296,31 +296,10 @@ streaming, JSON mode, and native tool-call behavior through the same report
 shape. HTTP clients, API keys, deployment routing, and rate-limit handling stay
 outside `agent_core`.
 
-`examples/real_provider_conformance.py` is an opt-in smoke test for real
-OpenAI-compatible chat-completions APIs. It lives outside `agent_core` on
-purpose: the SDK supplies `TransportLLMProvider`,
-`OpenAICompatibleLLMProviderCodec`, and the conformance harness; the example
-owns HTTP, credentials, endpoint selection, and environment variables.
-
-```bash
-python examples/real_provider_conformance.py --dry-run
-
-export RAVEN_HEART_LLM_API_KEY="..."
-export RAVEN_HEART_LLM_MODEL="gpt-4.1-mini"
-python examples/real_provider_conformance.py
-```
-
-Optional environment variables:
-
-| Variable | Default |
-| --- | --- |
-| `RAVEN_HEART_LLM_BASE_URL` | `https://api.openai.com/v1` |
-| `RAVEN_HEART_LLM_MODEL` | `gpt-4.1-mini` |
-| `RAVEN_HEART_LLM_ORG` | empty |
-| `RAVEN_HEART_LLM_REQUIRE_STREAMING` | `true` |
-| `RAVEN_HEART_LLM_REQUIRE_JSON_MODE` | `true` |
-| `RAVEN_HEART_LLM_REQUIRE_TOOL_CALLS` | `false` |
-| `RAVEN_HEART_LLM_MAX_OUTPUT_TOKENS` | `96` |
+Real provider smoke tests belong in runtime or provider-adapter repositories:
+they should construct a concrete `LLMProviderPort`, then call
+`run_agent_core_provider_conformance(provider=...)` with their credentials and
+transport policy outside this SDK package.
 
 `agent_core.run_agent_core_provider_resilience_acceptance()` runs deterministic
 provider retry and fallback checks. It verifies retryable completion failures
