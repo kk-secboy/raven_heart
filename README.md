@@ -170,6 +170,14 @@ and ToolCenter/MCP/skill trace summaries. Concrete tools, MCP processes,
 credentials, network sessions, and product workflow queues remain outside the
 SDK.
 
+`agent_core.run_agent_core_capability_governance_acceptance()` runs deterministic
+capability governance checks. It verifies disabled local/MCP tools are hidden
+from default model-visible inventories while still appearing in route-plan audit
+candidates, disabled tool invocations fail closed, failed/disabled MCP servers
+are isolated and traced, and skills disabled for model invocation are not
+auto-selected. Operator identity, product permissions, distributed MCP
+supervision, and approval UX remain runtime responsibilities.
+
 `agent_core.run_agent_core_coordination_acceptance()` runs deterministic
 planner/handoff/agent-as-tool/artifact checks. It executes a two-step plan
 through `PlanExecutor`, routes a handoff to a capable reviewer session, exposes

@@ -22,6 +22,7 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["acceptance"]["ready"] is True
     assert manifest["approval_acceptance"]["ready"] is True
     assert manifest["budget_acceptance"]["ready"] is True
+    assert manifest["capability_governance_acceptance"]["ready"] is True
     assert manifest["context_acceptance"]["ready"] is True
     assert manifest["context_window_acceptance"]["ready"] is True
     assert manifest["orchestration_acceptance"]["ready"] is True
@@ -57,6 +58,18 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["budget_acceptance"]["estimated_cost_block"]["provider_request_count"] == 0
     assert manifest["budget_acceptance"]["override_success"]["center"]["usage"]["cost_usd"] == 0.01
     assert manifest["budget_acceptance"]["trace_eval"]["ok"] is True
+    assert manifest["capability_governance_acceptance"]["tool_governance"][
+        "visible_tool_names"
+    ] == ["mcp__fs__read_file", "safe_lookup"]
+    assert manifest["capability_governance_acceptance"]["mcp_governance"][
+        "inventory_statuses"
+    ] == {"broken": "failed", "disabled": "disabled", "fs": "refreshed"}
+    assert (
+        "danger-admin"
+        not in manifest["capability_governance_acceptance"]["skill_governance"][
+            "auto_selected"
+        ]
+    )
     assert manifest["context_acceptance"]["context_summary"][
         "prompt_semantic_trimmed_count"
     ] == 1
@@ -216,6 +229,7 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "api_lifecycle_policy" in readiness["matched"]["capabilities"]
     assert "approval_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "budget_acceptance_harness" in readiness["matched"]["capabilities"]
+    assert "capability_governance_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
     assert "context_window_report" in readiness["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in readiness["matched"]["capabilities"]
@@ -250,6 +264,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_approval_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreBudgetAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_budget_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCoreCapabilityGovernanceAcceptanceHarness" in readiness["matched"]["public_api"]
+    assert "run_agent_core_capability_governance_acceptance" in readiness["matched"]["public_api"]
     assert "AgentCoreContextAcceptanceHarness" in readiness["matched"]["public_api"]
     assert "run_agent_core_context_acceptance" in readiness["matched"]["public_api"]
     assert "ContextWindowBuilder" in readiness["matched"]["public_api"]
@@ -323,6 +339,8 @@ def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     assert "run_agent_core_approval_acceptance" in stability["present_stable_api"]
     assert "AgentCoreBudgetAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_budget_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreCapabilityGovernanceAcceptanceHarness" in stability["present_stable_api"]
+    assert "run_agent_core_capability_governance_acceptance" in stability["present_stable_api"]
     assert "AgentCoreContextAcceptanceHarness" in stability["present_stable_api"]
     assert "run_agent_core_context_acceptance" in stability["present_stable_api"]
     assert "ContextWindowBuilder" in stability["present_stable_api"]

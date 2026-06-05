@@ -75,6 +75,12 @@ from agent_core.capabilities import (
     CapabilityMatch,
     CapabilityQuery,
 )
+from agent_core.capability_governance_acceptance import (
+    AgentCoreCapabilityGovernanceAcceptanceHarness,
+    AgentCoreCapabilityGovernanceAcceptanceIssue,
+    AgentCoreCapabilityGovernanceAcceptanceReport,
+    run_agent_core_capability_governance_acceptance,
+)
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import (
     AgentContextPack,
@@ -699,6 +705,9 @@ __all__ = [
     "AgentCoreBudgetAcceptanceHarness",
     "AgentCoreBudgetAcceptanceIssue",
     "AgentCoreBudgetAcceptanceReport",
+    "AgentCoreCapabilityGovernanceAcceptanceHarness",
+    "AgentCoreCapabilityGovernanceAcceptanceIssue",
+    "AgentCoreCapabilityGovernanceAcceptanceReport",
     "AgentCoreCapability",
     "AgentCoreContextAcceptanceHarness",
     "AgentCoreContextAcceptanceIssue",
@@ -1188,6 +1197,7 @@ __all__ = [
     "run_agent_core_acceptance",
     "run_agent_core_approval_acceptance",
     "run_agent_core_budget_acceptance",
+    "run_agent_core_capability_governance_acceptance",
     "run_agent_core_context_acceptance",
     "run_agent_core_context_window_acceptance",
     "run_agent_core_concurrency_acceptance",

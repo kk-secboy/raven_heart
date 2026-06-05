@@ -808,13 +808,15 @@ class MCPCenter(ToolRuntimePort):
             return self.search_prompts(request.query, limit=request.limit)
         return self.prompts()[: max(0, request.limit)]
 
-    def specs(self) -> tuple[ToolSpec, ...]:
+    def specs(self, *, include_disabled: bool = False) -> tuple[ToolSpec, ...]:
         specs: list[ToolSpec] = []
         for tool in self._tools.values():
             server = self._servers.get(tool.reference.server_name)
             if server is None:
                 continue
-            specs.append(tool.to_tool_spec(server))
+            spec = tool.to_tool_spec(server)
+            if include_disabled or spec.enabled:
+                specs.append(spec)
         return tuple(sorted(specs, key=lambda item: item.name))
 
     def search(self, query: str, *, limit: int = 8) -> tuple[ToolSpec, ...]:

@@ -60,6 +60,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreBudgetAcceptanceHarness",
         "AgentCoreBudgetAcceptanceIssue",
         "AgentCoreBudgetAcceptanceReport",
+        "AgentCoreCapabilityGovernanceAcceptanceHarness",
+        "AgentCoreCapabilityGovernanceAcceptanceIssue",
+        "AgentCoreCapabilityGovernanceAcceptanceReport",
         "AgentCoreCapability",
         "AgentCoreContextAcceptanceHarness",
         "AgentCoreContextAcceptanceIssue",
@@ -394,6 +397,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_acceptance",
         "run_agent_core_approval_acceptance",
         "run_agent_core_budget_acceptance",
+        "run_agent_core_capability_governance_acceptance",
         "run_agent_core_context_acceptance",
         "run_agent_core_context_window_acceptance",
         "run_agent_core_concurrency_acceptance",
@@ -508,6 +512,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "provider_conformance_harness" in capability_names
     assert "provider_resilience_acceptance_harness" in capability_names
     assert "budget_acceptance_harness" in capability_names
+    assert "capability_governance_acceptance_harness" in capability_names
     assert "redaction_contracts" in capability_names
     assert "trace_export_bundle" in capability_names
     assert "trace_replay_acceptance_harness" in capability_names
@@ -577,6 +582,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "approval_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "context_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "orchestration_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "capability_governance_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "concurrency_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "coordination_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "durable_session_acceptance_harness" in manifest["matched"]["capabilities"]
