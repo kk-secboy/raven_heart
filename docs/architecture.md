@@ -160,6 +160,11 @@ The conformance report includes a `check_matrix` that separates required,
 optional, skipped, completed, and failed checks, records whether an external
 provider was supplied, and lists the core contracts plus runtime responsibilities
 for adapter smoke tests.
+`AgentCoreValidationSuite.run()` and `run_agent_core_validation()` can receive
+that same external provider and optional conformance spec, so a runtime can turn
+the aggregate SDK validation report from deterministic-only provider checks into
+a live provider smoke report without adding credentials or HTTP clients to
+`agent_core`.
 
 `AgentCoreBudgetAcceptanceHarness` is the provider-budget gate. It verifies
 `LLMProviderCenter` estimated-cost preflight, actual-cost enforcement,

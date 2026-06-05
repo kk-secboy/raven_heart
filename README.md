@@ -313,6 +313,11 @@ Real provider smoke tests belong in runtime or provider-adapter repositories:
 they should construct a concrete `LLMProviderPort`, then call
 `run_agent_core_provider_conformance(provider=...)` with their credentials and
 transport policy outside this SDK package.
+The same provider can also be passed into
+`run_agent_core_validation(provider_conformance_provider=...)`. In that mode the
+aggregate validation summary marks live provider conformance as covered while
+the concrete client, API key, base URL, and network retry policy remain outside
+this repository.
 
 `agent_core.run_agent_core_provider_resilience_acceptance()` runs deterministic
 provider retry and fallback checks. It verifies retryable completion failures

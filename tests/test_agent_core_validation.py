@@ -64,6 +64,8 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert migration["evidence"]["runtime_free"] is True
     assert migration["evidence"]["examples_ok"] is True
     assert migration["evidence"]["deterministic_provider_ok"] is True
+    assert migration["evidence"]["live_provider_ok"] is False
+    assert migration["evidence"]["provider_conformance_ok"] is True
     assert migration["evidence"]["storage_contracts_ready"] is True
     assert migration["evidence"]["context_pipeline_ready"] is True
     assert migration["blocked_gates"] == []
@@ -304,6 +306,56 @@ async def test_agent_core_validation_suite_blocks_missing_stable_api() -> None:
     assert manifest["summary"]["issue_count"] >= 1
     assert manifest["api_stability"]["ready"] is False
     assert "stable_api_missing" in issue_codes
+
+
+@pytest.mark.asyncio
+async def test_agent_core_validation_suite_accepts_external_provider_conformance() -> None:
+    import agent_core
+    from agent_core.providers import LLMRequest, LLMResponse, UsageInfo
+
+    class TextProvider:
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            return LLMResponse(
+                content="external-provider-ok",
+                finish_reason="stop",
+                usage=UsageInfo(total_tokens=3),
+            )
+
+    report = await agent_core.run_agent_core_validation(
+        provider_conformance_provider=TextProvider(),
+        provider_conformance_spec=agent_core.AgentCoreProviderConformanceSpec(
+            provider_name="external-text",
+            require_streaming=False,
+            require_json_mode=False,
+            require_tool_calls=False,
+        ),
+        metadata={"test": "validation_external_provider"},
+    )
+    manifest = report.manifest()
+    migration = manifest["summary"]["migration_readiness"]
+    provider_matrix = manifest["summary"]["provider_conformance"]
+    live_provider = {
+        item["item"]: item
+        for item in migration["not_covered_by_sdk_validation"]
+    }["live_llm_provider_conformance"]
+
+    assert manifest["status"] == "ready"
+    assert manifest["ready"] is True
+    assert manifest["provider_conformance"]["check_matrix"][
+        "provider_source"
+    ] == "external"
+    assert manifest["provider_conformance"]["check_matrix"][
+        "ready_for_real_provider_smoke"
+    ] is True
+    assert provider_matrix["provider_source"] == "external"
+    assert provider_matrix["failed_required_checks"] == []
+    assert migration["sdk_core_status"] == "usable_for_live_provider_tests"
+    assert migration["evidence"]["deterministic_provider_ok"] is False
+    assert migration["evidence"]["live_provider_ok"] is True
+    assert migration["evidence"]["provider_conformance_ok"] is True
+    assert migration["live_provider_conformance_status"] == "passed"
+    assert migration["next_validation_step"] == ""
+    assert live_provider["status"] == "covered"
 
 
 def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:

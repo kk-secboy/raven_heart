@@ -40,7 +40,11 @@ from agent_core.native_tool_acceptance import run_agent_core_native_tool_accepta
 from agent_core.orchestration_acceptance import run_agent_core_orchestration_acceptance
 from agent_core.packaging_acceptance import run_agent_core_packaging_acceptance
 from agent_core.provider_acceptance import run_agent_core_provider_acceptance
-from agent_core.provider_conformance import run_agent_core_provider_conformance
+from agent_core.provider_conformance import (
+    AgentCoreProviderConformanceSpec,
+    run_agent_core_provider_conformance,
+)
+from agent_core.providers import LLMProviderPort
 from agent_core.provider_resilience_acceptance import (
     run_agent_core_provider_resilience_acceptance,
 )
@@ -300,6 +304,8 @@ class AgentCoreValidationSuite:
         *,
         sdk_manifest: AgentCoreSDKManifest | dict[str, Any] | None = None,
         package_root: str | Path | None = None,
+        provider_conformance_provider: LLMProviderPort | None = None,
+        provider_conformance_spec: AgentCoreProviderConformanceSpec | None = None,
     ) -> AgentCoreValidationReport:
         manifest = sdk_manifest or agent_core_sdk_manifest()
         manifest_dict = (
@@ -424,7 +430,12 @@ class AgentCoreValidationSuite:
         ).manifest()
         provider_conformance = (
             await run_agent_core_provider_conformance(
-                metadata={"validation_gate": "provider_conformance", **dict(self.metadata)}
+                provider=provider_conformance_provider,
+                spec=provider_conformance_spec,
+                metadata={
+                    "validation_gate": "provider_conformance",
+                    **dict(self.metadata),
+                },
             )
         ).manifest()
         provider_resilience_acceptance = (
@@ -610,6 +621,8 @@ async def run_agent_core_validation(
     *,
     sdk_manifest: AgentCoreSDKManifest | dict[str, Any] | None = None,
     package_root: str | Path | None = None,
+    provider_conformance_provider: LLMProviderPort | None = None,
+    provider_conformance_spec: AgentCoreProviderConformanceSpec | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentCoreValidationReport:
     """Run the default aggregate SDK validation suite."""
@@ -617,6 +630,8 @@ async def run_agent_core_validation(
     return await AgentCoreValidationSuite(metadata=dict(metadata or {})).run(
         sdk_manifest=sdk_manifest,
         package_root=package_root,
+        provider_conformance_provider=provider_conformance_provider,
+        provider_conformance_spec=provider_conformance_spec,
     )
 
 
@@ -1118,6 +1133,7 @@ def _migration_readiness_summary(
         provider_matrix.get("provider_source") == "external"
         and bool(provider_matrix.get("ready_for_real_provider_smoke"))
     )
+    provider_conformance_ok = deterministic_provider_ok or live_provider_ok
     storage_contracts_ready = (
         len(storage_interfaces.get("roles") or ()) > 0
         and len(storage_interfaces.get("role_contracts") or ())
@@ -1132,7 +1148,7 @@ def _migration_readiness_summary(
         status == "ready"
         and runtime_free
         and examples_ok
-        and deterministic_provider_ok
+        and provider_conformance_ok
         and storage_contracts_ready
         and context_pipeline_ready
     )
@@ -1181,6 +1197,8 @@ def _migration_readiness_summary(
             "runtime_free": runtime_free,
             "examples_ok": examples_ok,
             "deterministic_provider_ok": deterministic_provider_ok,
+            "live_provider_ok": live_provider_ok,
+            "provider_conformance_ok": provider_conformance_ok,
             "storage_contracts_ready": storage_contracts_ready,
             "context_pipeline_ready": context_pipeline_ready,
         },

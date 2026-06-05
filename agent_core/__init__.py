@@ -1365,12 +1365,16 @@ async def run_agent_core_coordination_acceptance(
 
 async def run_agent_core_validation(
     *,
+    provider_conformance_provider: LLMProviderPort | None = None,
+    provider_conformance_spec: AgentCoreProviderConformanceSpec | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentCoreValidationReport:
     """Run all package-level SDK validation gates against the package root."""
 
     return await _run_agent_core_validation(
         sdk_manifest=agent_core_sdk_manifest(metadata=metadata),
+        provider_conformance_provider=provider_conformance_provider,
+        provider_conformance_spec=provider_conformance_spec,
         metadata=metadata,
     )
 
