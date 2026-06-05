@@ -133,12 +133,69 @@ class AgentCoreRuntimeBoundaryReport:
         }
 
 
+REPOSITORY_FORBIDDEN_EXAMPLE_MARKERS: tuple[str, ...] = (
+    "import urllib",
+    "from urllib",
+    "import requests",
+    "from requests",
+    "import aiohttp",
+    "from aiohttp",
+    "api_key",
+    "authorization",
+    "bearer ",
+    "base_url",
+    "chat/completions",
+    "openai",
+    "anthropic",
+)
+
+
+@dataclass(frozen=True)
+class AgentCoreRepositoryBoundaryReport:
+    """Prompt-safe audit proving the repository does not ship runtime adapters."""
+
+    status: str
+    repository_root: str = ""
+    scanned_top_level_dir_count: int = 0
+    scanned_example_count: int = 0
+    forbidden_directory_hits: tuple[AgentCoreRuntimeBoundaryHit, ...] = ()
+    forbidden_example_hits: tuple[AgentCoreRuntimeBoundaryHit, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ready(self) -> bool:
+        return self.status == "ready"
+
+    @property
+    def hit_count(self) -> int:
+        return len(self.forbidden_directory_hits) + len(self.forbidden_example_hits)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-repository-boundary-report/v1",
+            "status": self.status,
+            "ready": self.ready,
+            "hit_count": self.hit_count,
+            "repository_root": self.repository_root,
+            "scanned_top_level_dir_count": self.scanned_top_level_dir_count,
+            "scanned_example_count": self.scanned_example_count,
+            "forbidden_directory_hits": [
+                hit.manifest() for hit in self.forbidden_directory_hits
+            ],
+            "forbidden_example_hits": [
+                hit.manifest() for hit in self.forbidden_example_hits
+            ],
+            "metadata": dict(self.metadata),
+        }
+
+
 @dataclass(frozen=True)
 class AgentCoreValidationReport:
     """Prompt-safe aggregate SDK validation report."""
 
     status: str
     runtime_boundary: dict[str, Any] = field(default_factory=dict)
+    repository_boundary: dict[str, Any] = field(default_factory=dict)
     readiness: dict[str, Any] = field(default_factory=dict)
     api_lifecycle: dict[str, Any] = field(default_factory=dict)
     api_stability: dict[str, Any] = field(default_factory=dict)
@@ -192,6 +249,7 @@ class AgentCoreValidationReport:
             "error_count": self.error_count,
             "issues": [issue.manifest() for issue in self.issues],
             "runtime_boundary": dict(self.runtime_boundary),
+            "repository_boundary": dict(self.repository_boundary),
             "readiness": dict(self.readiness),
             "api_lifecycle": dict(self.api_lifecycle),
             "api_stability": dict(self.api_stability),
@@ -246,6 +304,10 @@ class AgentCoreValidationSuite:
             manifest,
             package_root=package_root,
             metadata={"validation_gate": "runtime_boundary", **dict(self.metadata)},
+        ).manifest()
+        repository_boundary = evaluate_agent_core_repository_boundary(
+            repository_root=_repository_root_for_package_root(package_root),
+            metadata={"validation_gate": "repository_boundary", **dict(self.metadata)},
         ).manifest()
         readiness = evaluate_agent_core_readiness(manifest).manifest()
         api_lifecycle = evaluate_agent_core_api_lifecycle(manifest).manifest()
@@ -418,6 +480,7 @@ class AgentCoreValidationSuite:
         ).manifest()
         issues = _validation_issues(
             runtime_boundary=runtime_boundary,
+            repository_boundary=repository_boundary,
             readiness=readiness,
             api_lifecycle=api_lifecycle,
             api_stability=api_stability,
@@ -456,6 +519,7 @@ class AgentCoreValidationSuite:
         return AgentCoreValidationReport(
             status=status,
             runtime_boundary=runtime_boundary,
+            repository_boundary=repository_boundary,
             readiness=readiness,
             api_lifecycle=api_lifecycle,
             api_stability=api_stability,
@@ -595,9 +659,85 @@ def evaluate_agent_core_runtime_boundary(
     )
 
 
+def evaluate_agent_core_repository_boundary(
+    *,
+    repository_root: str | Path | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> AgentCoreRepositoryBoundaryReport:
+    """Audit the repository for concrete runtime/provider adapter artifacts."""
+
+    root = Path(repository_root) if repository_root is not None else Path(__file__).resolve().parents[1]
+    forbidden_dirs = tuple(FORBIDDEN_RUNTIME_PACKAGES)
+    directory_hits: list[AgentCoreRuntimeBoundaryHit] = []
+    scanned_top_level_dir_count = 0
+    if root.exists():
+        for path in sorted(root.iterdir()):
+            if not path.is_dir() or path.name in {".git", "__pycache__"}:
+                continue
+            scanned_top_level_dir_count += 1
+            if path.name in forbidden_dirs:
+                directory_hits.append(
+                    AgentCoreRuntimeBoundaryHit(
+                        kind="forbidden_runtime_directory",
+                        name=path.name,
+                        path=_relative_path(path, root),
+                    )
+                )
+
+    example_hits: list[AgentCoreRuntimeBoundaryHit] = []
+    scanned_example_count = 0
+    examples_root = root / "examples"
+    if examples_root.exists():
+        for path in sorted(examples_root.glob("*.py")):
+            scanned_example_count += 1
+            text = path.read_text(encoding="utf-8", errors="replace").lower()
+            for marker in REPOSITORY_FORBIDDEN_EXAMPLE_MARKERS:
+                line = _first_marker_line(text, marker)
+                if line:
+                    example_hits.append(
+                        AgentCoreRuntimeBoundaryHit(
+                            kind="forbidden_example_adapter_marker",
+                            name=marker,
+                            path=_relative_path(path, root),
+                            line=line,
+                        )
+                    )
+
+    status = "blocked" if directory_hits or example_hits else "ready"
+    return AgentCoreRepositoryBoundaryReport(
+        status=status,
+        repository_root=str(root),
+        scanned_top_level_dir_count=scanned_top_level_dir_count,
+        scanned_example_count=scanned_example_count,
+        forbidden_directory_hits=tuple(directory_hits),
+        forbidden_example_hits=tuple(example_hits),
+        metadata={
+            "forbidden_directory_count": len(forbidden_dirs),
+            "forbidden_example_marker_count": len(REPOSITORY_FORBIDDEN_EXAMPLE_MARKERS),
+            **dict(metadata or {}),
+        },
+    )
+
+
+def _repository_root_for_package_root(package_root: str | Path | None) -> Path:
+    if package_root is None:
+        return Path(__file__).resolve().parents[1]
+    root = Path(package_root)
+    return root.parent if root.name == "agent_core" else root
+
+
+def _first_marker_line(text: str, marker: str) -> int:
+    marker = marker.lower()
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if marker in line:
+            return line_number
+    return 0
+
+
 def _validation_issues(
     *,
     runtime_boundary: dict[str, Any],
+    repository_boundary: dict[str, Any],
     readiness: dict[str, Any],
     api_lifecycle: dict[str, Any],
     api_stability: dict[str, Any],
@@ -634,6 +774,7 @@ def _validation_issues(
 ) -> tuple[AgentCoreValidationIssue, ...]:
     issues: list[AgentCoreValidationIssue] = []
     _extend_boundary_issues(issues, runtime_boundary)
+    _extend_repository_boundary_issues(issues, repository_boundary)
     _extend_report_issues(issues, source="readiness", report=readiness)
     _extend_report_issues(issues, source="api_lifecycle", report=api_lifecycle)
     _extend_api_stability_issues(issues, api_stability)
@@ -784,6 +925,45 @@ def _extend_boundary_issues(
                 source="runtime_boundary",
                 code="runtime_boundary_not_ready",
                 message="runtime boundary audit is not ready.",
+                metadata={"status": report.get("status")},
+            )
+        )
+
+
+def _extend_repository_boundary_issues(
+    issues: list[AgentCoreValidationIssue],
+    report: dict[str, Any],
+) -> None:
+    if report.get("ready") is True:
+        return
+    for hit in report.get("forbidden_directory_hits") or ():
+        if not isinstance(hit, dict):
+            continue
+        issues.append(
+            AgentCoreValidationIssue(
+                source="repository_boundary",
+                code="forbidden_runtime_directory",
+                message=f"Forbidden runtime adapter directory in SDK repository: {hit.get('name')}",
+                metadata=dict(hit),
+            )
+        )
+    for hit in report.get("forbidden_example_hits") or ():
+        if not isinstance(hit, dict):
+            continue
+        issues.append(
+            AgentCoreValidationIssue(
+                source="repository_boundary",
+                code="forbidden_example_adapter_marker",
+                message=f"Forbidden runtime/provider adapter marker in SDK example: {hit.get('name')}",
+                metadata=dict(hit),
+            )
+        )
+    if not any(issue.source == "repository_boundary" for issue in issues):
+        issues.append(
+            AgentCoreValidationIssue(
+                source="repository_boundary",
+                code="repository_boundary_not_ready",
+                message="repository boundary audit is not ready.",
                 metadata={"status": report.get("status")},
             )
         )

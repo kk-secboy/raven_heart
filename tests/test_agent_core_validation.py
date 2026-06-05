@@ -16,6 +16,9 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["error_count"] == 0
     assert manifest["runtime_boundary"]["ready"] is True
     assert manifest["runtime_boundary"]["hit_count"] == 0
+    assert manifest["repository_boundary"]["ready"] is True
+    assert manifest["repository_boundary"]["hit_count"] == 0
+    assert manifest["repository_boundary"]["scanned_example_count"] == 2
     assert manifest["readiness"]["ready"] is True
     assert manifest["api_lifecycle"]["ready"] is True
     assert manifest["api_stability"]["ready"] is True
@@ -546,3 +549,31 @@ def test_runtime_boundary_audit_blocks_forbidden_runtime_imports(tmp_path) -> No
     assert manifest["hit_count"] == 2
     assert manifest["forbidden_dependency_hits"][0]["name"] == "openai"
     assert manifest["forbidden_package_hits"][0]["name"] == "adapters"
+
+
+def test_repository_boundary_audit_blocks_runtime_dirs_and_adapter_examples(tmp_path) -> None:
+    from agent_core.validation import evaluate_agent_core_repository_boundary
+
+    (tmp_path / "agent_core").mkdir()
+    (tmp_path / "agent_core" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "adapters").mkdir()
+    examples = tmp_path / "examples"
+    examples.mkdir()
+    (examples / "real_provider.py").write_text(
+        "import urllib.request\napi_key = 'secret'\n",
+        encoding="utf-8",
+    )
+
+    manifest = evaluate_agent_core_repository_boundary(repository_root=tmp_path).manifest()
+    issue_names = {
+        hit["name"]
+        for hit in (
+            manifest["forbidden_directory_hits"]
+            + manifest["forbidden_example_hits"]
+        )
+    }
+
+    assert manifest["status"] == "blocked"
+    assert manifest["ready"] is False
+    assert manifest["hit_count"] == 3
+    assert {"adapters", "import urllib", "api_key"} <= issue_names

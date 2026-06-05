@@ -151,6 +151,11 @@ the self-check version of the boundary rule: it proves `agent_core` stayed pure
 before a host runtime starts wiring RavenStorm, OpenAI Agents SDK compatibility,
 Graphiti, FastAPI, or vendor clients outside this repository.
 
+`agent_core.run_agent_core_validation()` also includes a repository boundary
+gate. It checks top-level adapter/runtime directories and pure examples, so this
+repository cannot quietly reintroduce concrete HTTP/provider/runtime adapter
+code outside `agent_core`.
+
 `agent_core.run_agent_core_acceptance()` runs a deterministic pure-SDK
 acceptance scenario. It exercises readiness, ReAct, provider routing, ToolCenter,
 memory recall, context injection, journal persistence, event logging, tool
