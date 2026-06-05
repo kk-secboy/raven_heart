@@ -7,6 +7,7 @@ from agent_core.config import RuntimeBudget
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.prompt import PromptIR
 from agent_core.providers import (
+    ChatCompletionsLLMProviderCodec,
     DefaultLLMProviderCodec,
     LLMCallRecord,
     LLMContentPart,
@@ -26,7 +27,6 @@ from agent_core.providers import (
     LLMToolChoice,
     LLMToolContract,
     LLMUsageLimits,
-    OpenAICompatibleLLMProviderCodec,
     RetryHint,
     TransportLLMProvider,
     UsageInfo,
@@ -371,8 +371,8 @@ def test_llm_request_supports_provider_neutral_tool_and_response_contracts() -> 
         LLMRequest(messages=[], tool_choice=LLMToolChoice(mode="required"))
 
 
-def test_openai_compatible_codec_encodes_chat_completion_payloads() -> None:
-    codec = OpenAICompatibleLLMProviderCodec()
+def test_chat_completions_codec_encodes_chat_completion_payloads() -> None:
+    codec = ChatCompletionsLLMProviderCodec()
     payload = codec.encode_request(
         LLMRequest(
             messages=[
@@ -424,11 +424,14 @@ def test_openai_compatible_codec_encodes_chat_completion_payloads() -> None:
     assert payload["tool_choice"] == {"type": "function", "function": {"name": "lookup"}}
     assert payload["response_format"]["type"] == "json_schema"
     assert payload["response_format"]["json_schema"]["name"] == "finding"
-    assert codec.manifest()["schema_version"] == "agent-core-openai-compatible-llm-provider-codec/v1"
+    assert (
+        codec.manifest()["schema_version"]
+        == "agent-core-chat-completions-llm-provider-codec/v1"
+    )
 
 
-def test_openai_compatible_codec_decodes_chat_completion_payloads() -> None:
-    codec = OpenAICompatibleLLMProviderCodec()
+def test_chat_completions_codec_decodes_chat_completion_payloads() -> None:
+    codec = ChatCompletionsLLMProviderCodec()
     response = codec.decode_response(
         {
             "id": "chatcmpl-1",

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from agent_core.providers import (
+    ChatCompletionsLLMProviderCodec,
     DefaultLLMProviderCodec,
     LLMContentPart,
     LLMMessage,
@@ -18,7 +19,6 @@ from agent_core.providers import (
     LLMStreamEvent,
     LLMToolChoice,
     LLMToolContract,
-    OpenAICompatibleLLMProviderCodec,
     RetryHint,
     TransportLLMProvider,
     UsageInfo,
@@ -299,7 +299,7 @@ async def _provider_route_matrix() -> dict[str, Any]:
 
 
 def _provider_codec_matrix() -> dict[str, Any]:
-    codec = OpenAICompatibleLLMProviderCodec()
+    codec = ChatCompletionsLLMProviderCodec()
     request = LLMRequest(
         messages=[
             LLMMessage(role="system", content="rules"),
@@ -349,7 +349,7 @@ def _provider_codec_matrix() -> dict[str, Any]:
         {"choices": [{"delta": {"content": "ok"}, "finish_reason": None}]}
     )
     return {
-        "schema_version": "agent-core-openai-compatible-codec-acceptance/v1",
+        "schema_version": "agent-core-chat-completions-codec-acceptance/v1",
         "codec": codec.manifest(),
         "encoded_has_tools": bool(encoded.get("tools")),
         "encoded_has_response_format": bool(encoded.get("response_format")),
@@ -440,15 +440,15 @@ async def _provider_contract_matrix() -> dict[str, Any]:
             name="default-stream-contract",
         ).stream(request)
     ]
-    openai_codec = OpenAICompatibleLLMProviderCodec()
-    openai_tool_event = openai_codec.decode_stream_event(
+    chat_completions_codec = ChatCompletionsLLMProviderCodec()
+    chat_completions_tool_event = chat_completions_codec.decode_stream_event(
         {
             "choices": [
                 {
                     "delta": {
                         "tool_calls": [
                             {
-                                "id": "openai-stream-call",
+                                "id": "chat-completions-stream-call",
                                 "type": "function",
                                 "function": {
                                     "name": "lookup",
@@ -462,7 +462,7 @@ async def _provider_contract_matrix() -> dict[str, Any]:
             ]
         }
     )
-    openai_error_event = openai_codec.decode_stream_event(
+    chat_completions_error_event = chat_completions_codec.decode_stream_event(
         {"error": {"message": "rate limited", "retryable": True}}
     )
     first_payload = complete_transport.complete_payloads[0]
@@ -504,20 +504,20 @@ async def _provider_contract_matrix() -> dict[str, Any]:
                 for event in stream_events
             }
         ),
-        "openai_stream_tool_event_type": openai_tool_event.type,
-        "openai_stream_tool_call_name": (
-            openai_tool_event.tool_call.tool_name
-            if openai_tool_event.tool_call is not None
+        "chat_completions_stream_tool_event_type": chat_completions_tool_event.type,
+        "chat_completions_stream_tool_call_name": (
+            chat_completions_tool_event.tool_call.tool_name
+            if chat_completions_tool_event.tool_call is not None
             else ""
         ),
-        "openai_stream_tool_call_id": (
-            openai_tool_event.tool_call.call_id
-            if openai_tool_event.tool_call is not None
+        "chat_completions_stream_tool_call_id": (
+            chat_completions_tool_event.tool_call.call_id
+            if chat_completions_tool_event.tool_call is not None
             else ""
         ),
-        "openai_stream_error_type": openai_error_event.type,
-        "openai_stream_error_retryable": bool(
-            openai_error_event.metadata.get("retryable")
+        "chat_completions_stream_error_type": chat_completions_error_event.type,
+        "chat_completions_stream_error_retryable": bool(
+            chat_completions_error_event.metadata.get("retryable")
         ),
     }
 
@@ -628,16 +628,16 @@ def _provider_acceptance_issues(
         issues.append(
             AgentCoreProviderAcceptanceIssue(
                 source="codec_matrix",
-                code="openai_codec_contract_missing",
-                message="OpenAI-compatible codec did not preserve tools and response format.",
+                code="chat_completions_codec_contract_missing",
+                message="Chat Completions codec did not preserve tools and response format.",
             )
         )
     if "lookup" not in set(codec_matrix.get("decoded_tool_call_names") or ()):
         issues.append(
             AgentCoreProviderAcceptanceIssue(
                 source="codec_matrix",
-                code="openai_codec_tool_decode_missing",
-                message="OpenAI-compatible codec did not decode tool calls.",
+                code="chat_completions_codec_tool_decode_missing",
+                message="Chat Completions codec did not decode tool calls.",
             )
         )
     if contract_matrix.get("default_payload_schema") != "agent-core-llm-transport-request/v1":
@@ -685,23 +685,23 @@ def _provider_acceptance_issues(
                 message="Default provider stream contract did not preserve event order.",
             )
         )
-    if contract_matrix.get("openai_stream_tool_call_name") != "lookup":
+    if contract_matrix.get("chat_completions_stream_tool_call_name") != "lookup":
         issues.append(
             AgentCoreProviderAcceptanceIssue(
                 source="contract_matrix",
-                code="openai_stream_tool_call_decode_missing",
-                message="OpenAI-compatible stream codec did not decode streamed tool calls.",
+                code="chat_completions_stream_tool_call_decode_missing",
+                message="Chat Completions stream codec did not decode streamed tool calls.",
             )
         )
     if (
-        contract_matrix.get("openai_stream_error_type") != "error"
-        or contract_matrix.get("openai_stream_error_retryable") is not True
+        contract_matrix.get("chat_completions_stream_error_type") != "error"
+        or contract_matrix.get("chat_completions_stream_error_retryable") is not True
     ):
         issues.append(
             AgentCoreProviderAcceptanceIssue(
                 source="contract_matrix",
-                code="openai_stream_error_contract_missing",
-                message="OpenAI-compatible stream codec did not preserve retryable error events.",
+                code="chat_completions_stream_error_contract_missing",
+                message="Chat Completions stream codec did not preserve retryable error events.",
             )
         )
     if transport_matrix.get("fallback_used") is not True:

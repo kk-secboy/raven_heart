@@ -279,7 +279,7 @@ responsibilities.
 
 `agent_core.run_agent_core_provider_acceptance()` runs a deterministic provider
 compatibility matrix. It checks provider routing for text, multimodal,
-structured-output, and native-tool requests; OpenAI-compatible codec
+structured-output, and native-tool requests; Chat Completions-compatible codec
 encode/decode; the default provider-neutral transport codec; prompt-safe request
 manifests; streamed tool-call and retryable-error decoding; transport-backed
 provider fallback; streaming route selection; and prompt-safe call manifests.
@@ -288,7 +288,7 @@ remain outside the SDK.
 
 `agent_core.agent_core_provider_contract_profile()` declares the SDK-supported
 provider adapter API shapes: direct `LLMProviderPort`, SDK transport plus codec,
-OpenAI Chat Completions-compatible codec, and custom codec transport. The
+Chat Completions-compatible codec, and custom codec transport. The
 profile also lists the core contracts each adapter depends on and the
 runtime-owned pieces that must stay outside `agent_core`, including HTTP
 clients, credentials, endpoint routing, tenant policy, and vendor SDKs.
@@ -722,11 +722,11 @@ ranking contract used by lightweight core stores.
 - `LLMProviderPort` protocol.
 - `LLMTransportPort`, `LLMProviderCodecPort`, `DefaultLLMProviderCodec`, and
   `TransportLLMProvider` for dependency-free provider adapter contracts.
-- `OpenAICompatibleLLMProviderCodec` for Chat Completions-style payload
+- `ChatCompletionsLLMProviderCodec` for Chat Completions-style payload
   encoding/decoding without importing the OpenAI SDK.
 - `AgentCoreProviderAcceptanceHarness` for no-network provider contract checks,
   including default transport payloads, prompt-safe request manifests,
-  OpenAI-compatible streamed tool calls, and retryable stream errors.
+  Chat Completions-compatible streamed tool calls, and retryable stream errors.
 - Provider registry and routing.
 - `LLMContentPart` for provider-neutral text, image, audio, file, binary, and
   JSON message parts without binding the SDK to one vendor message schema.
@@ -775,9 +775,9 @@ features and can shape compatible requests to declared output limits before an
 adapter sees them.
 Native tool calling and response-format contracts are represented as SDK
 request fields, not vendor payloads. Adapter packages translate them to
-OpenAI-compatible `tools`/`response_format`, Anthropic tool use, Gemini function
+Chat Completions-compatible `tools`/`response_format`, Anthropic tool use, Gemini function
 calling, local model schemas, or gateway-specific payloads.
-For OpenAI-compatible HTTP gateways, `OpenAICompatibleLLMProviderCodec` provides
+For Chat Completions-compatible HTTP gateways, `ChatCompletionsLLMProviderCodec` provides
 the common message/tool/response-format/usage/tool-call mapping while the
 runtime still owns HTTP, auth, retries at the network layer, and deployment
 selection.
@@ -1148,7 +1148,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Provider call audit | MVP implemented |
 | Provider contract profile | MVP implemented |
 | Provider transport contract | MVP implemented |
-| OpenAI-compatible provider codec | MVP implemented |
+| Chat Completions-compatible provider codec | MVP implemented |
 | Provider route plan/preflight audit | MVP implemented |
 | Run provider route preflight gate | MVP implemented |
 | Provider model capabilities | MVP implemented |

@@ -49,10 +49,18 @@ async def test_agent_core_provider_acceptance_matrix_passes() -> None:
     ]
     assert manifest["contract_matrix"]["default_stream_tool_call_names"] == ["lookup"]
     assert manifest["contract_matrix"]["default_stream_usage_total_tokens"] == [8]
-    assert manifest["contract_matrix"]["openai_stream_tool_event_type"] == "tool_call"
-    assert manifest["contract_matrix"]["openai_stream_tool_call_name"] == "lookup"
-    assert manifest["contract_matrix"]["openai_stream_error_type"] == "error"
-    assert manifest["contract_matrix"]["openai_stream_error_retryable"] is True
+    assert (
+        manifest["contract_matrix"]["chat_completions_stream_tool_event_type"]
+        == "tool_call"
+    )
+    assert (
+        manifest["contract_matrix"]["chat_completions_stream_tool_call_name"]
+        == "lookup"
+    )
+    assert manifest["contract_matrix"]["chat_completions_stream_error_type"] == "error"
+    assert (
+        manifest["contract_matrix"]["chat_completions_stream_error_retryable"] is True
+    )
     assert manifest["transport_matrix"]["fallback_used"] is True
     assert manifest["transport_matrix"]["call_statuses"] == ["failed", "completed"]
     assert manifest["streaming_matrix"]["selected_provider"] == "stream"

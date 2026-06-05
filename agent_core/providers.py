@@ -601,23 +601,32 @@ class DefaultLLMProviderCodec:
         return {"schema_version": "agent-core-default-llm-provider-codec/v1"}
 
 
-class OpenAICompatibleLLMProviderCodec:
-    """Dependency-free codec for OpenAI-compatible chat-completions transports."""
+class ChatCompletionsLLMProviderCodec:
+    """Dependency-free codec for Chat Completions-style transports."""
 
     def encode_request(self, request: LLMRequest) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": request.model,
-            "messages": [_openai_message_payload(message) for message in request.messages],
+            "messages": [
+                _chat_completions_message_payload(message)
+                for message in request.messages
+            ],
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
         if request.max_output_tokens is not None:
             payload["max_tokens"] = request.max_output_tokens
         if request.tools:
-            payload["tools"] = [_openai_tool_payload(tool) for tool in request.tools]
+            payload["tools"] = [
+                _chat_completions_tool_payload(tool) for tool in request.tools
+            ]
         if request.tool_choice is not None:
-            payload["tool_choice"] = _openai_tool_choice_payload(request.tool_choice)
-        response_format = _openai_response_format_payload(request.response_format)
+            payload["tool_choice"] = _chat_completions_tool_choice_payload(
+                request.tool_choice
+            )
+        response_format = _chat_completions_response_format_payload(
+            request.response_format
+        )
         if response_format:
             payload["response_format"] = response_format
         if request.metadata:
@@ -628,15 +637,15 @@ class OpenAICompatibleLLMProviderCodec:
         error = _provider_error_from_payload(payload)
         if error is not None:
             raise error
-        choice = _openai_first_choice(payload)
+        choice = _chat_completions_first_choice(payload)
         message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
         return LLMResponse(
-            content=_openai_message_text(message),
-            tool_calls=_openai_tool_calls_from_message(message),
-            usage=_openai_usage_from_payload(payload.get("usage")),
+            content=_chat_completions_message_text(message),
+            tool_calls=_chat_completions_tool_calls_from_message(message),
+            usage=_chat_completions_usage_from_payload(payload.get("usage")),
             finish_reason=str(choice.get("finish_reason") or payload.get("finish_reason") or ""),
             metadata={
-                "provider_payload": "openai_compatible_chat_completion",
+                "provider_payload": "chat_completions",
                 "id": str(payload.get("id") or ""),
                 "model": str(payload.get("model") or ""),
             },
@@ -653,40 +662,40 @@ class OpenAICompatibleLLMProviderCodec:
         if payload.get("usage") is not None and not payload.get("choices"):
             return LLMStreamEvent(
                 type="usage",
-                usage=_openai_usage_from_payload(payload.get("usage")),
-                metadata={"provider_payload": "openai_compatible_chat_completion_chunk"},
+                usage=_chat_completions_usage_from_payload(payload.get("usage")),
+                metadata={"provider_payload": "chat_completions_chunk"},
             )
-        choice = _openai_first_choice(payload)
+        choice = _chat_completions_first_choice(payload)
         delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
-        tool_calls = _openai_tool_calls_from_message(delta)
+        tool_calls = _chat_completions_tool_calls_from_message(delta)
         if tool_calls:
             return LLMStreamEvent(
                 type="tool_call",
                 tool_call=tool_calls[0],
-                metadata={"provider_payload": "openai_compatible_chat_completion_chunk"},
+                metadata={"provider_payload": "chat_completions_chunk"},
             )
-        content = _openai_message_text(delta)
+        content = _chat_completions_message_text(delta)
         if content:
             return LLMStreamEvent(
                 type="delta",
                 delta=content,
-                metadata={"provider_payload": "openai_compatible_chat_completion_chunk"},
+                metadata={"provider_payload": "chat_completions_chunk"},
             )
         if choice.get("finish_reason") is not None:
             return LLMStreamEvent(
                 type="message_end",
                 metadata={
                     "finish_reason": str(choice.get("finish_reason") or ""),
-                    "provider_payload": "openai_compatible_chat_completion_chunk",
+                    "provider_payload": "chat_completions_chunk",
                 },
             )
         return LLMStreamEvent(
             type="message_start",
-            metadata={"provider_payload": "openai_compatible_chat_completion_chunk"},
+            metadata={"provider_payload": "chat_completions_chunk"},
         )
 
     def manifest(self) -> dict[str, Any]:
-        return {"schema_version": "agent-core-openai-compatible-llm-provider-codec/v1"}
+        return {"schema_version": "agent-core-chat-completions-llm-provider-codec/v1"}
 
 
 class TransportLLMProvider(LLMProviderPort):
@@ -1848,7 +1857,7 @@ def _tool_call_from_payload(payload: Any) -> LLMToolCall | None:
     )
 
 
-def _openai_message_payload(message: LLMMessage) -> dict[str, Any]:
+def _chat_completions_message_payload(message: LLMMessage) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": message.role}
     if message.name:
         payload["name"] = message.name
@@ -1856,11 +1865,11 @@ def _openai_message_payload(message: LLMMessage) -> dict[str, Any]:
         tool_call_id = str(message.metadata.get("provider_tool_call_id") or message.name or "")
         if tool_call_id:
             payload["tool_call_id"] = tool_call_id
-    payload["content"] = _openai_message_content(message)
+    payload["content"] = _chat_completions_message_content(message)
     return payload
 
 
-def _openai_message_content(message: LLMMessage) -> Any:
+def _chat_completions_message_content(message: LLMMessage) -> Any:
     if not message.content_parts:
         return message.content
     parts: list[dict[str, Any]] = []
@@ -1902,7 +1911,7 @@ def _openai_message_content(message: LLMMessage) -> Any:
     return parts
 
 
-def _openai_tool_payload(tool: LLMToolContract) -> dict[str, Any]:
+def _chat_completions_tool_payload(tool: LLMToolContract) -> dict[str, Any]:
     function: dict[str, Any] = {
         "name": tool.name,
         "description": tool.description,
@@ -1913,13 +1922,15 @@ def _openai_tool_payload(tool: LLMToolContract) -> dict[str, Any]:
     return {"type": "function", "function": function}
 
 
-def _openai_tool_choice_payload(choice: LLMToolChoice) -> Any:
+def _chat_completions_tool_choice_payload(choice: LLMToolChoice) -> Any:
     if choice.mode in {"auto", "none", "required"}:
         return choice.mode
     return {"type": "function", "function": {"name": choice.tool_name}}
 
 
-def _openai_response_format_payload(format_spec: LLMResponseFormat | None) -> dict[str, Any]:
+def _chat_completions_response_format_payload(
+    format_spec: LLMResponseFormat | None,
+) -> dict[str, Any]:
     if format_spec is None:
         return {}
     if format_spec.kind == "text":
@@ -1936,7 +1947,7 @@ def _openai_response_format_payload(format_spec: LLMResponseFormat | None) -> di
     return {"type": "json_schema", "json_schema": json_schema}
 
 
-def _openai_first_choice(payload: dict[str, Any]) -> dict[str, Any]:
+def _chat_completions_first_choice(payload: dict[str, Any]) -> dict[str, Any]:
     choices = payload.get("choices")
     if isinstance(choices, (list, tuple)) and choices:
         first = choices[0]
@@ -1944,7 +1955,7 @@ def _openai_first_choice(payload: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _openai_message_text(message: dict[str, Any]) -> str:
+def _chat_completions_message_text(message: dict[str, Any]) -> str:
     content = message.get("content")
     if isinstance(content, str):
         return content
@@ -1960,7 +1971,9 @@ def _openai_message_text(message: dict[str, Any]) -> str:
     return ""
 
 
-def _openai_tool_calls_from_message(message: dict[str, Any]) -> tuple[LLMToolCall, ...]:
+def _chat_completions_tool_calls_from_message(
+    message: dict[str, Any],
+) -> tuple[LLMToolCall, ...]:
     calls: list[LLMToolCall] = []
     for item in message.get("tool_calls") or ():
         if not isinstance(item, dict):
@@ -1998,7 +2011,7 @@ def _openai_tool_calls_from_message(message: dict[str, Any]) -> tuple[LLMToolCal
     return tuple(calls)
 
 
-def _openai_usage_from_payload(payload: Any) -> UsageInfo:
+def _chat_completions_usage_from_payload(payload: Any) -> UsageInfo:
     if not isinstance(payload, dict):
         return UsageInfo()
     return UsageInfo(

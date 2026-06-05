@@ -14,13 +14,13 @@ def test_agent_core_provider_contract_profile_declares_supported_adapter_formats
     assert manifest["format_names"] == [
         "llm_provider_port",
         "agent_core_transport",
-        "openai_chat_completions_compatible",
+        "chat_completions_compatible",
         "custom_codec_transport",
     ]
     assert manifest["metadata"] == {"test": "provider_contract_profile"}
     assert "LLMProviderPort" in manifest["required_core_contracts"]
     assert "TransportLLMProvider" in manifest["required_core_contracts"]
-    assert "OpenAICompatibleLLMProviderCodec" in manifest["required_core_contracts"]
+    assert "ChatCompletionsLLMProviderCodec" in manifest["required_core_contracts"]
     assert "openai" in manifest["forbidden_core_dependencies"]
     assert "httpx" in manifest["forbidden_core_dependencies"]
     assert formats["llm_provider_port"]["status"] == "stable_contract"
@@ -28,7 +28,7 @@ def test_agent_core_provider_contract_profile_declares_supported_adapter_formats
     assert "multimodal_content_parts" in formats["agent_core_transport"][
         "supported_features"
     ]
-    assert "tool_calls" in formats["openai_chat_completions_compatible"][
+    assert "tool_calls" in formats["chat_completions_compatible"][
         "supported_features"
     ]
     assert "codec implementation" in formats["custom_codec_transport"][

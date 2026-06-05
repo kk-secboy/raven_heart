@@ -113,12 +113,12 @@ def agent_core_provider_contract_profile(
                 ),
             ),
             AgentCoreProviderAPIFormat(
-                name="openai_chat_completions_compatible",
+                name="chat_completions_compatible",
                 status="mvp_contract",
-                adapter_boundary="use OpenAICompatibleLLMProviderCodec behind a runtime-owned HTTP transport",
-                request_contracts=("OpenAICompatibleLLMProviderCodec.encode_request",),
-                response_contracts=("OpenAICompatibleLLMProviderCodec.decode_response",),
-                stream_contracts=("OpenAICompatibleLLMProviderCodec.decode_stream_event",),
+                adapter_boundary="use ChatCompletionsLLMProviderCodec behind a runtime-owned HTTP transport",
+                request_contracts=("ChatCompletionsLLMProviderCodec.encode_request",),
+                response_contracts=("ChatCompletionsLLMProviderCodec.decode_response",),
+                stream_contracts=("ChatCompletionsLLMProviderCodec.decode_stream_event",),
                 supported_features=(
                     "chat_messages",
                     "streaming_delta",
@@ -165,7 +165,7 @@ def agent_core_provider_contract_profile(
             "LLMProviderCodecPort",
             "TransportLLMProvider",
             "DefaultLLMProviderCodec",
-            "OpenAICompatibleLLMProviderCodec",
+            "ChatCompletionsLLMProviderCodec",
             "AgentCoreProviderConformanceHarness",
         ),
         forbidden_core_dependencies=(

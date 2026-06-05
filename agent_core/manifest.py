@@ -698,7 +698,7 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
             name="provider_contract_profile",
             layer="provider",
             status="stable_contract",
-            summary="Provider adapter API format profile for LLMProviderPort, SDK transport, OpenAI-compatible, and custom codec transports.",
+            summary="Provider adapter API format profile for LLMProviderPort, SDK transport, Chat Completions-compatible, and custom codec transports.",
             public_contracts=(
                 "AgentCoreProviderContractProfile",
                 "AgentCoreProviderAPIFormat",
