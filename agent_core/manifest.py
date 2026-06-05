@@ -50,6 +50,52 @@ EXTERNAL_STORAGE_KINDS: tuple[str, ...] = (
     "external",
     "custom",
 )
+STORAGE_ROLE_PORTS: dict[str, str] = {
+    "memory": "MemoryPort",
+    "journal": "AgentJournalStorePort",
+    "tool_replay": "ToolReplayStorePort",
+    "run_trace": "RunTraceStorePort",
+    "run_state": "AgentRunStorePort",
+    "planner_state": "PlannerStorePort",
+    "artifact": "ArtifactStorePort",
+    "context_material": "ContextMaterialStorePort",
+    "approval": "ApprovalStorePort",
+    "policy_decision": "PolicyDecisionStorePort",
+    "event_log": "EventSinkPort/EventLogPort",
+    "timeline": "TimelineStorePort",
+}
+STORAGE_ROLE_RUNTIME_NOTES: dict[str, str] = {
+    "memory": "PG, vector, graph/RAG, and product memory adapters stay outside core.",
+    "journal": (
+        "Workflow databases, object storage, and audit event logs stay outside core."
+    ),
+    "tool_replay": (
+        "Production replay retention, object storage, and workflow replay DBs stay outside core."
+    ),
+    "run_trace": "Observability pipelines and production trace storage stay outside core.",
+    "run_state": (
+        "Schedulers, workflow DBs, and background worker state stay outside core."
+    ),
+    "planner_state": (
+        "Production planner audit DBs and workflow coordination stores stay outside core."
+    ),
+    "artifact": "Filesystem, object storage, build artifacts, and signed URLs stay outside core.",
+    "context_material": (
+        "PG, vector, graph/RAG, and product context APIs stay outside core."
+    ),
+    "approval": (
+        "Approval services, ticketing systems, operator UI, identity, and permissions stay outside core."
+    ),
+    "policy_decision": (
+        "SIEM/audit logs, tenant policy stores, and workflow DBs stay outside core."
+    ),
+    "event_log": (
+        "UI streams, metrics, logging pipelines, and audit event sinks stay outside core."
+    ),
+    "timeline": (
+        "Product conversation stores, event logs, object storage, and archive stores stay outside core."
+    ),
+}
 FORBIDDEN_RUNTIME_DEPENDENCIES: tuple[str, ...] = (
     "app.openai_agents_runtime",
     "app.tools",
@@ -303,6 +349,11 @@ class AgentCoreSDKManifest:
                 "roles": list(self.storage_roles),
                 "builtin_kinds": list(self.builtin_storage_kinds),
                 "external_kinds": list(self.external_storage_kinds),
+                "role_contracts": _storage_backend_role_contracts(
+                    self.storage_roles,
+                    builtin_kinds=self.builtin_storage_kinds,
+                    external_kinds=self.external_storage_kinds,
+                ),
             },
             "runtime_boundary": self.runtime_boundary.manifest(),
             "public_api_count": len(self.public_api),
@@ -770,12 +821,19 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
             name="storage_backend_contracts",
             layer="storage",
             status="stable_contract",
-            summary="Backend manifests, catalog selection, and preflight requirements for all core store roles.",
+            summary=(
+                "Backend manifests, role contracts, catalog selection, and "
+                "preflight requirements for all core store roles."
+            ),
             public_contracts=(
                 "StorageBackendSpec",
                 "StorageBackendCatalog",
                 "StorageBackendRequirement",
                 "StorageBackendPreflightReport",
+            ),
+            runtime_notes=(
+                "Runtime-owned PG, vector, graph, object storage, product, "
+                "external, and custom backends implement the listed ports outside core.",
             ),
         ),
         AgentCoreCapability(
@@ -1249,6 +1307,34 @@ def agent_core_api_contract(
         mvp_api=mvp,
         metadata=dict(metadata or {}),
     )
+
+
+def _storage_backend_role_contracts(
+    roles: tuple[str, ...],
+    *,
+    builtin_kinds: tuple[str, ...],
+    external_kinds: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    contracts: list[dict[str, Any]] = []
+    for role in roles:
+        core_builtin_kinds = tuple(builtin_kinds)
+        if role in {"approval", "policy_decision", "run_trace"}:
+            core_builtin_kinds = ("none", *core_builtin_kinds)
+        contracts.append(
+            {
+                "schema_version": "agent-core-storage-role-contract/v1",
+                "role": role,
+                "port": STORAGE_ROLE_PORTS.get(role, ""),
+                "core_builtin_kinds": list(core_builtin_kinds),
+                "runtime_owned_kinds": list(external_kinds),
+                "runtime_owned": True,
+                "runtime_note": STORAGE_ROLE_RUNTIME_NOTES.get(
+                    role,
+                    "Production backends stay outside core.",
+                ),
+            }
+        )
+    return contracts
 
 
 def evaluate_agent_core_api_stability(

@@ -110,6 +110,8 @@ manifest for migration and runtime preflight checks. It records:
 - Storage backend interface roles plus built-in `in_memory` / `sqlite` /
   `markdown` kinds and external `postgres` / `vector` / `graph` /
   `object_storage` / `product` / `custom` kinds.
+- Per-role storage contracts that map each data role to its SDK port, core
+  builtin kinds, runtime-owned backend kinds, and runtime responsibility note.
 - Runtime boundary rules, including forbidden runtime dependencies and adapter
   packages that must stay outside this repository.
 
@@ -925,6 +927,12 @@ durability, inspectability, queryability, transaction support, and whether the
 backend is a core builtin. Runtime-owned PG, vector, graph, object-store, or
 product backends should export the same shape while living outside this
 repository.
+
+`agent_core_sdk_manifest()["storage_backend_interfaces"]["role_contracts"]`
+lists the port for each role, the core builtin kinds available for lightweight
+SDK use, and the runtime-owned kinds a host can provide. This keeps choices such
+as SQLite, Markdown, PG, vector, graph, object storage, or product APIs explicit
+without importing those production drivers into `agent_core`.
 
 `AgentStateBundleBuilder` / `build_agent_state_bundle` turns generic SDK state
 manifests into a prompt-safe portable bundle for migration, archive, and

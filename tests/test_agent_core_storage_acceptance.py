@@ -36,6 +36,35 @@ async def test_agent_core_storage_acceptance_gate_passes() -> None:
     assert manifest["blocked_preflight"]["ready"] is False
 
 
+def test_sdk_manifest_storage_role_contracts_are_runtime_neutral() -> None:
+    import agent_core
+
+    storage = agent_core.agent_core_sdk_manifest().manifest()[
+        "storage_backend_interfaces"
+    ]
+    role_contracts = {item["role"]: item for item in storage["role_contracts"]}
+
+    assert len(role_contracts) == len(storage["roles"])
+    assert role_contracts["memory"]["port"] == "MemoryPort"
+    assert role_contracts["memory"]["runtime_owned"] is True
+    assert role_contracts["memory"]["core_builtin_kinds"] == [
+        "in_memory",
+        "sqlite",
+        "markdown",
+    ]
+    assert {"postgres", "vector", "graph", "product", "external", "custom"} <= set(
+        role_contracts["memory"]["runtime_owned_kinds"]
+    )
+    assert role_contracts["artifact"]["port"] == "ArtifactStorePort"
+    assert "object_storage" in role_contracts["artifact"]["runtime_owned_kinds"]
+    assert role_contracts["approval"]["core_builtin_kinds"] == [
+        "none",
+        "in_memory",
+        "sqlite",
+        "markdown",
+    ]
+
+
 def test_storage_acceptance_is_declared_in_readiness_and_api_contract() -> None:
     import agent_core
 

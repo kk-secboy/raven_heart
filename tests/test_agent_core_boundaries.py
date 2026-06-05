@@ -485,6 +485,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     capability_names = {capability["name"] for capability in manifest["capabilities"]}
     boundary = manifest["runtime_boundary"]
     storage = manifest["storage_backend_interfaces"]
+    role_contracts = {item["role"]: item for item in storage["role_contracts"]}
 
     assert manifest["schema_version"] == "agent-core-sdk-manifest/v1"
     assert manifest["package"] == "raven-heart"
@@ -556,6 +557,20 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert {"postgres", "vector", "graph", "product", "custom"} <= set(
         storage["external_kinds"]
     )
+    assert set(role_contracts) == set(storage["roles"])
+    assert role_contracts["memory"]["port"] == "MemoryPort"
+    assert role_contracts["context_material"]["port"] == "ContextMaterialStorePort"
+    assert role_contracts["journal"]["port"] == "AgentJournalStorePort"
+    assert {"in_memory", "sqlite", "markdown"} <= set(
+        role_contracts["memory"]["core_builtin_kinds"]
+    )
+    assert {"postgres", "vector", "graph", "product"} <= set(
+        role_contracts["memory"]["runtime_owned_kinds"]
+    )
+    assert "PG, vector, graph/RAG" in role_contracts["memory"]["runtime_note"]
+    assert "none" in role_contracts["approval"]["core_builtin_kinds"]
+    assert "none" in role_contracts["policy_decision"]["core_builtin_kinds"]
+    assert "none" in role_contracts["run_trace"]["core_builtin_kinds"]
 
 
 def test_agent_core_boundary_scan_uses_manifest_forbidden_dependencies() -> None:

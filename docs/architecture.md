@@ -317,6 +317,11 @@ core builtin. Built-in stores use `in_memory`, `sqlite`, `markdown`, or `none`;
 runtime adapters can use `postgres`, `vector`, `graph`, `object_storage`,
 `product`, `external`, or `custom` without changing ReAct, harness, replay, or
 manager code.
+The SDK manifest also exposes `storage_backend_interfaces.role_contracts`, a
+per-role map from store role to SDK port, core builtin kinds, runtime-owned
+kinds, and the runtime responsibility note. This is the machine-readable line
+between `agent_core` and host-owned PG/vector/graph/object-store/product
+adapters.
 
 `StorageBackendCatalog` is the SDK boundary for choosing among those backends.
 It registers built-in and runtime-owned backend manifests, evaluates
