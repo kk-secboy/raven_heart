@@ -177,6 +177,9 @@ no runtime dependencies, but local install/build smoke tests need
 The same packaging gate also verifies the repository CI workflow runs both the
 pytest suite and the aggregate SDK validation gate, so release checks cannot
 skip `run_agent_core_validation()`.
+It also scans runtime and optional dependencies for forbidden runtime/adapter
+packages such as OpenAI SDK, OpenAI Agents SDK, FastAPI, Graphiti, MCP, Redis,
+and SQLAlchemy.
 
 ```bash
 python -m pip install setuptools

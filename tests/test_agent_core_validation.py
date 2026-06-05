@@ -21,6 +21,12 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["summary"]["runtime_free"] is True
     assert manifest["summary"]["public_api_count"] <= 40
     assert manifest["summary"]["contract_api_count"] <= 90
+    assert manifest["summary"]["package_dependency_boundary"] == {
+        "runtime_dependency_count": 0,
+        "optional_dependency_groups": ["dev"],
+        "forbidden_dependency_hit_count": 0,
+        "forbidden_dependency_hits": [],
+    }
     assert manifest["summary"]["examples_executed"]["minimal_react.py"] == {
         "exit_code": 0,
         "json_valid": True,

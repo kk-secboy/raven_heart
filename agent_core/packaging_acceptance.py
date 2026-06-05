@@ -13,6 +13,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+
+FORBIDDEN_PACKAGE_DEPENDENCIES: tuple[str, ...] = (
+    "openai",
+    "openai-agents",
+    "agents",
+    "fastapi",
+    "graphiti",
+    "graphiti-core",
+    "mcp",
+    "redis",
+    "sqlalchemy",
+)
+
+
 @dataclass(frozen=True)
 class AgentCorePackagingAcceptanceIssue:
     """One blocking package-readiness acceptance issue."""
@@ -145,6 +159,15 @@ def _project_metadata(pyproject: dict[str, Any]) -> dict[str, Any]:
     dependencies = project.get("dependencies") if isinstance(project.get("dependencies"), list) else []
     classifiers = project.get("classifiers") if isinstance(project.get("classifiers"), list) else []
     keywords = project.get("keywords") if isinstance(project.get("keywords"), list) else []
+    optional_dependencies = {
+        str(group): [str(item) for item in values]
+        for group, values in optional.items()
+        if isinstance(values, list)
+    }
+    forbidden_dependency_hits = _forbidden_dependency_hits(
+        runtime_dependencies=[str(item) for item in dependencies],
+        optional_dependencies=optional_dependencies,
+    )
     return {
         "schema_version": "agent-core-package-project-metadata/v1",
         "name": str(project.get("name") or ""),
@@ -155,10 +178,12 @@ def _project_metadata(pyproject: dict[str, Any]) -> dict[str, Any]:
         "runtime_dependency_count": len(dependencies),
         "runtime_dependencies": [str(item) for item in dependencies],
         "optional_dependency_groups": sorted(str(key) for key in optional),
+        "optional_dependencies": optional_dependencies,
         "dev_dependency_count": len(optional.get("dev") or ()),
         "classifiers": [str(item) for item in classifiers],
         "keywords": [str(item) for item in keywords],
         "typed_classifier": "Typing :: Typed" in {str(item) for item in classifiers},
+        "forbidden_dependency_hits": forbidden_dependency_hits,
     }
 
 
@@ -399,6 +424,15 @@ def _packaging_acceptance_issues(
                 metadata=dict(project_metadata),
             )
         )
+    if project_metadata.get("forbidden_dependency_hits"):
+        issues.append(
+            AgentCorePackagingAcceptanceIssue(
+                source="project_metadata",
+                code="forbidden_runtime_dependency_declared",
+                message="Package metadata must not declare runtime/adapter dependencies.",
+                metadata=dict(project_metadata),
+            )
+        )
     if project_metadata.get("typed_classifier") is not True:
         issues.append(
             AgentCorePackagingAcceptanceIssue(
@@ -602,3 +636,48 @@ def _packaging_acceptance_issues(
                 )
             )
     return tuple(issues)
+
+
+def _forbidden_dependency_hits(
+    *,
+    runtime_dependencies: list[str],
+    optional_dependencies: dict[str, list[str]],
+) -> list[dict[str, str]]:
+    hits: list[dict[str, str]] = []
+    for dependency in runtime_dependencies:
+        name = _dependency_name(dependency)
+        if _is_forbidden_dependency_name(name):
+            hits.append(
+                {
+                    "group": "runtime",
+                    "dependency": dependency,
+                    "name": name,
+                }
+            )
+    for group, dependencies in optional_dependencies.items():
+        for dependency in dependencies:
+            name = _dependency_name(dependency)
+            if _is_forbidden_dependency_name(name):
+                hits.append(
+                    {
+                        "group": group,
+                        "dependency": dependency,
+                        "name": name,
+                    }
+                )
+    return hits
+
+
+def _dependency_name(dependency: str) -> str:
+    text = dependency.strip().lower()
+    for separator in ("[", "<", ">", "=", "!", "~", ";", " "):
+        if separator in text:
+            text = text.split(separator, 1)[0]
+    return text.replace("_", "-")
+
+
+def _is_forbidden_dependency_name(name: str) -> bool:
+    return any(
+        name == forbidden or name.startswith(f"{forbidden}-")
+        for forbidden in FORBIDDEN_PACKAGE_DEPENDENCIES
+    )

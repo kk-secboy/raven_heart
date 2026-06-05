@@ -1038,6 +1038,7 @@ def _validation_summary(
     for issue in issues:
         issue_counts[issue.source] = issue_counts.get(issue.source, 0) + 1
     packaging_public_api = packaging_acceptance.get("public_api") or {}
+    packaging_project = packaging_acceptance.get("project_metadata") or {}
     packaging_examples = (packaging_acceptance.get("examples") or {}).get("examples") or {}
     provider_matrix = provider_conformance.get("check_matrix") or {}
     storage_interfaces = sdk_manifest.get("storage_backend_interfaces") or {}
@@ -1064,6 +1065,20 @@ def _validation_summary(
         "public_api_count": int(packaging_public_api.get("public_api_count") or 0),
         "contract_api_count": int(packaging_public_api.get("contract_api_count") or 0),
         "root_export_count": int(packaging_public_api.get("root_export_count") or 0),
+        "package_dependency_boundary": {
+            "runtime_dependency_count": int(
+                packaging_project.get("runtime_dependency_count") or 0
+            ),
+            "optional_dependency_groups": list(
+                packaging_project.get("optional_dependency_groups") or ()
+            ),
+            "forbidden_dependency_hit_count": len(
+                packaging_project.get("forbidden_dependency_hits") or ()
+            ),
+            "forbidden_dependency_hits": list(
+                packaging_project.get("forbidden_dependency_hits") or ()
+            ),
+        },
         "examples_executed": {
             name: {
                 "exit_code": ((info.get("run") or {}).get("exit_code")),
