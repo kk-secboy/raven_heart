@@ -48,6 +48,7 @@ ops agents, research agents, and future automation systems.
 - Approval resume context for approved action/tool gate continuation.
 - Policy gates, budget metadata, loop guards, and capability manifests.
 - Package-level SDK manifest for public API, capability, storage, and runtime-boundary audits.
+- Runtime-neutral task contracts for generic, context-aware, memory-backed, managed, and tool/structured runs.
 - Structured output specs and validator ports for provider-neutral final answers.
 
 Runtime integration is intentionally outside this repository. Raven, OpenAI Agents SDK, Graphiti, Anthropic, OpenAI, local models, file-system tools, CI runners, and product APIs should connect to `agent_core` from their own runtime packages or repositories.
@@ -354,6 +355,16 @@ through the same `AgentRunner`, provider center, ToolCenter, SkillsContext,
 memory recall, context-material selection, event log, and trace-eval pipeline.
 Concrete code tools, ops integrations, security tooling, domain prompts, and
 product workflows remain runtime responsibilities.
+
+`agent_core.agent_core_task_contract_profile()` declares the SDK-owned task
+input contracts a runtime can use before calling `AgentRunner`: generic run
+requests, semantic/context-aware tasks, memory-backed tasks, managed background
+runs, and tool/structured-output tasks. `AgentRunRequest(task_contract=...)`
+automatically converts the selected contract into run preflight requirements
+unless explicit `preflight_requirements` are supplied. This keeps task sizing,
+required tools/skills/MCP servers, memory requirements, and SQLite/Markdown/PG/
+vector/graph storage expectations in the SDK while concrete adapters and domain
+workflows stay outside `agent_core`.
 
 `agent_core.run_agent_core_validation()` runs the aggregate SDK gate. It executes
 runtime-boundary audit, readiness, API stability, replacement acceptance, context
@@ -1097,6 +1108,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Area | Status |
 | --- | --- |
 | Harness/ReAct core | MVP implemented |
+| Task contract profile | MVP implemented |
 | Provider center | MVP implemented |
 | Provider call audit | MVP implemented |
 | Provider contract profile | MVP implemented |

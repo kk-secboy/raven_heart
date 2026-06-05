@@ -517,6 +517,11 @@ from agent_core.storage_acceptance import (
     AgentCoreStorageAcceptanceReport,
     run_agent_core_storage_acceptance,
 )
+from agent_core.task_contract import (
+    AgentCoreTaskContractProfile,
+    AgentTaskContract,
+    agent_core_task_contract_profile,
+)
 from agent_core.task_profile_acceptance import (
     AgentCoreTaskProfileAcceptanceHarness,
     AgentCoreTaskProfileAcceptanceIssue,
@@ -792,6 +797,7 @@ __all__ = [
     "AgentCoreStateBundleAcceptanceHarness",
     "AgentCoreStateBundleAcceptanceIssue",
     "AgentCoreStateBundleAcceptanceReport",
+    "AgentCoreTaskContractProfile",
     "AgentCoreTaskProfileAcceptanceHarness",
     "AgentCoreTaskProfileAcceptanceIssue",
     "AgentCoreTaskProfileAcceptanceReport",
@@ -831,6 +837,7 @@ __all__ = [
     "AgentRunPreflightReport",
     "AgentRunPreflightRequest",
     "AgentRunPreflightRequirements",
+    "AgentTaskContract",
     "AgentToolTrace",
     "ApprovalTrace",
     "ArtifactTrace",
@@ -1136,6 +1143,7 @@ __all__ = [
     "default_agent_core_capabilities",
     "agent_core_api_contract",
     "agent_core_provider_contract_profile",
+    "agent_core_task_contract_profile",
     "agent_core_replacement_readiness_profile",
     "build_context_window_report",
     "evaluate_agent_core_api_stability",

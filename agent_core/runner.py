@@ -74,6 +74,7 @@ from agent_core.react import ReActConfig, ReActExecutor, ReActResult
 from agent_core.reducer import ContextReducerPort, ReducerRequest, apply_reduction_to_timeline
 from agent_core.skills import SkillsContext
 from agent_core.structured import StructuredOutputSpec, StructuredOutputValidatorPort
+from agent_core.task_contract import AgentTaskContract
 from agent_core.timeline import TimelineBudget, TimelineStore
 from agent_core.tools import NullToolReplay, ToolReplayPort, ToolRuntimePort
 from agent_core.trace import AgentJournalReplay, AgentRunTraceBundle, NullRunTraceStore, RunTraceStorePort
@@ -189,6 +190,7 @@ class AgentRunRequest:
     context_material_selection: ContextMaterialSelectionRequest | None = None
     mcp_context_materials: MCPContextMaterialRequest | None = None
     preflight_requirements: AgentRunPreflightRequirements | None = None
+    task_contract: AgentTaskContract | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
     stream: bool | None = None
@@ -210,6 +212,7 @@ class AgentResumeRequest:
     context_material_selection: ContextMaterialSelectionRequest | None = None
     mcp_context_materials: MCPContextMaterialRequest | None = None
     preflight_requirements: AgentRunPreflightRequirements | None = None
+    task_contract: AgentTaskContract | None = None
     timeout_seconds: float | None = None
     native_tool_calls: bool | None = None
     stream: bool | None = None
@@ -231,6 +234,7 @@ class AgentResumeRequest:
             "has_context_material_selection": self.context_material_selection is not None,
             "has_mcp_context_materials": self.mcp_context_materials is not None,
             "has_preflight_requirements": self.preflight_requirements is not None,
+            "has_task_contract": self.task_contract is not None,
             "timeout_seconds": self.timeout_seconds,
             "native_tool_calls": self.native_tool_calls,
             "stream": self.stream,
@@ -841,7 +845,7 @@ class AgentRunner:
         return await self.session.preflight.check(self._preflight_request(request))
 
     def _preflight_request(self, request: AgentRunRequest) -> AgentRunPreflightRequest:
-        requirements = request.preflight_requirements or AgentRunPreflightRequirements()
+        requirements = _preflight_requirements_for_request(request)
         return AgentRunPreflightRequest(
             task=request.task,
             session_name=self.session.profile.name,
@@ -853,7 +857,10 @@ class AgentRunner:
             memory_enabled=bool(self.session.profile.capabilities.memory_enabled),
             provider_route_plan=_provider_route_plan_manifest(self.session, request),
             storage_backend_preflight=self._storage_backend_preflight(requirements),
-            metadata={"request_metadata": dict(request.metadata)},
+            metadata={
+                "request_metadata": dict(request.metadata),
+                "task_contract": _task_contract_manifest(request),
+            },
         )
 
     def _storage_backend_preflight(
@@ -2132,6 +2139,7 @@ def _run_request_from_resume(
         context_material_selection=request.context_material_selection,
         mcp_context_materials=request.mcp_context_materials,
         preflight_requirements=request.preflight_requirements,
+        task_contract=request.task_contract,
         timeout_seconds=request.timeout_seconds,
         native_tool_calls=request.native_tool_calls,
         stream=request.stream,
@@ -2141,6 +2149,24 @@ def _run_request_from_resume(
 def _request_resume_plan_manifest(request: AgentRunRequest) -> dict[str, Any]:
     value = request.metadata.get("resume_plan")
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _preflight_requirements_for_request(
+    request: AgentRunRequest,
+) -> AgentRunPreflightRequirements:
+    if request.preflight_requirements is not None:
+        return request.preflight_requirements
+    if request.task_contract is not None:
+        return request.task_contract.preflight_requirements(
+            metadata={"request_metadata": dict(request.metadata)}
+        )
+    return AgentRunPreflightRequirements()
+
+
+def _task_contract_manifest(request: AgentRunRequest) -> dict[str, Any]:
+    if request.task_contract is None:
+        return {}
+    return request.task_contract.manifest()
 
 
 async def _component_manifest(component: Any) -> dict[str, Any]:
