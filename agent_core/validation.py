@@ -1192,6 +1192,24 @@ def _migration_readiness_summary(
         provider_matrix.get("provider_source") == "external"
         and bool(provider_matrix.get("ready_for_real_provider_smoke"))
     )
+    live_provider_status = (
+        "passed"
+        if live_provider_ok
+        else (
+            "failed"
+            if provider_matrix.get("provider_source") == "external"
+            else "requires_external_provider"
+        )
+    )
+    live_provider_gap_status = (
+        "covered"
+        if live_provider_ok
+        else (
+            "failed"
+            if provider_matrix.get("provider_source") == "external"
+            else "not_run_in_sdk_validation"
+        )
+    )
     provider_conformance_ok = deterministic_provider_ok or live_provider_ok
     storage_contracts_ready = (
         len(storage_interfaces.get("roles") or ()) > 0
@@ -1225,7 +1243,7 @@ def _migration_readiness_summary(
     not_covered = [
         {
             "item": "live_llm_provider_conformance",
-            "status": "covered" if live_provider_ok else "not_run_in_sdk_validation",
+            "status": live_provider_gap_status,
             "owner": "runtime_or_provider_adapter",
             "reason": "requires a runtime-supplied LLMProviderPort plus credentials",
         },
@@ -1256,9 +1274,7 @@ def _migration_readiness_summary(
         "sdk_core_usable": sdk_core_usable,
         "ready_for_runtime_adapter_work": sdk_core_usable,
         "ready_for_live_provider_conformance": sdk_core_usable,
-        "live_provider_conformance_status": (
-            "passed" if live_provider_ok else "requires_external_provider"
-        ),
+        "live_provider_conformance_status": live_provider_status,
         "runtime_adapters_in_scope": False,
         "ravenstorm_adapter_in_scope": False,
         "evidence": {
@@ -1276,9 +1292,13 @@ def _migration_readiness_summary(
         "blocked_gates": list(blocked_gates),
         "not_covered_by_sdk_validation": not_covered,
         "next_validation_step": (
-            "run_agent_core_provider_conformance(provider=runtime_provider)"
-            if sdk_core_usable and not live_provider_ok
-            else ""
+            "fix_external_provider_conformance_failures"
+            if live_provider_status == "failed"
+            else (
+                "run_agent_core_provider_conformance(provider=runtime_provider)"
+                if sdk_core_usable and not live_provider_ok
+                else ""
+            )
         ),
     }
 

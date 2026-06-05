@@ -386,6 +386,51 @@ async def test_agent_core_validation_suite_accepts_external_provider_conformance
     assert live_provider["status"] == "covered"
 
 
+@pytest.mark.asyncio
+async def test_agent_core_validation_suite_reports_external_provider_failure() -> None:
+    import agent_core
+    from agent_core.providers import LLMRequest, LLMResponse
+
+    class BadProvider:
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            return LLMResponse(content="")
+
+    report = await agent_core.run_agent_core_validation(
+        provider_conformance_provider=BadProvider(),
+        provider_conformance_spec=agent_core.AgentCoreProviderConformanceSpec(
+            provider_name="external-bad",
+            require_streaming=False,
+            require_json_mode=False,
+            require_tool_calls=False,
+        ),
+        metadata={"test": "validation_external_provider_failure"},
+    )
+    manifest = report.manifest()
+    migration = manifest["summary"]["migration_readiness"]
+    provider_matrix = manifest["summary"]["provider_conformance"]
+    live_provider = {
+        item["item"]: item
+        for item in migration["not_covered_by_sdk_validation"]
+    }["live_llm_provider_conformance"]
+    issue_codes = {issue["code"] for issue in manifest["issues"]}
+
+    assert manifest["status"] == "blocked"
+    assert manifest["ready"] is False
+    assert "provider_conformance" in manifest["summary"]["blocked_gates"]
+    assert "text_response_empty" in issue_codes
+    assert manifest["provider_conformance"]["check_matrix"][
+        "provider_source"
+    ] == "external"
+    assert provider_matrix["provider_source"] == "external"
+    assert provider_matrix["error_issue_codes"] == ["text_response_empty"]
+    assert migration["sdk_core_status"] == "blocked"
+    assert migration["evidence"]["live_provider_ok"] is False
+    assert migration["evidence"]["provider_conformance_ok"] is False
+    assert migration["live_provider_conformance_status"] == "failed"
+    assert migration["next_validation_step"] == "fix_external_provider_conformance_failures"
+    assert live_provider["status"] == "failed"
+
+
 def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
     import agent_core
 
