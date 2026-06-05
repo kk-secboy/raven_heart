@@ -159,6 +159,18 @@ result is an `AgentCoreAcceptanceReport` with blocking issues, run summary,
 readiness report, and trace-eval report. This is the package-level gate before a
 runtime starts adapter-specific migration tests.
 
+`agent_core.run_agent_core_packaging_acceptance()` checks package metadata,
+typed-package declarations, root API surface limits, examples, and whether the
+configured build backend is importable in the current environment. The SDK has
+no runtime dependencies, but local install/build smoke tests need
+`setuptools.build_meta` available:
+
+```bash
+python -m pip install setuptools
+python -m pip install --no-deps --no-build-isolation --target /tmp/raven-heart-smoke .
+PYTHONPATH=/tmp/raven-heart-smoke python -c "import agent_core; print(agent_core.agent_core_sdk_manifest().manifest()['package'])"
+```
+
 `agent_core.run_agent_core_context_acceptance()` runs a deterministic
 Yaklang-style context gate. It exercises context material routing, semantic
 selection, target denial, context injection, per-injection trimming, bucket-local

@@ -22,6 +22,7 @@ async def test_agent_core_packaging_acceptance_gate_passes() -> None:
     assert manifest["project_metadata"]["typed_classifier"] is True
     assert "agent" in manifest["project_metadata"]["keywords"]
     assert manifest["build_metadata"]["build_backend"] == "setuptools.build_meta"
+    assert isinstance(manifest["build_metadata"]["build_backend_available"], bool)
     assert manifest["build_metadata"]["includes_agent_core"] is True
     assert manifest["build_metadata"]["includes_py_typed"] is True
     assert manifest["public_api"]["stability_ready"] is True

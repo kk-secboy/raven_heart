@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -183,9 +184,11 @@ def _build_metadata(pyproject: dict[str, Any]) -> dict[str, Any]:
         else []
     )
     requires = build.get("requires") if isinstance(build.get("requires"), list) else []
+    build_backend = str(build.get("build-backend") or "")
     return {
         "schema_version": "agent-core-package-build-metadata/v1",
-        "build_backend": str(build.get("build-backend") or ""),
+        "build_backend": build_backend,
+        "build_backend_available": _module_available(build_backend),
         "build_requires": [str(item) for item in requires],
         "package_find_include": [str(item) for item in include],
         "includes_agent_core": any(str(item) == "agent_core*" for item in include),
@@ -278,6 +281,15 @@ def _file_size(path: Path) -> int:
     return path.stat().st_size if path.exists() else 0
 
 
+def _module_available(module_name: str) -> bool:
+    if not module_name:
+        return False
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except ModuleNotFoundError:
+        return False
+
+
 def _packaging_acceptance_issues(
     *,
     project_metadata: dict[str, Any],
@@ -337,6 +349,16 @@ def _packaging_acceptance_issues(
                 source="build_metadata",
                 code="build_backend_missing",
                 message="Package build backend must be explicit.",
+                metadata=dict(build_metadata),
+            )
+        )
+    if build_metadata.get("build_backend_available") is not True:
+        issues.append(
+            AgentCorePackagingAcceptanceIssue(
+                source="build_metadata",
+                code="build_backend_unavailable",
+                message="Configured package build backend is not importable in the current environment.",
+                severity="warning",
                 metadata=dict(build_metadata),
             )
         )
