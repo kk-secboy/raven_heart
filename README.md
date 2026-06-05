@@ -107,6 +107,8 @@ manifest for migration and runtime preflight checks. It records:
   importable during v0.x so existing tests and early users do not break.
 - Core capability matrix for harness, ReAct, providers, tools, skills, MCP,
   memory, prompt/context shaping, policy, trace/replay/eval, and coordination.
+- Context pipeline contract for selection, injection policy, bucket budget,
+  semantic trim, provider prompt budget, global trim, and context-window audit.
 - Storage backend interface roles plus built-in `in_memory` / `sqlite` /
   `markdown` kinds and external `postgres` / `vector` / `graph` /
   `object_storage` / `product` / `custom` kinds.
@@ -1035,6 +1037,13 @@ runtimes can swap in embedding-backed, LLM-backed, or domain-specific reducers
 without changing `AgentRunner`. Prompt and trace manifests record the reducer
 request hash, per-bucket decisions, selected/dropped unit counts, convergence,
 and trimmed count without storing hidden raw context outside the prompt itself.
+
+`agent_core_sdk_manifest()["context_pipeline"]` publishes the machine-readable
+Yaklang-style context pipeline contract: context material selection, context
+injection policy, bucket-local budget, semantic trim, provider prompt budget,
+global prompt trim, and context-window audit. Runtime code owns domain material,
+semantic reducer model clients, product budgets, and UI gates; the SDK owns the
+ordered mechanics and prompt-safe manifests.
 
 `ContextInjection` lets runtimes or core services place structured material into
 a target bucket without rewriting the prompt builder. Resume checkpoints use this

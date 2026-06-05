@@ -485,6 +485,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     capability_names = {capability["name"] for capability in manifest["capabilities"]}
     boundary = manifest["runtime_boundary"]
     storage = manifest["storage_backend_interfaces"]
+    context_pipeline = manifest["context_pipeline"]
     role_contracts = {item["role"]: item for item in storage["role_contracts"]}
 
     assert manifest["schema_version"] == "agent-core-sdk-manifest/v1"
@@ -497,6 +498,25 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert set(manifest["public_api"]) <= set(agent_core.__all__)
     assert set(manifest["contract_api"]) <= set(agent_core.__all__)
     assert manifest["api_contract"]["schema_version"] == "agent-core-api-contract/v1"
+    assert (
+        context_pipeline["schema_version"]
+        == "agent-core-context-pipeline-contract/v1"
+    )
+    assert context_pipeline["stage_order"] == [
+        "context_material_selection",
+        "context_injection_policy",
+        "prompt_bucket_budget",
+        "prompt_semantic_trim",
+        "provider_prompt_budget",
+        "global_prompt_trim",
+        "context_window_audit",
+    ]
+    assert context_pipeline["stage_count"] == len(context_pipeline["stages"])
+    stages = {item["name"]: item for item in context_pipeline["stages"]}
+    assert "ContextInjectionPolicy" in stages["context_injection_policy"]["core_contracts"]
+    assert "PromptSemanticReducerPort" in stages["prompt_semantic_trim"]["core_contracts"]
+    assert "ContextWindowReport" in stages["context_window_audit"]["core_contracts"]
+    assert "semantic reducer model clients" in " ".join(context_pipeline["runtime_owns"])
     assert "AgentRunner" in manifest["api_contract"]["stable_api"]
     assert "AgentRunner" in manifest["public_api"]
     assert "harness_lifecycle" in capability_names

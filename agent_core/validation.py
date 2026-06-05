@@ -1026,6 +1026,7 @@ def _validation_summary(
     packaging_examples = (packaging_acceptance.get("examples") or {}).get("examples") or {}
     provider_matrix = provider_conformance.get("check_matrix") or {}
     storage_interfaces = sdk_manifest.get("storage_backend_interfaces") or {}
+    context_pipeline = sdk_manifest.get("context_pipeline") or {}
     return {
         "schema_version": "agent-core-validation-summary/v1",
         "status": status,
@@ -1062,6 +1063,10 @@ def _validation_summary(
                 provider_matrix.get("failed_required_checks") or ()
             ),
             "error_issue_codes": list(provider_matrix.get("error_issue_codes") or ()),
+        },
+        "context_pipeline": {
+            "stage_count": int(context_pipeline.get("stage_count") or 0),
+            "stage_order": list(context_pipeline.get("stage_order") or ()),
         },
         "storage_backend_interfaces": {
             "role_count": len(storage_interfaces.get("roles") or ()),

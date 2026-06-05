@@ -31,6 +31,16 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     }
     assert manifest["summary"]["provider_conformance"]["provider_source"] == "deterministic"
     assert manifest["summary"]["provider_conformance"]["failed_required_checks"] == []
+    assert manifest["summary"]["context_pipeline"]["stage_count"] == 7
+    assert manifest["summary"]["context_pipeline"]["stage_order"] == [
+        "context_material_selection",
+        "context_injection_policy",
+        "prompt_bucket_budget",
+        "prompt_semantic_trim",
+        "provider_prompt_budget",
+        "global_prompt_trim",
+        "context_window_audit",
+    ]
     assert manifest["summary"]["storage_backend_interfaces"]["role_count"] == 12
     assert manifest["summary"]["storage_backend_interfaces"]["role_contract_count"] == 12
     assert {"in_memory", "sqlite", "markdown"} <= set(

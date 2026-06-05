@@ -856,6 +856,13 @@ audit provider-neutral by recording hashes, roles, per-bucket decisions,
 selected/dropped unit counts, and convergence without introducing a concrete
 semantic model into core.
 
+`agent_core_sdk_manifest().manifest()["context_pipeline"]` publishes the
+machine-readable context pipeline contract. It fixes the SDK-owned stage order:
+context material selection, context injection policy, bucket-local budget,
+semantic trim, provider prompt budget, global prompt trim, and context-window
+audit. Runtime code owns domain material, semantic reducer model clients,
+product budget numbers, and UI gates.
+
 `ContextInjection` is the SDK-level insertion record for resumable state, memory
 continuity, operator hints, and runtime-supplied context. It declares the target
 bucket, source, priority, and metadata. The runtime still owns the actual content

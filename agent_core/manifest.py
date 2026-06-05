@@ -96,6 +96,82 @@ STORAGE_ROLE_RUNTIME_NOTES: dict[str, str] = {
         "Product conversation stores, event logs, object storage, and archive stores stay outside core."
     ),
 }
+CONTEXT_PIPELINE_STAGES: tuple[dict[str, Any], ...] = (
+    {
+        "name": "context_material_selection",
+        "order": 1,
+        "core_contracts": (
+            "ContextMaterialCenter",
+            "ContextMaterialSelectorPort",
+            "ContextMaterialSelectionRequest",
+        ),
+        "runtime_responsibilities": (
+            "provide domain context stores",
+            "choose query terms and namespace filters",
+        ),
+    },
+    {
+        "name": "context_injection_policy",
+        "order": 2,
+        "core_contracts": ("ContextInjection", "ContextInjectionPolicy"),
+        "runtime_responsibilities": (
+            "provide runtime hints and resume material",
+            "choose allowed target buckets per task class",
+        ),
+    },
+    {
+        "name": "prompt_bucket_budget",
+        "order": 3,
+        "core_contracts": ("PromptBucketBudgetPolicy", "PromptBucketBudgetRule"),
+        "runtime_responsibilities": (
+            "choose per-bucket byte budgets",
+            "tune protected buckets for product workflows",
+        ),
+    },
+    {
+        "name": "prompt_semantic_trim",
+        "order": 4,
+        "core_contracts": (
+            "PromptSemanticReducerPort",
+            "DefaultPromptSemanticReducer",
+            "PromptSemanticTrimResult",
+        ),
+        "runtime_responsibilities": (
+            "optionally provide embedding-backed or LLM-backed reducers",
+            "keep reducer model clients outside core",
+        ),
+    },
+    {
+        "name": "provider_prompt_budget",
+        "order": 5,
+        "core_contracts": ("LLMModelCapabilities", "AgentRunPreflightRequirements"),
+        "runtime_responsibilities": (
+            "declare provider context windows and reserved output tokens",
+            "select concrete model deployments outside core",
+        ),
+    },
+    {
+        "name": "global_prompt_trim",
+        "order": 6,
+        "core_contracts": ("PromptIR.trim_plan", "PromptIR.trim_to_budget"),
+        "runtime_responsibilities": (
+            "choose model-specific prompt target bytes when overriding defaults",
+        ),
+    },
+    {
+        "name": "context_window_audit",
+        "order": 7,
+        "core_contracts": (
+            "ContextWindowBuilder",
+            "ContextWindowPolicy",
+            "ContextWindowReport",
+        ),
+        "runtime_responsibilities": (
+            "apply product release gates and UI presentation",
+            "store audit reports in runtime observability systems",
+        ),
+    },
+)
 FORBIDDEN_RUNTIME_DEPENDENCIES: tuple[str, ...] = (
     "app.openai_agents_runtime",
     "app.tools",
@@ -355,6 +431,7 @@ class AgentCoreSDKManifest:
                     external_kinds=self.external_storage_kinds,
                 ),
             },
+            "context_pipeline": _context_pipeline_contract(),
             "runtime_boundary": self.runtime_boundary.manifest(),
             "public_api_count": len(self.public_api),
             "public_api": list(self.public_api),
@@ -1335,6 +1412,39 @@ def _storage_backend_role_contracts(
             }
         )
     return contracts
+
+
+def _context_pipeline_contract() -> dict[str, Any]:
+    stages = [
+        {
+            "schema_version": "agent-core-context-pipeline-stage/v1",
+            "name": str(stage["name"]),
+            "order": int(stage["order"]),
+            "core_contracts": list(stage["core_contracts"]),
+            "runtime_responsibilities": list(stage["runtime_responsibilities"]),
+        }
+        for stage in CONTEXT_PIPELINE_STAGES
+    ]
+    return {
+        "schema_version": "agent-core-context-pipeline-contract/v1",
+        "stage_count": len(stages),
+        "stage_order": [stage["name"] for stage in stages],
+        "stages": stages,
+        "core_owns": [
+            "bucket order",
+            "prompt-safe manifests",
+            "context injection decisions",
+            "bucket-local and global trim audit",
+            "context window report shape",
+        ],
+        "runtime_owns": [
+            "domain prompt content",
+            "domain context stores",
+            "semantic reducer model clients",
+            "product-specific budget numbers",
+            "operator UI and release gates",
+        ],
+    }
 
 
 def evaluate_agent_core_api_stability(
