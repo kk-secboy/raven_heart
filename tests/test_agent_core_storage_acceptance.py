@@ -43,9 +43,8 @@ def test_storage_acceptance_is_declared_in_readiness_and_api_contract() -> None:
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "storage_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreStorageAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreStorageAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_storage_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreStorageAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreStorageAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_storage_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreStorageAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreStorageAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_storage_acceptance" in agent_core.__all__
+    assert "AgentCoreStorageAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreStorageAcceptanceHarness" not in stability["present_stable_api"]

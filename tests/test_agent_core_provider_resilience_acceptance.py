@@ -48,9 +48,12 @@ def test_provider_resilience_acceptance_is_declared_in_readiness_and_api_contrac
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "provider_resilience_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreProviderResilienceAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreProviderResilienceAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_provider_resilience_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreProviderResilienceAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreProviderResilienceAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_provider_resilience_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreProviderResilienceAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreProviderResilienceAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_provider_resilience_acceptance" in agent_core.__all__
+    assert "AgentCoreProviderResilienceAcceptanceHarness" not in readiness["matched"][
+        "public_api"
+    ]
+    assert "AgentCoreProviderResilienceAcceptanceHarness" not in stability[
+        "present_stable_api"
+    ]

@@ -115,18 +115,13 @@ def test_eval_suite_is_declared_in_readiness_and_api_contract() -> None:
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "eval_suite_runner" in readiness["matched"]["capabilities"]
-    assert "TraceEvalCase" in readiness["matched"]["public_api"]
-    assert "TraceEvalSuite" in readiness["matched"]["public_api"]
-    assert "TraceEvalSuiteRunner" in readiness["matched"]["public_api"]
-    assert "AgentCoreEvalSuiteAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreEvalSuiteAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_eval_suite_acceptance" in readiness["matched"]["public_api"]
-    assert "TraceEvalCase" in stability["present_stable_api"]
-    assert "TraceEvalSuite" in stability["present_stable_api"]
-    assert "TraceEvalSuiteRunner" in stability["present_stable_api"]
-    assert "AgentCoreEvalSuiteAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreEvalSuiteAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_eval_suite_acceptance" in stability["present_stable_api"]
+    assert "TraceEvalCase" in agent_core.__all__
+    assert "TraceEvalSuite" in agent_core.__all__
+    assert "TraceEvalSuiteRunner" in agent_core.__all__
+    assert "AgentCoreEvalSuiteAcceptanceHarness" in agent_core.__all__
+    assert "run_agent_core_eval_suite_acceptance" in agent_core.__all__
+    assert "TraceEvalCase" not in readiness["matched"]["public_api"]
+    assert "TraceEvalCase" not in stability["present_stable_api"]
 
 
 def _trace(run_id: str, *, provider: str, tool: str) -> dict[str, object]:

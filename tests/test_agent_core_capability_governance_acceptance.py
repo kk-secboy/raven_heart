@@ -55,21 +55,12 @@ def test_capability_governance_acceptance_is_declared_in_readiness_and_api_contr
     assert "capability_governance_acceptance_harness" in readiness["matched"][
         "capabilities"
     ]
-    assert "AgentCoreCapabilityGovernanceAcceptanceHarness" in readiness["matched"][
+    assert "AgentCoreCapabilityGovernanceAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreCapabilityGovernanceAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_capability_governance_acceptance" in agent_core.__all__
+    assert "AgentCoreCapabilityGovernanceAcceptanceHarness" not in readiness["matched"][
         "public_api"
     ]
-    assert "AgentCoreCapabilityGovernanceAcceptanceReport" in readiness["matched"][
-        "public_api"
-    ]
-    assert "run_agent_core_capability_governance_acceptance" in readiness["matched"][
-        "public_api"
-    ]
-    assert "AgentCoreCapabilityGovernanceAcceptanceHarness" in stability[
-        "present_stable_api"
-    ]
-    assert "AgentCoreCapabilityGovernanceAcceptanceReport" in stability[
-        "present_stable_api"
-    ]
-    assert "run_agent_core_capability_governance_acceptance" in stability[
+    assert "AgentCoreCapabilityGovernanceAcceptanceHarness" not in stability[
         "present_stable_api"
     ]

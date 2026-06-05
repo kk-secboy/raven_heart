@@ -47,9 +47,12 @@ def test_external_backend_acceptance_is_declared_in_readiness_and_api_contract()
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "external_backend_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreExternalBackendAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreExternalBackendAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_external_backend_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreExternalBackendAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreExternalBackendAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_external_backend_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreExternalBackendAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreExternalBackendAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_external_backend_acceptance" in agent_core.__all__
+    assert "AgentCoreExternalBackendAcceptanceHarness" not in readiness["matched"][
+        "public_api"
+    ]
+    assert "AgentCoreExternalBackendAcceptanceHarness" not in stability[
+        "present_stable_api"
+    ]

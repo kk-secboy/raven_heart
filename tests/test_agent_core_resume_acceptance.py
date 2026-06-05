@@ -39,7 +39,7 @@ def test_resume_acceptance_is_declared_in_readiness_and_api_contract() -> None:
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "resume_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreResumeAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "run_agent_core_resume_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreResumeAcceptanceHarness" in stability["present_stable_api"]
-    assert "run_agent_core_resume_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreResumeAcceptanceHarness" in agent_core.__all__
+    assert "run_agent_core_resume_acceptance" in agent_core.__all__
+    assert "AgentCoreResumeAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreResumeAcceptanceHarness" not in stability["present_stable_api"]

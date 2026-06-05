@@ -100,7 +100,11 @@ agent_core never imports runtime
 `agent_core.agent_core_sdk_manifest()` returns a machine-readable package
 manifest for migration and runtime preflight checks. It records:
 
-- Public API exported from the package root.
+- Root public API: the small SDK entrypoint set intended for normal consumers.
+- Contract API: the stable integration surface used by runtimes, adapters, and
+  migration gates.
+- Compatibility exports: the wider package-root `__all__` surface kept
+  importable during v0.x so existing tests and early users do not break.
 - Core capability matrix for harness, ReAct, providers, tools, skills, MCP,
   memory, prompt/context shaping, policy, trace/replay/eval, and coordination.
 - Storage backend interface roles plus built-in `in_memory` / `sqlite` /
@@ -128,6 +132,12 @@ stability gate. The contract separates stable integration entrypoints from MVP
 exports that may still change before 1.0. The report blocks if a stable API name
 is missing, which lets host runtimes pin migration checks before depending on
 `raven_heart` as their agent base.
+
+The manifest intentionally does not treat every package-root export as the user
+API. `public_api_count` is capped at 40 root entrypoints.
+`contract_api_count` is capped at 90 runtime integration contracts.
+`root_export_count` may be larger because it includes compatibility exports from
+`agent_core.__all__`; those exports are not the documented root SDK surface.
 
 `agent_core.evaluate_agent_core_api_lifecycle()` adds the API lifecycle gate. It
 checks the same package manifest against the stable/MVP/experimental/deprecated
@@ -1132,6 +1142,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Run failure summary trace/eval | MVP implemented |
 | SDK capability/boundary manifest | MVP implemented |
 | SDK replacement-readiness profile | MVP implemented |
+| SDK public/contract/compat API split | MVP implemented |
 | SDK public API stability contract | MVP implemented |
 | SDK API lifecycle policy | MVP implemented |
 | SDK runtime boundary audit | MVP implemented |

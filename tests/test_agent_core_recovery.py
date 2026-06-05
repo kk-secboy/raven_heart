@@ -42,5 +42,6 @@ def test_recovery_acceptance_is_declared_in_sdk_readiness_profile() -> None:
     readiness = agent_core.evaluate_agent_core_readiness().manifest()
 
     assert "recovery_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreRecoveryHarness" in readiness["matched"]["public_api"]
-    assert "run_agent_core_recovery_acceptance" in readiness["matched"]["public_api"]
+    assert "AgentCoreRecoveryHarness" in agent_core.__all__
+    assert "run_agent_core_recovery_acceptance" in agent_core.__all__
+    assert "AgentCoreRecoveryHarness" not in readiness["matched"]["public_api"]

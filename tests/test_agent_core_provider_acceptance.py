@@ -70,9 +70,8 @@ def test_provider_acceptance_is_declared_in_readiness_and_api_contract() -> None
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "provider_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreProviderAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreProviderAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_provider_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreProviderAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreProviderAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_provider_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreProviderAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreProviderAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_provider_acceptance" in agent_core.__all__
+    assert "AgentCoreProviderAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreProviderAcceptanceHarness" not in stability["present_stable_api"]

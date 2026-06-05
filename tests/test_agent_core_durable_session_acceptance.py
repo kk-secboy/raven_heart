@@ -45,9 +45,12 @@ def test_durable_session_acceptance_is_declared_in_readiness_and_api_contract() 
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "durable_session_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreDurableSessionAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreDurableSessionAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_durable_session_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreDurableSessionAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreDurableSessionAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_durable_session_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreDurableSessionAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreDurableSessionAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_durable_session_acceptance" in agent_core.__all__
+    assert "AgentCoreDurableSessionAcceptanceHarness" not in readiness["matched"][
+        "public_api"
+    ]
+    assert "AgentCoreDurableSessionAcceptanceHarness" not in stability[
+        "present_stable_api"
+    ]

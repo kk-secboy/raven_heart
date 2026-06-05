@@ -37,9 +37,8 @@ def test_trace_replay_acceptance_is_declared_in_readiness_and_api_contract() -> 
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "trace_replay_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreTraceReplayAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreTraceReplayAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_trace_replay_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreTraceReplayAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreTraceReplayAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_trace_replay_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreTraceReplayAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreTraceReplayAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_trace_replay_acceptance" in agent_core.__all__
+    assert "AgentCoreTraceReplayAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreTraceReplayAcceptanceHarness" not in stability["present_stable_api"]

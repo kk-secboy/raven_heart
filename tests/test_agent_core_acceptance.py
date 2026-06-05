@@ -37,6 +37,9 @@ async def test_agent_core_acceptance_reports_readiness_blockers() -> None:
     sdk_manifest["public_api"] = [
         name for name in sdk_manifest["public_api"] if name != "AgentRunner"
     ]
+    sdk_manifest["contract_api"] = [
+        name for name in sdk_manifest["contract_api"] if name != "AgentRunner"
+    ]
 
     report = await agent_core.AgentCoreAcceptanceHarness().run(sdk_manifest=sdk_manifest)
     manifest = report.manifest()

@@ -46,9 +46,12 @@ def test_orchestration_acceptance_is_declared_in_readiness_and_api_contract() ->
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "orchestration_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreOrchestrationAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreOrchestrationAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_orchestration_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreOrchestrationAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreOrchestrationAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_orchestration_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreOrchestrationAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreOrchestrationAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_orchestration_acceptance" in agent_core.__all__
+    assert "AgentCoreOrchestrationAcceptanceHarness" not in readiness["matched"][
+        "public_api"
+    ]
+    assert "AgentCoreOrchestrationAcceptanceHarness" not in stability[
+        "present_stable_api"
+    ]

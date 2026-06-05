@@ -43,9 +43,8 @@ def test_lifecycle_acceptance_is_declared_in_readiness_and_api_contract() -> Non
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "lifecycle_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreLifecycleAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreLifecycleAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_lifecycle_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreLifecycleAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreLifecycleAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_lifecycle_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreLifecycleAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreLifecycleAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_lifecycle_acceptance" in agent_core.__all__
+    assert "AgentCoreLifecycleAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreLifecycleAcceptanceHarness" not in stability["present_stable_api"]

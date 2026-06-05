@@ -41,9 +41,8 @@ def test_native_tool_acceptance_is_declared_in_readiness_and_api_contract() -> N
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "native_tool_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreNativeToolAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreNativeToolAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_native_tool_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreNativeToolAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreNativeToolAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_native_tool_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreNativeToolAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreNativeToolAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_native_tool_acceptance" in agent_core.__all__
+    assert "AgentCoreNativeToolAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreNativeToolAcceptanceHarness" not in stability["present_stable_api"]

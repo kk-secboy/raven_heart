@@ -65,13 +65,9 @@ def test_redaction_is_declared_in_readiness_and_api_contract() -> None:
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "redaction_contracts" in readiness["matched"]["capabilities"]
-    assert "RedactionPolicy" in readiness["matched"]["public_api"]
-    assert "RedactionResult" in readiness["matched"]["public_api"]
-    assert "AgentCoreRedactionAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreRedactionAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_redaction_acceptance" in readiness["matched"]["public_api"]
-    assert "RedactionPolicy" in stability["present_stable_api"]
-    assert "RedactionResult" in stability["present_stable_api"]
-    assert "AgentCoreRedactionAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreRedactionAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_redaction_acceptance" in stability["present_stable_api"]
+    assert "RedactionPolicy" in agent_core.__all__
+    assert "RedactionResult" in agent_core.__all__
+    assert "AgentCoreRedactionAcceptanceHarness" in agent_core.__all__
+    assert "run_agent_core_redaction_acceptance" in agent_core.__all__
+    assert "RedactionPolicy" not in readiness["matched"]["public_api"]
+    assert "RedactionPolicy" not in stability["present_stable_api"]

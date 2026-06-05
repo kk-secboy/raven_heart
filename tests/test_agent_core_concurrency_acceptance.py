@@ -42,9 +42,8 @@ def test_concurrency_acceptance_is_declared_in_readiness_and_api_contract() -> N
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "concurrency_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreConcurrencyAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreConcurrencyAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_concurrency_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreConcurrencyAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreConcurrencyAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_concurrency_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreConcurrencyAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreConcurrencyAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_concurrency_acceptance" in agent_core.__all__
+    assert "AgentCoreConcurrencyAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreConcurrencyAcceptanceHarness" not in stability["present_stable_api"]

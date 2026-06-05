@@ -331,6 +331,8 @@ from agent_core.manifest import (
     AgentCoreReadinessReport,
     AgentCoreRuntimeBoundary,
     AgentCoreSDKManifest,
+    ROOT_PUBLIC_API as _ROOT_PUBLIC_API,
+    STABLE_PUBLIC_API as _STABLE_PUBLIC_API,
     agent_core_api_contract as _build_agent_core_api_contract,
     agent_core_sdk_manifest as _build_agent_core_sdk_manifest,
     agent_core_replacement_readiness_profile,
@@ -1268,7 +1270,9 @@ def agent_core_sdk_manifest(
     """Return the package-level SDK manifest with the current public API list."""
 
     return _build_agent_core_sdk_manifest(
-        public_api=tuple(__all__),
+        public_api=_ROOT_PUBLIC_API,
+        contract_api=_STABLE_PUBLIC_API,
+        root_exports=tuple(__all__),
         package_version=package_version,
         metadata=metadata,
     )
@@ -1280,7 +1284,7 @@ def agent_core_api_contract(
 ) -> AgentCoreAPIContract:
     """Return the package-root public API stability contract."""
 
-    return _build_agent_core_api_contract(tuple(__all__), metadata=metadata)
+    return _build_agent_core_api_contract(_STABLE_PUBLIC_API, metadata=metadata)
 
 
 def evaluate_agent_core_api_stability(

@@ -45,9 +45,8 @@ def test_guardrail_acceptance_is_declared_in_readiness_and_api_contract() -> Non
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "guardrail_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreGuardrailAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreGuardrailAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_guardrail_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreGuardrailAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreGuardrailAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_guardrail_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreGuardrailAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreGuardrailAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_guardrail_acceptance" in agent_core.__all__
+    assert "AgentCoreGuardrailAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreGuardrailAcceptanceHarness" not in stability["present_stable_api"]

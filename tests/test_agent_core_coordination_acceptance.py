@@ -44,9 +44,8 @@ def test_coordination_acceptance_is_declared_in_readiness_and_api_contract() -> 
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "coordination_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreCoordinationAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreCoordinationAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_coordination_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreCoordinationAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreCoordinationAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_coordination_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreCoordinationAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreCoordinationAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_coordination_acceptance" in agent_core.__all__
+    assert "AgentCoreCoordinationAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreCoordinationAcceptanceHarness" not in stability["present_stable_api"]

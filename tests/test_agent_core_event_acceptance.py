@@ -36,9 +36,8 @@ def test_event_acceptance_is_declared_in_readiness_and_api_contract() -> None:
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "event_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreEventAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreEventAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_event_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreEventAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreEventAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_event_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreEventAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreEventAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_event_acceptance" in agent_core.__all__
+    assert "AgentCoreEventAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreEventAcceptanceHarness" not in stability["present_stable_api"]

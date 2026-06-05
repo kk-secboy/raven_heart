@@ -37,6 +37,11 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["lifecycle_acceptance"]["ready"] is True
     assert manifest["native_tool_acceptance"]["ready"] is True
     assert manifest["packaging_acceptance"]["ready"] is True
+    assert manifest["packaging_acceptance"]["public_api"]["public_api_count"] <= 40
+    assert manifest["packaging_acceptance"]["public_api"]["contract_api_count"] <= 90
+    assert manifest["packaging_acceptance"]["public_api"]["public_api_count"] < manifest[
+        "packaging_acceptance"
+    ]["public_api"]["root_export_count"]
     assert manifest["provider_acceptance"]["ready"] is True
     assert manifest["provider_conformance"]["ready"] is True
     assert manifest["provider_resilience_acceptance"]["ready"] is True
@@ -208,6 +213,9 @@ async def test_agent_core_validation_suite_blocks_missing_stable_api() -> None:
     sdk_manifest["public_api"] = [
         name for name in sdk_manifest["public_api"] if name != "AgentRunner"
     ]
+    sdk_manifest["contract_api"] = [
+        name for name in sdk_manifest["contract_api"] if name != "AgentRunner"
+    ]
 
     report = await agent_core.AgentCoreValidationSuite().run(sdk_manifest=sdk_manifest)
     manifest = report.manifest()
@@ -220,6 +228,81 @@ async def test_agent_core_validation_suite_blocks_missing_stable_api() -> None:
 
 
 def test_validation_suite_is_declared_in_readiness_and_api_contract() -> None:
+    import agent_core
+
+    readiness = agent_core.evaluate_agent_core_readiness().manifest()
+    stability = agent_core.evaluate_agent_core_api_stability().manifest()
+    sdk_manifest = agent_core.agent_core_sdk_manifest().manifest()
+
+    capability_names = set(readiness["matched"]["capabilities"])
+    readiness_api = set(readiness["matched"]["public_api"])
+    stable_api = set(stability["present_stable_api"])
+    expected_capabilities = {
+        "approval_acceptance_harness",
+        "budget_acceptance_harness",
+        "capability_governance_acceptance_harness",
+        "context_acceptance_harness",
+        "context_window_report",
+        "orchestration_acceptance_harness",
+        "packaging_acceptance_harness",
+        "provider_contract_profile",
+        "task_contract_profile",
+        "trace_export_bundle",
+        "trace_replay_acceptance_harness",
+        "validation_suite",
+    }
+    expected_contract_api = {
+        "AgentCoreAPIContract",
+        "AgentCoreProviderContractProfile",
+        "AgentCoreRuntimeBoundaryReport",
+        "AgentCoreSDKManifest",
+        "AgentCoreTaskContractProfile",
+        "AgentRunner",
+        "AgentSession",
+        "AgentTaskContract",
+        "ApprovalCenter",
+        "ContextWindowBuilder",
+        "LLMProviderCenter",
+        "LLMProviderPort",
+        "MemoryCenter",
+        "MCPCenter",
+        "PromptIR",
+        "ReActExecutor",
+        "StorageBackendCatalog",
+        "ToolCenter",
+        "TraceEvalHarness",
+        "TraceExportBuilder",
+        "TraceReplayHarness",
+        "agent_core_api_contract",
+        "agent_core_provider_contract_profile",
+        "agent_core_task_contract_profile",
+        "evaluate_agent_core_api_lifecycle",
+        "evaluate_agent_core_readiness",
+        "evaluate_agent_core_runtime_boundary",
+        "run_agent_core_validation",
+    }
+    compatibility_only = {
+        "AgentCorePackagingAcceptanceHarness",
+        "AgentCoreTraceReplayAcceptanceHarness",
+        "AgentCoreValidationSuite",
+        "MarkdownTimelineStore",
+        "SQLiteTimelineStore",
+        "run_agent_core_packaging_acceptance",
+        "run_agent_core_trace_replay_acceptance",
+    }
+
+    assert expected_capabilities <= capability_names
+    assert expected_contract_api <= readiness_api
+    assert expected_contract_api <= stable_api
+    assert compatibility_only.isdisjoint(readiness_api)
+    assert compatibility_only.isdisjoint(stable_api)
+    assert compatibility_only <= set(agent_core.__all__)
+    assert sdk_manifest["public_api_count"] <= 40
+    assert sdk_manifest["contract_api_count"] <= 90
+    assert sdk_manifest["root_export_count"] > sdk_manifest["contract_api_count"]
+
+
+def _legacy_validation_suite_wide_api_contract_assertions() -> None:
     import agent_core
 
     readiness = agent_core.evaluate_agent_core_readiness().manifest()

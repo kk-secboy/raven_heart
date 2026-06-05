@@ -41,9 +41,8 @@ def test_context_acceptance_is_declared_in_readiness_and_api_contract() -> None:
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "context_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreContextAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreContextAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_context_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreContextAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreContextAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_context_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreContextAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreContextAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_context_acceptance" in agent_core.__all__
+    assert "AgentCoreContextAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreContextAcceptanceHarness" not in stability["present_stable_api"]

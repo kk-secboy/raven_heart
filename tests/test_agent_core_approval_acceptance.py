@@ -37,9 +37,8 @@ def test_approval_acceptance_is_declared_in_readiness_and_api_contract() -> None
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "approval_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreApprovalAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreApprovalAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_approval_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreApprovalAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreApprovalAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_approval_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreApprovalAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreApprovalAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_approval_acceptance" in agent_core.__all__
+    assert "AgentCoreApprovalAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreApprovalAcceptanceHarness" not in stability["present_stable_api"]

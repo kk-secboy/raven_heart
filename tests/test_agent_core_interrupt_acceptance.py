@@ -46,9 +46,8 @@ def test_interrupt_acceptance_is_declared_in_readiness_and_api_contract() -> Non
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "interrupt_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreInterruptAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreInterruptAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_interrupt_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreInterruptAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreInterruptAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_interrupt_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreInterruptAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreInterruptAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_interrupt_acceptance" in agent_core.__all__
+    assert "AgentCoreInterruptAcceptanceHarness" not in readiness["matched"]["public_api"]
+    assert "AgentCoreInterruptAcceptanceHarness" not in stability["present_stable_api"]

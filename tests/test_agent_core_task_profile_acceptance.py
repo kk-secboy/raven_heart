@@ -43,9 +43,12 @@ def test_task_profile_acceptance_is_declared_in_readiness_and_api_contract() -> 
     stability = agent_core.evaluate_agent_core_api_stability().manifest()
 
     assert "task_profile_acceptance_harness" in readiness["matched"]["capabilities"]
-    assert "AgentCoreTaskProfileAcceptanceHarness" in readiness["matched"]["public_api"]
-    assert "AgentCoreTaskProfileAcceptanceReport" in readiness["matched"]["public_api"]
-    assert "run_agent_core_task_profile_acceptance" in readiness["matched"]["public_api"]
-    assert "AgentCoreTaskProfileAcceptanceHarness" in stability["present_stable_api"]
-    assert "AgentCoreTaskProfileAcceptanceReport" in stability["present_stable_api"]
-    assert "run_agent_core_task_profile_acceptance" in stability["present_stable_api"]
+    assert "AgentCoreTaskProfileAcceptanceHarness" in agent_core.__all__
+    assert "AgentCoreTaskProfileAcceptanceReport" in agent_core.__all__
+    assert "run_agent_core_task_profile_acceptance" in agent_core.__all__
+    assert "AgentCoreTaskProfileAcceptanceHarness" not in readiness["matched"][
+        "public_api"
+    ]
+    assert "AgentCoreTaskProfileAcceptanceHarness" not in stability[
+        "present_stable_api"
+    ]

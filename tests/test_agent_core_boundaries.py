@@ -489,7 +489,13 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
 
     assert manifest["schema_version"] == "agent-core-sdk-manifest/v1"
     assert manifest["package"] == "raven-heart"
-    assert manifest["public_api_count"] == len(set(agent_core.__all__))
+    assert manifest["root_export_count"] == len(set(agent_core.__all__))
+    assert manifest["public_api_count"] <= 40
+    assert manifest["public_api_count"] < manifest["root_export_count"]
+    assert manifest["contract_api_count"] >= manifest["public_api_count"]
+    assert manifest["contract_api_count"] <= 90
+    assert set(manifest["public_api"]) <= set(agent_core.__all__)
+    assert set(manifest["contract_api"]) <= set(agent_core.__all__)
     assert manifest["api_contract"]["schema_version"] == "agent-core-api-contract/v1"
     assert "AgentRunner" in manifest["api_contract"]["stable_api"]
     assert "AgentRunner" in manifest["public_api"]
@@ -642,6 +648,9 @@ def test_agent_core_readiness_report_blocks_missing_required_contracts() -> None
     sdk_manifest["public_api"] = [
         name for name in sdk_manifest["public_api"] if name != "ReActExecutor"
     ]
+    sdk_manifest["contract_api"] = [
+        name for name in sdk_manifest["contract_api"] if name != "ReActExecutor"
+    ]
 
     report = agent_core.agent_core_replacement_readiness_profile().evaluate(sdk_manifest)
     issue_codes = {issue["code"] for issue in report.manifest()["issues"]}
@@ -668,7 +677,7 @@ def test_agent_core_api_stability_report_tracks_stable_package_root() -> None:
     assert manifest["ready"] is True
     assert manifest["missing_stable_api"] == []
     assert "AgentRunner" in manifest["present_stable_api"]
-    assert manifest["mvp_public_api_count"] > 0
+    assert manifest["mvp_public_api_count"] == 0
 
 
 def test_agent_core_api_lifecycle_report_tracks_package_policy() -> None:
@@ -685,7 +694,7 @@ def test_agent_core_api_lifecycle_report_tracks_package_policy() -> None:
     assert manifest["version"] == sdk_manifest["version"]
     assert manifest["pre_1_0"] is True
     assert manifest["stable_api_count"] > 0
-    assert manifest["mvp_api_count"] > 0
+    assert manifest["mvp_api_count"] == 0
     assert manifest["unknown_public_api_count"] == 0
     assert manifest["policy"]["schema_version"] == "agent-core-api-lifecycle-policy/v1"
     assert manifest["policy"]["allow_mvp_breaking_changes_before_1"] is True
@@ -699,10 +708,13 @@ def test_agent_core_api_lifecycle_report_blocks_missing_stable_api() -> None:
     sdk_manifest["public_api"] = [
         name for name in sdk_manifest["public_api"] if name != "AgentRunner"
     ]
+    sdk_manifest["contract_api"] = [
+        name for name in sdk_manifest["contract_api"] if name != "AgentRunner"
+    ]
 
     report = evaluate_agent_core_api_lifecycle(
         sdk_manifest,
-        contract=agent_core.AgentCoreAPIContract(),
+        contract=agent_core.agent_core_api_contract(),
     )
     manifest = report.manifest()
 
@@ -720,10 +732,13 @@ def test_agent_core_api_stability_report_blocks_missing_stable_api() -> None:
     sdk_manifest["public_api"] = [
         name for name in sdk_manifest["public_api"] if name != "AgentRunner"
     ]
+    sdk_manifest["contract_api"] = [
+        name for name in sdk_manifest["contract_api"] if name != "AgentRunner"
+    ]
 
     report = evaluate_agent_core_api_stability(
         sdk_manifest,
-        contract=agent_core.AgentCoreAPIContract(),
+        contract=agent_core.agent_core_api_contract(),
     )
 
     assert report.ready is False
