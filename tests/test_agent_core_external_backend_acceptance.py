@@ -22,21 +22,27 @@ async def test_agent_core_external_backend_acceptance_gate_passes() -> None:
         "vector",
         "graph",
         "product",
+        "object_storage",
+        "custom",
     }
     assert manifest["run"]["status"] == "completed"
-    assert manifest["external_memory"]["call_count"] == 3
+    assert manifest["external_memory"]["call_count"] == 4
     assert set(manifest["external_memory"]["kinds"]) == {
         "postgres",
         "graph",
         "product",
+        "custom",
     }
-    assert manifest["external_context_material"]["call_count"] == 1
-    assert manifest["external_context_material"]["kinds"] == ["vector"]
+    assert manifest["external_context_material"]["call_count"] == 2
+    assert set(manifest["external_context_material"]["kinds"]) == {
+        "vector",
+        "object_storage",
+    }
     assert manifest["storage_preflight"]["ready"] is True
     assert set(manifest["storage_preflight"]["selected_kinds"]) == {"product", "vector"}
-    assert manifest["trace_summary"]["external_storage_backend_count"] == 4
-    assert manifest["trace_summary"]["memory_search_hit_count"] == 3
-    assert manifest["trace_summary"]["context_material_selected_count"] == 1
+    assert manifest["trace_summary"]["external_storage_backend_count"] == 6
+    assert manifest["trace_summary"]["memory_search_hit_count"] == 4
+    assert manifest["trace_summary"]["context_material_selected_count"] == 2
     assert manifest["trace_eval"]["ok"] is True
 
 

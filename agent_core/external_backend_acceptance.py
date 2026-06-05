@@ -134,6 +134,15 @@ class AgentCoreExternalBackendAcceptanceHarness:
                 supports_graph=True,
                 priority=20,
             ),
+            _external_memory_store(
+                name="tenant-custom",
+                backend_kind="custom",
+                source="runtime-custom",
+                score=0.82,
+                supports_vector=False,
+                supports_graph=False,
+                priority=10,
+            ),
         )
         memory = MemoryCenter(default_store="tenant-pg")
         for store in external_memory_stores:
@@ -158,6 +167,27 @@ class AgentCoreExternalBackendAcceptanceHarness:
                 supports_vector=True,
                 tags=("auth", "semantic"),
                 location="runtime://vector/context",
+                metadata={"adapter": "runtime-owned"},
+            ),
+            ExternalContextMaterialStore(
+                _RuntimeContextMaterialAdapter(
+                    materials=(
+                        ContextMaterial(
+                            name="object-note",
+                            content="runtime object storage context: archived callback evidence",
+                            role="evidence",
+                            priority=4,
+                            metadata={"namespace": "tenant-a", "tags": ("auth", "archive")},
+                        ),
+                    )
+                ),
+                name="tenant-object-storage",
+                backend_kind="object_storage",
+                namespace="tenant-a",
+                supports_semantic=True,
+                supports_vector=False,
+                tags=("auth", "archive"),
+                location="runtime://object-storage/context",
                 metadata={"adapter": "runtime-owned"},
             ),
         )
@@ -426,8 +456,15 @@ def _external_backend_trace_spec() -> TraceEvalSpec:
         max_provider_calls=2,
         require_storage_backends=True,
         required_storage_backend_roles=("memory", "context_material"),
-        required_storage_backend_kinds=("postgres", "vector", "graph", "product"),
-        max_external_storage_backends=4,
+        required_storage_backend_kinds=(
+            "postgres",
+            "vector",
+            "graph",
+            "product",
+            "object_storage",
+            "custom",
+        ),
+        max_external_storage_backends=6,
         require_storage_backend_preflight=True,
         require_storage_backend_preflight_ready=True,
         required_storage_backend_preflight_roles=("memory", "context_material"),
@@ -473,16 +510,16 @@ def _external_backend_acceptance_issues(
                 metadata={"builtin_kinds": sorted(builtin_kinds)},
             )
         )
-    if {"postgres", "vector", "graph", "product"} - external_kinds:
+    if {"postgres", "vector", "graph", "product", "object_storage", "custom"} - external_kinds:
         issues.append(
             AgentCoreExternalBackendAcceptanceIssue(
                 source="backend_matrix",
                 code="external_backend_kind_missing",
-                message="External backend matrix did not include postgres/vector/graph/product.",
+                message="External backend matrix did not include all runtime-owned backend kinds.",
                 metadata={"external_kinds": sorted(external_kinds)},
             )
         )
-    if int(external_memory.get("call_count") or 0) < 3:
+    if int(external_memory.get("call_count") or 0) < 4:
         issues.append(
             AgentCoreExternalBackendAcceptanceIssue(
                 source="external_memory",
@@ -491,12 +528,12 @@ def _external_backend_acceptance_issues(
                 metadata={"call_count": external_memory.get("call_count")},
             )
         )
-    if external_context_material.get("call_count") != 1:
+    if int(external_context_material.get("call_count") or 0) < 2:
         issues.append(
             AgentCoreExternalBackendAcceptanceIssue(
                 source="external_context_material",
                 code="external_context_not_called",
-                message="Runtime-owned external context material adapter was not called once.",
+                message="Runtime-owned external context material adapters were not all called.",
                 metadata={"call_count": external_context_material.get("call_count")},
             )
         )
@@ -512,7 +549,7 @@ def _external_backend_acceptance_issues(
                 },
             )
         )
-    if int(trace_summary.get("external_storage_backend_count") or 0) < 4:
+    if int(trace_summary.get("external_storage_backend_count") or 0) < 6:
         issues.append(
             AgentCoreExternalBackendAcceptanceIssue(
                 source="trace_summary",

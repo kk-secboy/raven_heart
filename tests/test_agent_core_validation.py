@@ -116,8 +116,14 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
         "vector",
         "graph",
         "product",
+        "object_storage",
+        "custom",
     }
-    assert manifest["external_backend_acceptance"]["external_memory"]["call_count"] == 3
+    assert manifest["external_backend_acceptance"]["external_memory"]["call_count"] == 4
+    assert set(manifest["external_backend_acceptance"]["external_context_material"]["kinds"]) == {
+        "vector",
+        "object_storage",
+    }
     assert manifest["external_backend_acceptance"]["trace_eval"]["ok"] is True
     assert manifest["guardrail_acceptance"]["preflight"]["preflight_status"] == "blocked"
     assert manifest["guardrail_acceptance"]["policy"]["denied_subjects"] == [
