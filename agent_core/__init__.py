@@ -227,6 +227,11 @@ from agent_core.provider_conformance import (
     ProviderConformanceDeterministicProvider,
     run_agent_core_provider_conformance,
 )
+from agent_core.provider_contract import (
+    AgentCoreProviderAPIFormat,
+    AgentCoreProviderContractProfile,
+    agent_core_provider_contract_profile,
+)
 from agent_core.provider_resilience_acceptance import (
     AgentCoreProviderResilienceAcceptanceHarness,
     AgentCoreProviderResilienceAcceptanceIssue,
@@ -760,6 +765,8 @@ __all__ = [
     "AgentCoreProviderConformanceIssue",
     "AgentCoreProviderConformanceReport",
     "AgentCoreProviderConformanceSpec",
+    "AgentCoreProviderAPIFormat",
+    "AgentCoreProviderContractProfile",
     "AgentCoreProviderResilienceAcceptanceHarness",
     "AgentCoreProviderResilienceAcceptanceIssue",
     "AgentCoreProviderResilienceAcceptanceReport",
@@ -1128,6 +1135,7 @@ __all__ = [
     "default_agent_run_preflight_center",
     "default_agent_core_capabilities",
     "agent_core_api_contract",
+    "agent_core_provider_contract_profile",
     "agent_core_replacement_readiness_profile",
     "build_context_window_report",
     "evaluate_agent_core_api_stability",

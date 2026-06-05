@@ -257,6 +257,13 @@ provider fallback; streaming route selection; and prompt-safe call manifests.
 Concrete HTTP clients, credentials, rate limits, and vendor-specific adapters
 remain outside the SDK.
 
+`agent_core.agent_core_provider_contract_profile()` declares the SDK-supported
+provider adapter API shapes: direct `LLMProviderPort`, SDK transport plus codec,
+OpenAI Chat Completions-compatible codec, and custom codec transport. The
+profile also lists the core contracts each adapter depends on and the
+runtime-owned pieces that must stay outside `agent_core`, including HTTP
+clients, credentials, endpoint routing, tenant policy, and vendor SDKs.
+
 `agent_core.run_agent_core_provider_conformance()` runs provider-neutral
 conformance checks against one `LLMProviderPort`. With no provider argument it
 uses a deterministic no-network provider for SDK validation; runtimes can pass a
@@ -1092,6 +1099,7 @@ The runtime may be Raven, a code agent, an ops agent, or any other host. The run
 | Harness/ReAct core | MVP implemented |
 | Provider center | MVP implemented |
 | Provider call audit | MVP implemented |
+| Provider contract profile | MVP implemented |
 | Provider transport contract | MVP implemented |
 | OpenAI-compatible provider codec | MVP implemented |
 | Provider route plan/preflight audit | MVP implemented |

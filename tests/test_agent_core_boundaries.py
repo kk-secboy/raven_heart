@@ -111,10 +111,12 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreProviderAcceptanceHarness",
         "AgentCoreProviderAcceptanceIssue",
         "AgentCoreProviderAcceptanceReport",
+        "AgentCoreProviderAPIFormat",
         "AgentCoreProviderConformanceHarness",
         "AgentCoreProviderConformanceIssue",
         "AgentCoreProviderConformanceReport",
         "AgentCoreProviderConformanceSpec",
+        "AgentCoreProviderContractProfile",
         "AgentCoreProviderResilienceAcceptanceHarness",
         "AgentCoreProviderResilienceAcceptanceIssue",
         "AgentCoreProviderResilienceAcceptanceReport",
@@ -384,6 +386,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "default_agent_run_preflight_center",
         "default_agent_core_capabilities",
         "agent_core_api_contract",
+        "agent_core_provider_contract_profile",
         "agent_core_sdk_manifest",
         "agent_core_replacement_readiness_profile",
         "build_context_window_report",
@@ -483,6 +486,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "harness_lifecycle" in capability_names
     assert "react_loop" in capability_names
     assert "llm_provider_center" in capability_names
+    assert "provider_contract_profile" in capability_names
     assert "prompt_context_semantics" in capability_names
     assert "context_window_report" in capability_names
     assert "memory_governance" in capability_names
@@ -593,6 +597,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "interrupt_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "native_tool_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "packaging_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "provider_contract_profile" in manifest["matched"]["capabilities"]
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_conformance_harness" in manifest["matched"]["capabilities"]
     assert "provider_resilience_acceptance_harness" in manifest["matched"]["capabilities"]
