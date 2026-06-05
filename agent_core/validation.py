@@ -47,6 +47,7 @@ from agent_core.state_bundle_acceptance import run_agent_core_state_bundle_accep
 from agent_core.storage_acceptance import run_agent_core_storage_acceptance
 from agent_core.task_profile_acceptance import run_agent_core_task_profile_acceptance
 from agent_core.trace_export_acceptance import run_agent_core_trace_export_acceptance
+from agent_core.trace_replay_acceptance import run_agent_core_trace_replay_acceptance
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,7 @@ class AgentCoreValidationReport:
     storage_acceptance: dict[str, Any] = field(default_factory=dict)
     task_profile_acceptance: dict[str, Any] = field(default_factory=dict)
     trace_export_acceptance: dict[str, Any] = field(default_factory=dict)
+    trace_replay_acceptance: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
     resume: dict[str, Any] = field(default_factory=dict)
     issues: tuple[AgentCoreValidationIssue, ...] = ()
@@ -212,6 +214,7 @@ class AgentCoreValidationReport:
             "storage_acceptance": dict(self.storage_acceptance),
             "task_profile_acceptance": dict(self.task_profile_acceptance),
             "trace_export_acceptance": dict(self.trace_export_acceptance),
+            "trace_replay_acceptance": dict(self.trace_replay_acceptance),
             "recovery": dict(self.recovery),
             "resume": dict(self.resume),
             "metadata": dict(self.metadata),
@@ -377,6 +380,11 @@ class AgentCoreValidationSuite:
                 metadata={"validation_gate": "trace_export_acceptance", **dict(self.metadata)}
             )
         ).manifest()
+        trace_replay_acceptance = (
+            await run_agent_core_trace_replay_acceptance(
+                metadata={"validation_gate": "trace_replay_acceptance", **dict(self.metadata)}
+            )
+        ).manifest()
         recovery = (
             await run_agent_core_recovery_acceptance(
                 metadata={"validation_gate": "recovery", **dict(self.metadata)}
@@ -417,6 +425,7 @@ class AgentCoreValidationSuite:
             storage_acceptance=storage_acceptance,
             task_profile_acceptance=task_profile_acceptance,
             trace_export_acceptance=trace_export_acceptance,
+            trace_replay_acceptance=trace_replay_acceptance,
             recovery=recovery,
             resume=resume,
         )
@@ -452,6 +461,7 @@ class AgentCoreValidationSuite:
             storage_acceptance=storage_acceptance,
             task_profile_acceptance=task_profile_acceptance,
             trace_export_acceptance=trace_export_acceptance,
+            trace_replay_acceptance=trace_replay_acceptance,
             recovery=recovery,
             resume=resume,
             issues=issues,
@@ -591,6 +601,7 @@ def _validation_issues(
     storage_acceptance: dict[str, Any],
     task_profile_acceptance: dict[str, Any],
     trace_export_acceptance: dict[str, Any],
+    trace_replay_acceptance: dict[str, Any],
     recovery: dict[str, Any],
     resume: dict[str, Any],
 ) -> tuple[AgentCoreValidationIssue, ...]:
@@ -691,6 +702,11 @@ def _validation_issues(
         issues,
         source="trace_export_acceptance",
         report=trace_export_acceptance,
+    )
+    _extend_report_issues(
+        issues,
+        source="trace_replay_acceptance",
+        report=trace_replay_acceptance,
     )
     _extend_report_issues(issues, source="recovery", report=recovery)
     _extend_report_issues(issues, source="resume", report=resume)

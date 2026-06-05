@@ -206,6 +206,8 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "AgentCoreTaskProfileAcceptanceReport",
     "AgentCoreTraceExportAcceptanceHarness",
     "AgentCoreTraceExportAcceptanceReport",
+    "AgentCoreTraceReplayAcceptanceHarness",
+    "AgentCoreTraceReplayAcceptanceReport",
     "AgentCoreRuntimeBoundaryReport",
     "AgentCoreValidationSuite",
     "AgentCoreValidationReport",
@@ -248,6 +250,7 @@ STABLE_PUBLIC_API: tuple[str, ...] = (
     "run_agent_core_resume_acceptance",
     "run_agent_core_storage_acceptance",
     "run_agent_core_task_profile_acceptance",
+    "run_agent_core_trace_replay_acceptance",
     "run_agent_core_validation",
 )
 
@@ -835,6 +838,18 @@ def default_agent_core_capabilities() -> tuple[AgentCoreCapability, ...]:
             public_contracts=("AgentRunTraceBundle", "TraceReplayHarness", "TraceEvalHarness"),
         ),
         AgentCoreCapability(
+            name="trace_replay_acceptance_harness",
+            layer="eval",
+            summary="Pure-SDK trace replay compatibility, replay-diff drift detection, stored trace eval, and legacy trace checks.",
+            public_contracts=(
+                "AgentCoreTraceReplayAcceptanceHarness",
+                "AgentCoreTraceReplayAcceptanceReport",
+            ),
+            runtime_notes=(
+                "Runtime-specific trace retention, dashboards, and migration backfills stay outside core.",
+            ),
+        ),
+        AgentCoreCapability(
             name="trace_export_bundle",
             layer="trace",
             summary="Prompt-safe trace export bundles with redaction audit, byte counts, and payload digests.",
@@ -1153,6 +1168,7 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "runtime_boundary_audit",
             "policy_approval",
             "trace_replay_eval",
+            "trace_replay_acceptance_harness",
             "trace_export_bundle",
             "replacement_acceptance_harness",
             "context_acceptance_harness",
@@ -1221,6 +1237,9 @@ def agent_core_replacement_readiness_profile() -> AgentCoreReadinessProfile:
             "TraceEvalCase",
             "TraceEvalSuite",
             "TraceEvalSuiteRunner",
+            "AgentCoreTraceReplayAcceptanceHarness",
+            "AgentCoreTraceReplayAcceptanceReport",
+            "run_agent_core_trace_replay_acceptance",
             "AgentCoreSDKManifest",
             "AgentCoreAPIContract",
             "AgentCoreAPILifecyclePolicy",

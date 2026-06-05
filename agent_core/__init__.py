@@ -619,6 +619,12 @@ from agent_core.trace_export_acceptance import (
     AgentCoreTraceExportAcceptanceReport,
     run_agent_core_trace_export_acceptance,
 )
+from agent_core.trace_replay_acceptance import (
+    AgentCoreTraceReplayAcceptanceHarness,
+    AgentCoreTraceReplayAcceptanceIssue,
+    AgentCoreTraceReplayAcceptanceReport,
+    run_agent_core_trace_replay_acceptance,
+)
 from agent_core.validation import (
     AgentCoreRuntimeBoundaryHit,
     AgentCoreRuntimeBoundaryReport,
@@ -767,6 +773,9 @@ __all__ = [
     "AgentCoreTraceExportAcceptanceHarness",
     "AgentCoreTraceExportAcceptanceIssue",
     "AgentCoreTraceExportAcceptanceReport",
+    "AgentCoreTraceReplayAcceptanceHarness",
+    "AgentCoreTraceReplayAcceptanceIssue",
+    "AgentCoreTraceReplayAcceptanceReport",
     "AgentCoreValidationIssue",
     "AgentCoreValidationReport",
     "AgentCoreValidationSuite",
@@ -1194,6 +1203,7 @@ __all__ = [
     "run_agent_core_state_bundle_acceptance",
     "run_agent_core_task_profile_acceptance",
     "run_agent_core_trace_export_acceptance",
+    "run_agent_core_trace_replay_acceptance",
     "run_agent_core_validation",
 ]
 

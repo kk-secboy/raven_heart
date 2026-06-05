@@ -279,6 +279,14 @@ aggregate pass/fail status, and report missing traces as blocked cases instead
 of raising host-runtime errors. Domain datasets, regression dashboards, and
 business-specific scoring stay outside `agent_core`.
 
+`agent_core.run_agent_core_trace_replay_acceptance()` runs deterministic trace
+replay compatibility checks. It builds a current SDK run trace, evaluates the
+stored trace through `TraceEvalHarness`, verifies a normalized compatible trace
+copy has the same replay shape, proves the comparator detects a missing provider
+replay step, and confirms a legacy minimal trace can still replay and eval.
+Runtime retention, dashboarding, and historical backfill jobs stay outside the
+SDK.
+
 `agent_core.run_agent_core_storage_acceptance()` runs deterministic storage
 backend portability checks. It verifies built-in in-memory/SQLite/Markdown/none
 backend manifests across SDK store roles, SQLite and Markdown memory/context

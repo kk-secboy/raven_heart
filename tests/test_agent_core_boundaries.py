@@ -140,6 +140,9 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "AgentCoreTraceExportAcceptanceHarness",
         "AgentCoreTraceExportAcceptanceIssue",
         "AgentCoreTraceExportAcceptanceReport",
+        "AgentCoreTraceReplayAcceptanceHarness",
+        "AgentCoreTraceReplayAcceptanceIssue",
+        "AgentCoreTraceReplayAcceptanceReport",
         "AgentCoreValidationIssue",
         "AgentCoreValidationReport",
         "AgentCoreValidationSuite",
@@ -412,6 +415,7 @@ def test_agent_core_package_root_exports_stable_base_api() -> None:
         "run_agent_core_state_bundle_acceptance",
         "run_agent_core_task_profile_acceptance",
         "run_agent_core_trace_export_acceptance",
+        "run_agent_core_trace_replay_acceptance",
         "run_agent_core_validation",
         "UsageInfo",
         "ToolReplayRecord",
@@ -479,6 +483,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "api_lifecycle_policy" in capability_names
     assert "runtime_boundary_audit" in capability_names
     assert "trace_replay_eval" in capability_names
+    assert "trace_replay_acceptance_harness" in capability_names
     assert "trace_export_bundle" in capability_names
     assert "replacement_acceptance_harness" in capability_names
     assert "approval_acceptance_harness" in capability_names
@@ -500,6 +505,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert "budget_acceptance_harness" in capability_names
     assert "redaction_contracts" in capability_names
     assert "trace_export_bundle" in capability_names
+    assert "trace_replay_acceptance_harness" in capability_names
     assert "eval_suite_runner" in capability_names
     assert "state_bundle_contracts" in capability_names
     assert "storage_acceptance_harness" in capability_names
@@ -578,6 +584,7 @@ def test_agent_core_replacement_readiness_profile_passes_current_sdk_manifest() 
     assert "provider_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "provider_conformance_harness" in manifest["matched"]["capabilities"]
     assert "provider_resilience_acceptance_harness" in manifest["matched"]["capabilities"]
+    assert "trace_replay_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "budget_acceptance_harness" in manifest["matched"]["capabilities"]
     assert "redaction_contracts" in manifest["matched"]["capabilities"]
     assert "trace_export_bundle" in manifest["matched"]["capabilities"]
