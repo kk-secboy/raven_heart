@@ -19,7 +19,7 @@ ops agents, research agents, and future automation systems.
 - Tool registry and tool center.
 - Tool replay records and replay store port.
 - Skill center and skill context injection.
-- MCP center and SDK-free stdio connector.
+- MCP center contracts, inventory, tools, resources, prompts, and context export.
 - Prompt buckets and context trimming.
 - Provider-neutral prompt IR with semantic bucket trimming.
 - Prompt bucket budget policy for per-bucket caps and audit manifests.
@@ -880,7 +880,8 @@ calling any concrete model client.
   selector before prompt assembly.
 - `MCPCenterTrace` and trace eval contracts for required servers, refreshed
   servers, forbidden statuses, failed-server limits, and partial-refresh limits.
-- SDK-free stdio JSON-RPC connector.
+- MCP connector ports only; concrete stdio, SSE, HTTP, process lifecycle,
+  authentication, and deployment adapters stay outside `agent_core`.
 - `CapabilityQuery`, `CapabilityMatch`, and `CapabilityDiscoveryResult` for
   unified discovery across actions, local tools, skills, MCP tools, MCP
   resources, MCP prompts, and MCP servers.

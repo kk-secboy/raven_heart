@@ -350,7 +350,7 @@ class MCPConnectorPort(Protocol):
 
 
 class MCPCenter(ToolRuntimePort):
-    """Registry and tool-runtime adapter for MCP servers.
+    """Registry and tool-runtime bridge for MCP servers.
 
     Concrete runtimes own process management, auth, network sessions, and SDK
     details. The core center only tracks capabilities and exposes them through

@@ -383,7 +383,6 @@ from agent_core.mcp import (
     MCPToolReference,
     MCPToolSpec,
 )
-from agent_core.mcp_stdio import MCPStdioConnectorConfig, MCPStdioJSONRPCConnector
 from agent_core.policy import (
     AllowAllPolicy,
     ApprovalRequest,
@@ -1001,8 +1000,6 @@ __all__ = [
     "MCPResourceSpec",
     "MCPServerSpec",
     "MCPServerState",
-    "MCPStdioConnectorConfig",
-    "MCPStdioJSONRPCConnector",
     "MCPToolReference",
     "MCPToolSpec",
     "Plan",
