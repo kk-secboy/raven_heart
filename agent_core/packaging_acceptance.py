@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
+import os
+import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -263,17 +267,74 @@ def _examples_manifest(root: Path) -> dict[str, Any]:
     for name in expected:
         path = example_root / name
         text = path.read_text(encoding="utf-8") if path.exists() else ""
+        run = _run_example(root, path) if path.exists() else {}
         examples[name] = {
             "exists": path.exists(),
             "bytes": len(text.encode("utf-8")),
             "imports_agent_core": "agent_core" in text,
             "has_main_guard": 'if __name__ == "__main__"' in text,
+            "run": run,
         }
     return {
         "schema_version": "agent-core-package-examples-smoke/v1",
         "example_count": len([item for item in examples.values() if item["exists"]]),
         "examples": examples,
     }
+
+
+def _run_example(root: Path, path: Path) -> dict[str, Any]:
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(path.relative_to(root))],
+            cwd=str(root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except Exception as exc:
+        return {
+            "schema_version": "agent-core-package-example-run/v1",
+            "status": "failed",
+            "exit_code": -1,
+            "error": str(exc),
+        }
+    parsed = _parse_example_json(completed.stdout)
+    return {
+        "schema_version": "agent-core-package-example-run/v1",
+        "status": "completed" if completed.returncode == 0 else "failed",
+        "exit_code": completed.returncode,
+        "stdout_bytes": len(completed.stdout.encode("utf-8")),
+        "stderr_bytes": len(completed.stderr.encode("utf-8")),
+        "json_valid": bool(parsed),
+        "json_keys": sorted(str(key) for key in parsed),
+        "summary": _example_run_summary(parsed),
+    }
+
+
+def _parse_example_json(stdout: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _example_run_summary(parsed: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for key in ("status", "output", "tool_calls", "provider_requests"):
+        if key in parsed:
+            summary[key] = parsed[key]
+    if "loaded_skills" in parsed:
+        loaded = parsed.get("loaded_skills")
+        summary["loaded_skill_count"] = len(loaded) if isinstance(loaded, list) else 0
+    if "memory_hits" in parsed:
+        hits = parsed.get("memory_hits")
+        summary["memory_hit_count"] = len(hits) if isinstance(hits, list) else 0
+    return summary
 
 
 def _file_size(path: Path) -> int:
@@ -486,6 +547,26 @@ def _packaging_acceptance_issues(
                     code="example_smoke_missing",
                     message=f"Example {name} is missing required SDK smoke structure.",
                     metadata={"name": name, **dict(info)},
+                )
+            )
+            continue
+        run = info.get("run") if isinstance(info.get("run"), dict) else {}
+        if run.get("status") != "completed" or run.get("exit_code") != 0:
+            issues.append(
+                AgentCorePackagingAcceptanceIssue(
+                    source="examples",
+                    code="example_execution_failed",
+                    message=f"Example {name} did not execute successfully.",
+                    metadata={"name": name, "run": dict(run)},
+                )
+            )
+        if run.get("json_valid") is not True:
+            issues.append(
+                AgentCorePackagingAcceptanceIssue(
+                    source="examples",
+                    code="example_output_not_json",
+                    message=f"Example {name} did not emit a JSON object.",
+                    metadata={"name": name, "run": dict(run)},
                 )
             )
     return tuple(issues)

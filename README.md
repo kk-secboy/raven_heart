@@ -385,8 +385,10 @@ flows remain outside the SDK.
 readiness checks. It verifies `pyproject.toml` metadata, explicit build-system
 configuration, zero runtime dependencies, package discovery for `agent_core`,
 stable public imports, required repository files, and example entrypoint smoke
-structure. Release automation, publishing credentials, signing, and adapter
-wheels remain outside the SDK.
+structure. It also executes the pure core examples and checks their JSON output,
+so package readiness proves the installed SDK can run basic ReAct and
+memory/skill flows without runtime adapters. Release automation, publishing
+credentials, signing, and adapter wheels remain outside the SDK.
 
 `agent_core.run_agent_core_task_profile_acceptance()` runs deterministic
 cross-runtime task-profile checks. It runs code, ops, and security task profiles

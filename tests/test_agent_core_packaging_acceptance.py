@@ -52,8 +52,18 @@ async def test_agent_core_packaging_acceptance_gate_passes() -> None:
     assert all(manifest["repository_files"]["files"].values())
     assert manifest["repository_files"]["py_typed_exists"] is True
     assert manifest["examples"]["example_count"] == 2
-    assert manifest["examples"]["examples"]["minimal_react.py"]["imports_agent_core"] is True
-    assert manifest["examples"]["examples"]["memory_and_skills.py"]["has_main_guard"] is True
+    minimal = manifest["examples"]["examples"]["minimal_react.py"]
+    memory = manifest["examples"]["examples"]["memory_and_skills.py"]
+    assert minimal["imports_agent_core"] is True
+    assert memory["has_main_guard"] is True
+    assert minimal["run"]["exit_code"] == 0
+    assert minimal["run"]["json_valid"] is True
+    assert minimal["run"]["summary"]["status"] == "completed"
+    assert minimal["run"]["summary"]["tool_calls"] == 1
+    assert memory["run"]["exit_code"] == 0
+    assert memory["run"]["json_valid"] is True
+    assert memory["run"]["summary"]["loaded_skill_count"] == 1
+    assert memory["run"]["summary"]["memory_hit_count"] == 2
 
 
 def test_packaging_acceptance_is_declared_in_readiness_and_api_contract() -> None:

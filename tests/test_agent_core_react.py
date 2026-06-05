@@ -370,7 +370,7 @@ async def test_react_executor_times_out_tool_call_with_interrupt_manifest() -> N
         tool_runtime=tools,
         action_registry=ActionRegistry(),
         harness=harness,
-        config=ReActConfig(timeout_seconds=0.01),
+        config=ReActConfig(timeout_seconds=0.1),
     )
 
     result = await executor.run("slow tool", PromptIR.from_parts(dynamic="task"))
