@@ -67,6 +67,7 @@ class AgentCoreContextAcceptanceReport:
     trace_eval: dict[str, Any] = field(default_factory=dict)
     trace_summary: dict[str, Any] = field(default_factory=dict)
     context_summary: dict[str, Any] = field(default_factory=dict)
+    prompt_pressure_summary: dict[str, Any] = field(default_factory=dict)
     run_summary: dict[str, Any] = field(default_factory=dict)
     issues: tuple[AgentCoreContextAcceptanceIssue, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -90,6 +91,7 @@ class AgentCoreContextAcceptanceReport:
             "trace_eval": dict(self.trace_eval),
             "trace_summary": dict(self.trace_summary),
             "context_summary": dict(self.context_summary),
+            "prompt_pressure_summary": dict(self.prompt_pressure_summary),
             "run_summary": dict(self.run_summary),
             "metadata": dict(self.metadata),
         }
@@ -124,9 +126,15 @@ class AgentCoreContextAcceptanceHarness:
         )
         trace_summary = dict(outcome.trace_manifest.get("summary") or {})
         context_summary = _context_summary(outcome.trace_manifest)
+        prompt_pressure_summary = _prompt_pressure_summary(
+            trace=outcome.trace_manifest,
+            prompt_manifest=outcome.prompt_manifest,
+            provider_requests=provider.requests,
+        )
         issues = _context_acceptance_issues(
             trace_eval=trace_eval.manifest(),
             trace=outcome.trace_manifest,
+            prompt_pressure_summary=prompt_pressure_summary,
             provider_request_count=len(provider.requests),
         )
         status = "blocked" if any(issue.severity == "error" for issue in issues) else "ready"
@@ -135,6 +143,7 @@ class AgentCoreContextAcceptanceHarness:
             trace_eval=trace_eval.manifest(),
             trace_summary=trace_summary,
             context_summary=context_summary,
+            prompt_pressure_summary=prompt_pressure_summary,
             run_summary={
                 "run_id": outcome.result.run_id,
                 "status": outcome.result.status,
@@ -352,7 +361,7 @@ def _context_acceptance_trace_spec() -> TraceEvalSpec:
         max_prompt_semantic_trimmed=1,
         max_prompt_semantic_trim_final_bytes=1360,
         require_context_material_selection=True,
-        required_selected_context_material_names=("auth_trace", "risk_schema"),
+        required_selected_context_material_names=("auth_trace", "operator_hint", "risk_schema"),
         required_context_material_statuses=("selected", "target_denied", "count_exceeded"),
         required_context_material_targets=("timeline_open", "semi_dynamic_2"),
         max_dropped_context_materials=2,
@@ -438,10 +447,125 @@ def _context_summary(trace: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _prompt_pressure_summary(
+    *,
+    trace: dict[str, Any],
+    prompt_manifest: dict[str, Any],
+    provider_requests: list[LLMRequest],
+) -> dict[str, Any]:
+    prompt_metadata = (
+        prompt_manifest.get("metadata") if isinstance(prompt_manifest.get("metadata"), dict) else {}
+    )
+    prompt_budget = (
+        prompt_metadata.get("prompt_budget")
+        if isinstance(prompt_metadata.get("prompt_budget"), dict)
+        else {}
+    )
+    semantic_trim = (
+        trace.get("prompt_semantic_trim")
+        if isinstance(trace.get("prompt_semantic_trim"), dict)
+        else {}
+    )
+    bucket_budget = (
+        trace.get("prompt_bucket_budget")
+        if isinstance(trace.get("prompt_bucket_budget"), dict)
+        else {}
+    )
+    material_selection = (
+        trace.get("context_material_selection")
+        if isinstance(trace.get("context_material_selection"), dict)
+        else {}
+    )
+    injections = (
+        trace.get("context_injections")
+        if isinstance(trace.get("context_injections"), dict)
+        else {}
+    )
+    provider_prompt = _provider_prompt(provider_requests)
+    prompt_bytes = int(prompt_manifest.get("prompt_bytes") or 0)
+    target_bytes = int(prompt_budget.get("target_prompt_bytes") or 0)
+    selected = tuple(
+        item
+        for item in material_selection.get("selections", ())
+        if isinstance(item, dict) and item.get("selected") is True
+    )
+    dropped = tuple(
+        item
+        for item in material_selection.get("selections", ())
+        if isinstance(item, dict) and item.get("selected") is not True
+    )
+    required_fragments = {
+        "auth_trace_marker": "[context_injection:auth_trace source=trace]",
+        "risk_schema_contract": '"required":["risk","evidence","next_step"]',
+        "operator_hint_marker": "[context_injection:operator_hint source=runtime]",
+        "memory_recall_marker": "[context_injection:memory_recall source=memory]",
+        "current_task": "investigate admin auth csrf risk",
+    }
+    forbidden_fragments = {
+        "denied_static": "this must not be injected",
+        "old_dns_note": "dns propagation completed",
+        "backup_noise": "backup job completed",
+        "inventory_noise": "unrelated package inventory",
+    }
+    semantic_decisions = tuple(
+        item for item in semantic_trim.get("decisions", ()) if isinstance(item, dict)
+    )
+    injection_decisions = tuple(
+        item for item in injections.get("injections", ()) if isinstance(item, dict)
+    )
+    return {
+        "schema_version": "agent-core-context-pressure-summary/v1",
+        "prompt_bytes": prompt_bytes,
+        "target_prompt_bytes": target_bytes,
+        "within_target_bytes": bool(target_bytes and prompt_bytes <= target_bytes),
+        "provider_request_prompt_bytes": len(provider_prompt.encode("utf-8")),
+        "required_fragments_present": {
+            name: fragment in provider_prompt for name, fragment in required_fragments.items()
+        },
+        "forbidden_fragments_absent": {
+            name: fragment not in provider_prompt for name, fragment in forbidden_fragments.items()
+        },
+        "selected_context_names": sorted(str(item.get("name") or "") for item in selected),
+        "dropped_context_names": sorted(str(item.get("name") or "") for item in dropped),
+        "selected_context_bytes": sum(int(item.get("bytes") or 0) for item in selected),
+        "dropped_context_statuses": {
+            str(item.get("name") or ""): str(item.get("status") or "") for item in dropped
+        },
+        "injection_final_bytes_by_name": {
+            str(item.get("name") or ""): int(item.get("final_bytes") or 0)
+            for item in injection_decisions
+        },
+        "injection_statuses_by_name": {
+            str(item.get("name") or ""): str(item.get("status") or "")
+            for item in injection_decisions
+        },
+        "semantic_trim_roles": sorted(
+            str(item.get("role") or "")
+            for item in semantic_decisions
+            if str(item.get("status") or "") == "trimmed"
+        ),
+        "semantic_trim_dropped_units": sum(
+            int(item.get("dropped_units") or 0) for item in semantic_decisions
+        ),
+        "bucket_budget_trimmed_roles": sorted(
+            str(item.get("role") or "")
+            for item in bucket_budget.get("decisions", ())
+            if isinstance(item, dict) and str(item.get("status") or "") == "trimmed"
+        ),
+    }
+
+
+def _provider_prompt(provider_requests: list[LLMRequest]) -> str:
+    if not provider_requests:
+        return ""
+    return "\n\n".join(message.content for message in provider_requests[0].messages)
+
+
 def _context_acceptance_issues(
     *,
     trace_eval: dict[str, Any],
     trace: dict[str, Any],
+    prompt_pressure_summary: dict[str, Any],
     provider_request_count: int,
 ) -> tuple[AgentCoreContextAcceptanceIssue, ...]:
     issues: list[AgentCoreContextAcceptanceIssue] = []
@@ -475,6 +599,94 @@ def _context_acceptance_issues(
                     metadata={"actual": int(summary.get(key) or 0), "minimum": minimum},
                 )
             )
+    if prompt_pressure_summary.get("within_target_bytes") is not True:
+        issues.append(
+            AgentCoreContextAcceptanceIssue(
+                source="prompt_pressure",
+                code="prompt_not_within_target_bytes",
+                message="Final provider prompt did not fit the effective provider budget.",
+                metadata={
+                    "prompt_bytes": prompt_pressure_summary.get("prompt_bytes"),
+                    "target_prompt_bytes": prompt_pressure_summary.get("target_prompt_bytes"),
+                },
+            )
+        )
+    missing_fragments = sorted(
+        name
+        for name, present in dict(
+            prompt_pressure_summary.get("required_fragments_present") or {}
+        ).items()
+        if present is not True
+    )
+    if missing_fragments:
+        issues.append(
+            AgentCoreContextAcceptanceIssue(
+                source="prompt_pressure",
+                code="required_prompt_fragments_missing",
+                message="Final provider prompt dropped required task/context fragments.",
+                metadata={"missing": missing_fragments},
+            )
+        )
+    leaked_fragments = sorted(
+        name
+        for name, absent in dict(
+            prompt_pressure_summary.get("forbidden_fragments_absent") or {}
+        ).items()
+        if absent is not True
+    )
+    if leaked_fragments:
+        issues.append(
+            AgentCoreContextAcceptanceIssue(
+                source="prompt_pressure",
+                code="forbidden_prompt_fragments_present",
+                message="Final provider prompt retained denied or irrelevant context fragments.",
+                metadata={"present": leaked_fragments},
+            )
+        )
+    selected_names = set(prompt_pressure_summary.get("selected_context_names") or ())
+    required_selected = {"auth_trace", "operator_hint", "risk_schema"}
+    if not required_selected <= selected_names:
+        issues.append(
+            AgentCoreContextAcceptanceIssue(
+                source="prompt_pressure",
+                code="selected_context_names_missing",
+                message="Context pressure scenario did not preserve all required selected materials.",
+                metadata={
+                    "required": sorted(required_selected),
+                    "actual": sorted(selected_names),
+                },
+            )
+        )
+    dropped_statuses = dict(prompt_pressure_summary.get("dropped_context_statuses") or {})
+    if dropped_statuses.get("denied_static") != "target_denied":
+        issues.append(
+            AgentCoreContextAcceptanceIssue(
+                source="prompt_pressure",
+                code="denied_static_not_rejected",
+                message="Static/system context material was not rejected before injection.",
+                metadata={"dropped_context_statuses": dropped_statuses},
+            )
+        )
+    if dropped_statuses.get("old_dns_note") != "count_exceeded":
+        issues.append(
+            AgentCoreContextAcceptanceIssue(
+                source="prompt_pressure",
+                code="irrelevant_context_not_dropped",
+                message="Low-priority irrelevant context material was not dropped under pressure.",
+                metadata={"dropped_context_statuses": dropped_statuses},
+            )
+        )
+    if int(prompt_pressure_summary.get("semantic_trim_dropped_units") or 0) <= 0:
+        issues.append(
+            AgentCoreContextAcceptanceIssue(
+                source="prompt_pressure",
+                code="semantic_trim_did_not_drop_units",
+                message="Semantic trim did not report dropping any lower-value units.",
+                metadata={
+                    "semantic_trim_roles": prompt_pressure_summary.get("semantic_trim_roles"),
+                },
+            )
+        )
     if provider_request_count != 1:
         issues.append(
             AgentCoreContextAcceptanceIssue(

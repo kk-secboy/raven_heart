@@ -12,6 +12,7 @@ async def test_agent_core_context_acceptance_scenario_passes_context_gate() -> N
     )
     manifest = report.manifest()
     summary = manifest["context_summary"]
+    pressure = manifest["prompt_pressure_summary"]
 
     assert manifest["schema_version"] == "agent-core-context-acceptance-report/v1"
     assert manifest["status"] == "ready"
@@ -32,6 +33,35 @@ async def test_agent_core_context_acceptance_scenario_passes_context_gate() -> N
     assert summary["prompt_semantic_trimmed_count"] == 1
     assert summary["semantic_trim_statuses"]["timeline_open"] == "trimmed"
     assert summary["bucket_budget_statuses"]["semi_dynamic_1"] == "trimmed"
+    assert pressure["schema_version"] == "agent-core-context-pressure-summary/v1"
+    assert pressure["within_target_bytes"] is True
+    assert pressure["prompt_bytes"] <= pressure["target_prompt_bytes"]
+    assert pressure["provider_request_prompt_bytes"] == pressure["prompt_bytes"]
+    assert pressure["selected_context_names"] == [
+        "auth_trace",
+        "operator_hint",
+        "risk_schema",
+    ]
+    assert pressure["dropped_context_statuses"] == {
+        "denied_static": "target_denied",
+        "old_dns_note": "count_exceeded",
+    }
+    assert pressure["required_fragments_present"] == {
+        "auth_trace_marker": True,
+        "current_task": True,
+        "memory_recall_marker": True,
+        "operator_hint_marker": True,
+        "risk_schema_contract": True,
+    }
+    assert pressure["forbidden_fragments_absent"] == {
+        "backup_noise": True,
+        "denied_static": True,
+        "inventory_noise": True,
+        "old_dns_note": True,
+    }
+    assert pressure["semantic_trim_roles"] == ["timeline_open"]
+    assert pressure["semantic_trim_dropped_units"] > 0
+    assert pressure["bucket_budget_trimmed_roles"] == ["semi_dynamic_1"]
 
 
 def test_context_acceptance_is_declared_in_readiness_and_api_contract() -> None:
