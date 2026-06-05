@@ -75,6 +75,7 @@ class AgentCoreProviderConformanceReport:
 
     status: str
     spec: dict[str, Any] = field(default_factory=dict)
+    check_matrix: dict[str, Any] = field(default_factory=dict)
     text: dict[str, Any] = field(default_factory=dict)
     streaming: dict[str, Any] = field(default_factory=dict)
     json_mode: dict[str, Any] = field(default_factory=dict)
@@ -99,6 +100,7 @@ class AgentCoreProviderConformanceReport:
             "error_count": self.error_count,
             "issues": [issue.manifest() for issue in self.issues],
             "spec": dict(self.spec),
+            "check_matrix": dict(self.check_matrix),
             "text": dict(self.text),
             "streaming": dict(self.streaming),
             "json_mode": dict(self.json_mode),
@@ -158,6 +160,7 @@ class AgentCoreProviderConformanceHarness:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     async def run(self) -> AgentCoreProviderConformanceReport:
+        provider_supplied = self.provider is not None
         provider = self.provider or ProviderConformanceDeterministicProvider()
         text = await _check_text(provider, self.spec) if self.spec.require_text else _skipped("text")
         streaming = (
@@ -183,9 +186,19 @@ class AgentCoreProviderConformanceHarness:
             tool_calls=tool_calls,
         )
         status = "blocked" if any(issue.severity == "error" for issue in issues) else "ready"
+        check_matrix = _provider_conformance_check_matrix(
+            spec=self.spec,
+            provider_supplied=provider_supplied,
+            text=text,
+            streaming=streaming,
+            json_mode=json_mode,
+            tool_calls=tool_calls,
+            issues=issues,
+        )
         return AgentCoreProviderConformanceReport(
             status=status,
             spec=self.spec.manifest(),
+            check_matrix=check_matrix,
             text=text,
             streaming=streaming,
             json_mode=json_mode,
@@ -444,6 +457,84 @@ def _provider_conformance_issues(
                 )
             )
     return tuple(issues)
+
+
+def _provider_conformance_check_matrix(
+    *,
+    spec: AgentCoreProviderConformanceSpec,
+    provider_supplied: bool,
+    text: dict[str, Any],
+    streaming: dict[str, Any],
+    json_mode: dict[str, Any],
+    tool_calls: dict[str, Any],
+    issues: tuple[AgentCoreProviderConformanceIssue, ...],
+) -> dict[str, Any]:
+    checks = {
+        "text": {
+            "required": spec.require_text,
+            "status": str(text.get("status") or ""),
+        },
+        "streaming": {
+            "required": spec.require_streaming,
+            "status": str(streaming.get("status") or ""),
+        },
+        "json_mode": {
+            "required": spec.require_json_mode,
+            "status": str(json_mode.get("status") or ""),
+        },
+        "tool_calls": {
+            "required": spec.require_tool_calls,
+            "status": str(tool_calls.get("status") or ""),
+        },
+    }
+    required_checks = tuple(name for name, item in checks.items() if item["required"])
+    optional_checks = tuple(name for name, item in checks.items() if not item["required"])
+    completed_required_checks = tuple(
+        name
+        for name, item in checks.items()
+        if item["required"] and item["status"] == "completed"
+    )
+    failed_required_checks = tuple(
+        name
+        for name, item in checks.items()
+        if item["required"] and item["status"] != "completed"
+    )
+    skipped_checks = tuple(
+        name for name, item in checks.items() if item["status"] == "skipped"
+    )
+    error_issue_codes = tuple(
+        issue.code for issue in issues if issue.severity == "error"
+    )
+    return {
+        "schema_version": "agent-core-provider-conformance-check-matrix/v1",
+        "provider_supplied": provider_supplied,
+        "provider_source": "external" if provider_supplied else "deterministic",
+        "required_checks": list(required_checks),
+        "optional_checks": list(optional_checks),
+        "completed_required_checks": list(completed_required_checks),
+        "failed_required_checks": list(failed_required_checks),
+        "skipped_checks": list(skipped_checks),
+        "error_issue_codes": list(error_issue_codes),
+        "ready_for_real_provider_smoke": (
+            provider_supplied and not failed_required_checks and not error_issue_codes
+        ),
+        "core_contracts": [
+            "LLMProviderPort.complete",
+            "LLMProviderPort.stream",
+            "LLMRequest",
+            "LLMResponse",
+            "LLMStreamEvent",
+            "LLMToolCall",
+        ],
+        "runtime_responsibilities": [
+            "HTTP transport or vendor SDK client",
+            "API keys and secret loading",
+            "base URL, deployment, and model alias routing",
+            "vendor rate limits and network retries",
+            "tenant policy and production circuit breakers",
+        ],
+        "checks": checks,
+    }
 
 
 def _require_completed(

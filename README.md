@@ -302,6 +302,10 @@ real provider adapter when credentials are available and check text completion,
 streaming, JSON mode, and native tool-call behavior through the same report
 shape. HTTP clients, API keys, deployment routing, and rate-limit handling stay
 outside `agent_core`.
+The report includes a `check_matrix` with required, optional, skipped, completed,
+and failed checks; it also records whether the provider was externally supplied,
+the SDK contracts being exercised, and the runtime responsibilities that remain
+outside core.
 
 Real provider smoke tests belong in runtime or provider-adapter repositories:
 they should construct a concrete `LLMProviderPort`, then call

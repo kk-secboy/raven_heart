@@ -156,6 +156,10 @@ uses a deterministic no-network provider; host runtimes can pass real providers
 when API keys are available. The SDK owns the conformance contract, while HTTP
 clients, credentials, deployment routing, and rate-limit policy remain outside
 core.
+The conformance report includes a `check_matrix` that separates required,
+optional, skipped, completed, and failed checks, records whether an external
+provider was supplied, and lists the core contracts plus runtime responsibilities
+for adapter smoke tests.
 
 `AgentCoreBudgetAcceptanceHarness` is the provider-budget gate. It verifies
 `LLMProviderCenter` estimated-cost preflight, actual-cost enforcement,
