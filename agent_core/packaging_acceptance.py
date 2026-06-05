@@ -247,6 +247,8 @@ def _repository_files(root: Path) -> dict[str, Any]:
         for name in ("README.md", "LICENSE", "pyproject.toml")
     }
     typed_marker = root / "agent_core" / "py.typed"
+    ci_workflow = root / ".github" / "workflows" / "ci.yml"
+    ci_text = ci_workflow.read_text(encoding="utf-8") if ci_workflow.exists() else ""
     return {
         "schema_version": "agent-core-package-repository-files/v1",
         "files": files,
@@ -254,6 +256,9 @@ def _repository_files(root: Path) -> dict[str, Any]:
         "license_bytes": _file_size(root / "LICENSE"),
         "py_typed_exists": typed_marker.exists(),
         "py_typed_bytes": _file_size(typed_marker),
+        "ci_workflow_exists": ci_workflow.exists(),
+        "ci_runs_pytest": "python -m pytest" in ci_text,
+        "ci_runs_sdk_validation": "run_agent_core_validation" in ci_text,
     }
 
 
@@ -536,6 +541,33 @@ def _packaging_acceptance_issues(
                 source="repository_files",
                 code="py_typed_missing",
                 message="agent_core/py.typed must exist for typed SDK consumers.",
+                metadata=dict(repository_files),
+            )
+        )
+    if repository_files.get("ci_workflow_exists") is not True:
+        issues.append(
+            AgentCorePackagingAcceptanceIssue(
+                source="repository_files",
+                code="ci_workflow_missing",
+                message="Repository must include a CI workflow for SDK validation.",
+                metadata=dict(repository_files),
+            )
+        )
+    if repository_files.get("ci_runs_pytest") is not True:
+        issues.append(
+            AgentCorePackagingAcceptanceIssue(
+                source="repository_files",
+                code="ci_pytest_missing",
+                message="CI workflow must run the package test suite.",
+                metadata=dict(repository_files),
+            )
+        )
+    if repository_files.get("ci_runs_sdk_validation") is not True:
+        issues.append(
+            AgentCorePackagingAcceptanceIssue(
+                source="repository_files",
+                code="ci_sdk_validation_missing",
+                message="CI workflow must run aggregate SDK validation.",
                 metadata=dict(repository_files),
             )
         )

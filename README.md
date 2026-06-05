@@ -174,6 +174,10 @@ configured build backend is importable in the current environment. The SDK has
 no runtime dependencies, but local install/build smoke tests need
 `setuptools.build_meta` available:
 
+The same packaging gate also verifies the repository CI workflow runs both the
+pytest suite and the aggregate SDK validation gate, so release checks cannot
+skip `run_agent_core_validation()`.
+
 ```bash
 python -m pip install setuptools
 python -m pip install --no-deps --no-build-isolation --target /tmp/raven-heart-smoke .

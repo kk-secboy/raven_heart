@@ -233,9 +233,10 @@ payloads, credentials, deployment routing, and concrete provider adapters.
 `AgentCorePackagingAcceptanceHarness` adds the package-readiness gate. It checks
 `pyproject.toml` project metadata, explicit build-system configuration, zero
 runtime dependencies, package discovery for `agent_core`, stable public imports,
-required repository files, and example entrypoint smoke structure. The SDK owns
-these release-facing contracts; release automation, package indexes, signing,
-and adapter wheels stay outside core.
+required repository files, CI coverage for pytest plus aggregate SDK validation,
+and example entrypoint smoke structure. The SDK owns these release-facing
+contracts; release automation, package indexes, signing, and adapter wheels
+stay outside core.
 
 `AgentCoreTaskProfileAcceptanceHarness` adds the cross-runtime task-profile
 gate. It runs code, ops, and security task profiles through the same

@@ -51,6 +51,9 @@ async def test_agent_core_packaging_acceptance_gate_passes() -> None:
     assert all(manifest["public_api"]["sample_imports"].values())
     assert all(manifest["repository_files"]["files"].values())
     assert manifest["repository_files"]["py_typed_exists"] is True
+    assert manifest["repository_files"]["ci_workflow_exists"] is True
+    assert manifest["repository_files"]["ci_runs_pytest"] is True
+    assert manifest["repository_files"]["ci_runs_sdk_validation"] is True
     assert manifest["examples"]["example_count"] == 2
     minimal = manifest["examples"]["examples"]["minimal_react.py"]
     memory = manifest["examples"]["examples"]["memory_and_skills.py"]
