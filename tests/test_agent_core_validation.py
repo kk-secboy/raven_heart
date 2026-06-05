@@ -27,6 +27,10 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
         "forbidden_dependency_hit_count": 0,
         "forbidden_dependency_hits": [],
     }
+    assert manifest["summary"]["package_documentation_hygiene"] == {
+        "mojibake_hit_count": 0,
+        "mojibake_hits": [],
+    }
     assert manifest["summary"]["examples_executed"]["minimal_react.py"] == {
         "exit_code": 0,
         "json_valid": True,

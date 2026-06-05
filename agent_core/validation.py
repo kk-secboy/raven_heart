@@ -1039,6 +1039,7 @@ def _validation_summary(
         issue_counts[issue.source] = issue_counts.get(issue.source, 0) + 1
     packaging_public_api = packaging_acceptance.get("public_api") or {}
     packaging_project = packaging_acceptance.get("project_metadata") or {}
+    packaging_repository = packaging_acceptance.get("repository_files") or {}
     packaging_examples = (packaging_acceptance.get("examples") or {}).get("examples") or {}
     provider_matrix = provider_conformance.get("check_matrix") or {}
     storage_interfaces = sdk_manifest.get("storage_backend_interfaces") or {}
@@ -1077,6 +1078,28 @@ def _validation_summary(
             ),
             "forbidden_dependency_hits": list(
                 packaging_project.get("forbidden_dependency_hits") or ()
+            ),
+        },
+        "package_documentation_hygiene": {
+            "mojibake_hit_count": int(
+                (
+                    (packaging_repository.get("documentation") or {}).get(
+                        "mojibake_hit_count"
+                    )
+                    if isinstance(packaging_repository.get("documentation"), dict)
+                    else 0
+                )
+                or 0
+            ),
+            "mojibake_hits": list(
+                (
+                    (packaging_repository.get("documentation") or {}).get(
+                        "mojibake_hits"
+                    )
+                    if isinstance(packaging_repository.get("documentation"), dict)
+                    else ()
+                )
+                or ()
             ),
         },
         "examples_executed": {

@@ -180,6 +180,8 @@ skip `run_agent_core_validation()`.
 It also scans runtime and optional dependencies for forbidden runtime/adapter
 packages such as OpenAI SDK, OpenAI Agents SDK, FastAPI, Graphiti, MCP, Redis,
 and SQLAlchemy.
+Repository documentation is read as UTF-8 and checked for common mojibake
+markers.
 
 ```bash
 python -m pip install setuptools

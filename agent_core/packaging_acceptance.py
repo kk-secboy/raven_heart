@@ -25,6 +25,12 @@ FORBIDDEN_PACKAGE_DEPENDENCIES: tuple[str, ...] = (
     "redis",
     "sqlalchemy",
 )
+DOCUMENTATION_MOJIBAKE_MARKERS: tuple[str, ...] = (
+    "\ufffd",
+    "涓",
+    "锛",
+    "銆",
+)
 
 
 @dataclass(frozen=True)
@@ -274,6 +280,7 @@ def _repository_files(root: Path) -> dict[str, Any]:
     typed_marker = root / "agent_core" / "py.typed"
     ci_workflow = root / ".github" / "workflows" / "ci.yml"
     ci_text = ci_workflow.read_text(encoding="utf-8") if ci_workflow.exists() else ""
+    documentation = _documentation_hygiene(root)
     return {
         "schema_version": "agent-core-package-repository-files/v1",
         "files": files,
@@ -284,6 +291,7 @@ def _repository_files(root: Path) -> dict[str, Any]:
         "ci_workflow_exists": ci_workflow.exists(),
         "ci_runs_pytest": "python -m pytest" in ci_text,
         "ci_runs_sdk_validation": "run_agent_core_validation" in ci_text,
+        "documentation": documentation,
     }
 
 
@@ -605,6 +613,20 @@ def _packaging_acceptance_issues(
                 metadata=dict(repository_files),
             )
         )
+    documentation = (
+        repository_files.get("documentation")
+        if isinstance(repository_files.get("documentation"), dict)
+        else {}
+    )
+    if documentation.get("mojibake_hit_count"):
+        issues.append(
+            AgentCorePackagingAcceptanceIssue(
+                source="repository_files",
+                code="documentation_mojibake_detected",
+                message="Repository documentation must be valid UTF-8 without mojibake markers.",
+                metadata=dict(repository_files),
+            )
+        )
     for name, info in (examples.get("examples") or {}).items():
         if not info.get("exists") or not info.get("imports_agent_core") or not info.get("has_main_guard"):
             issues.append(
@@ -636,6 +658,54 @@ def _packaging_acceptance_issues(
                 )
             )
     return tuple(issues)
+
+
+def _documentation_hygiene(root: Path) -> dict[str, Any]:
+    paths = (root / "README.md", root / "docs" / "architecture.md")
+    files: list[dict[str, Any]] = []
+    hits: list[dict[str, Any]] = []
+    for path in paths:
+        relative = path.relative_to(root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+            utf8_valid = True
+        except UnicodeDecodeError as exc:
+            text = ""
+            utf8_valid = False
+            hits.append(
+                {
+                    "path": relative,
+                    "marker": "UnicodeDecodeError",
+                    "line": 0,
+                    "error": str(exc),
+                }
+            )
+        files.append(
+            {
+                "path": relative,
+                "exists": path.exists(),
+                "utf8_valid": utf8_valid,
+                "byte_count": _file_size(path),
+            }
+        )
+        for marker in DOCUMENTATION_MOJIBAKE_MARKERS:
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if marker in line:
+                    hits.append(
+                        {
+                            "path": relative,
+                            "marker": marker,
+                            "line": line_number,
+                        }
+                    )
+    return {
+        "schema_version": "agent-core-documentation-hygiene/v1",
+        "file_count": len(files),
+        "files": files,
+        "mojibake_hit_count": len(hits),
+        "mojibake_hits": hits,
+        "markers": list(DOCUMENTATION_MOJIBAKE_MARKERS),
+    }
 
 
 def _forbidden_dependency_hits(
