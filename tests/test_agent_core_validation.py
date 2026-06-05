@@ -13,6 +13,32 @@ async def test_agent_core_validation_suite_runs_all_sdk_gates() -> None:
     assert manifest["schema_version"] == "agent-core-validation-report/v1"
     assert manifest["status"] == "ready"
     assert manifest["ready"] is True
+    assert manifest["summary"]["schema_version"] == "agent-core-validation-summary/v1"
+    assert manifest["summary"]["ready"] is True
+    assert manifest["summary"]["gate_count"] == 35
+    assert manifest["summary"]["ready_gate_count"] == 35
+    assert manifest["summary"]["blocked_gate_count"] == 0
+    assert manifest["summary"]["runtime_free"] is True
+    assert manifest["summary"]["public_api_count"] <= 40
+    assert manifest["summary"]["contract_api_count"] <= 90
+    assert manifest["summary"]["examples_executed"]["minimal_react.py"] == {
+        "exit_code": 0,
+        "json_valid": True,
+    }
+    assert manifest["summary"]["examples_executed"]["memory_and_skills.py"] == {
+        "exit_code": 0,
+        "json_valid": True,
+    }
+    assert manifest["summary"]["provider_conformance"]["provider_source"] == "deterministic"
+    assert manifest["summary"]["provider_conformance"]["failed_required_checks"] == []
+    assert manifest["summary"]["storage_backend_interfaces"]["role_count"] == 12
+    assert manifest["summary"]["storage_backend_interfaces"]["role_contract_count"] == 12
+    assert {"in_memory", "sqlite", "markdown"} <= set(
+        manifest["summary"]["storage_backend_interfaces"]["builtin_kinds"]
+    )
+    assert {"postgres", "vector", "graph", "product"} <= set(
+        manifest["summary"]["storage_backend_interfaces"]["external_kinds"]
+    )
     assert manifest["error_count"] == 0
     assert manifest["runtime_boundary"]["ready"] is True
     assert manifest["runtime_boundary"]["hit_count"] == 0
@@ -232,6 +258,10 @@ async def test_agent_core_validation_suite_blocks_missing_stable_api() -> None:
 
     assert manifest["status"] == "blocked"
     assert manifest["ready"] is False
+    assert manifest["summary"]["ready"] is False
+    assert manifest["summary"]["blocked_gate_count"] >= 1
+    assert "api_stability" in manifest["summary"]["blocked_gates"]
+    assert manifest["summary"]["issue_count"] >= 1
     assert manifest["api_stability"]["ready"] is False
     assert "stable_api_missing" in issue_codes
 

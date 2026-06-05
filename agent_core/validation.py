@@ -194,6 +194,7 @@ class AgentCoreValidationReport:
     """Prompt-safe aggregate SDK validation report."""
 
     status: str
+    summary: dict[str, Any] = field(default_factory=dict)
     runtime_boundary: dict[str, Any] = field(default_factory=dict)
     repository_boundary: dict[str, Any] = field(default_factory=dict)
     readiness: dict[str, Any] = field(default_factory=dict)
@@ -248,6 +249,7 @@ class AgentCoreValidationReport:
             "issue_count": len(self.issues),
             "error_count": self.error_count,
             "issues": [issue.manifest() for issue in self.issues],
+            "summary": dict(self.summary),
             "runtime_boundary": dict(self.runtime_boundary),
             "repository_boundary": dict(self.repository_boundary),
             "readiness": dict(self.readiness),
@@ -300,6 +302,11 @@ class AgentCoreValidationSuite:
         package_root: str | Path | None = None,
     ) -> AgentCoreValidationReport:
         manifest = sdk_manifest or agent_core_sdk_manifest()
+        manifest_dict = (
+            manifest.manifest()
+            if isinstance(manifest, AgentCoreSDKManifest)
+            else dict(manifest)
+        )
         runtime_boundary = evaluate_agent_core_runtime_boundary(
             manifest,
             package_root=package_root,
@@ -516,8 +523,49 @@ class AgentCoreValidationSuite:
             resume=resume,
         )
         status = "blocked" if any(issue.severity == "error" for issue in issues) else "ready"
+        summary = _validation_summary(
+            status=status,
+            issues=issues,
+            sdk_manifest=manifest_dict,
+            runtime_boundary=runtime_boundary,
+            repository_boundary=repository_boundary,
+            readiness=readiness,
+            api_lifecycle=api_lifecycle,
+            api_stability=api_stability,
+            acceptance=acceptance,
+            approval_acceptance=approval_acceptance,
+            budget_acceptance=budget_acceptance,
+            capability_governance_acceptance=capability_governance_acceptance,
+            context_acceptance=context_acceptance,
+            context_window_acceptance=context_window_acceptance,
+            orchestration_acceptance=orchestration_acceptance,
+            concurrency_acceptance=concurrency_acceptance,
+            coordination_acceptance=coordination_acceptance,
+            durable_session_acceptance=durable_session_acceptance,
+            event_acceptance=event_acceptance,
+            external_backend_acceptance=external_backend_acceptance,
+            guardrail_acceptance=guardrail_acceptance,
+            interaction_acceptance=interaction_acceptance,
+            interrupt_acceptance=interrupt_acceptance,
+            lifecycle_acceptance=lifecycle_acceptance,
+            native_tool_acceptance=native_tool_acceptance,
+            packaging_acceptance=packaging_acceptance,
+            provider_acceptance=provider_acceptance,
+            provider_conformance=provider_conformance,
+            provider_resilience_acceptance=provider_resilience_acceptance,
+            redaction_acceptance=redaction_acceptance,
+            eval_suite_acceptance=eval_suite_acceptance,
+            state_bundle_acceptance=state_bundle_acceptance,
+            storage_acceptance=storage_acceptance,
+            task_profile_acceptance=task_profile_acceptance,
+            trace_export_acceptance=trace_export_acceptance,
+            trace_replay_acceptance=trace_replay_acceptance,
+            recovery=recovery,
+            resume=resume,
+        )
         return AgentCoreValidationReport(
             status=status,
+            summary=summary,
             runtime_boundary=runtime_boundary,
             repository_boundary=repository_boundary,
             readiness=readiness,
@@ -889,6 +937,139 @@ def _validation_issues(
     _extend_report_issues(issues, source="recovery", report=recovery)
     _extend_report_issues(issues, source="resume", report=resume)
     return tuple(issues)
+
+
+def _validation_summary(
+    *,
+    status: str,
+    issues: tuple[AgentCoreValidationIssue, ...],
+    sdk_manifest: dict[str, Any],
+    runtime_boundary: dict[str, Any],
+    repository_boundary: dict[str, Any],
+    readiness: dict[str, Any],
+    api_lifecycle: dict[str, Any],
+    api_stability: dict[str, Any],
+    acceptance: dict[str, Any],
+    approval_acceptance: dict[str, Any],
+    budget_acceptance: dict[str, Any],
+    capability_governance_acceptance: dict[str, Any],
+    context_acceptance: dict[str, Any],
+    context_window_acceptance: dict[str, Any],
+    orchestration_acceptance: dict[str, Any],
+    concurrency_acceptance: dict[str, Any],
+    coordination_acceptance: dict[str, Any],
+    durable_session_acceptance: dict[str, Any],
+    event_acceptance: dict[str, Any],
+    external_backend_acceptance: dict[str, Any],
+    guardrail_acceptance: dict[str, Any],
+    interaction_acceptance: dict[str, Any],
+    interrupt_acceptance: dict[str, Any],
+    lifecycle_acceptance: dict[str, Any],
+    native_tool_acceptance: dict[str, Any],
+    packaging_acceptance: dict[str, Any],
+    provider_acceptance: dict[str, Any],
+    provider_conformance: dict[str, Any],
+    provider_resilience_acceptance: dict[str, Any],
+    redaction_acceptance: dict[str, Any],
+    eval_suite_acceptance: dict[str, Any],
+    state_bundle_acceptance: dict[str, Any],
+    storage_acceptance: dict[str, Any],
+    task_profile_acceptance: dict[str, Any],
+    trace_export_acceptance: dict[str, Any],
+    trace_replay_acceptance: dict[str, Any],
+    recovery: dict[str, Any],
+    resume: dict[str, Any],
+) -> dict[str, Any]:
+    gates = {
+        "runtime_boundary": runtime_boundary,
+        "repository_boundary": repository_boundary,
+        "readiness": readiness,
+        "api_lifecycle": api_lifecycle,
+        "api_stability": api_stability,
+        "acceptance": acceptance,
+        "approval_acceptance": approval_acceptance,
+        "budget_acceptance": budget_acceptance,
+        "capability_governance_acceptance": capability_governance_acceptance,
+        "context_acceptance": context_acceptance,
+        "context_window_acceptance": context_window_acceptance,
+        "orchestration_acceptance": orchestration_acceptance,
+        "concurrency_acceptance": concurrency_acceptance,
+        "coordination_acceptance": coordination_acceptance,
+        "durable_session_acceptance": durable_session_acceptance,
+        "event_acceptance": event_acceptance,
+        "external_backend_acceptance": external_backend_acceptance,
+        "guardrail_acceptance": guardrail_acceptance,
+        "interaction_acceptance": interaction_acceptance,
+        "interrupt_acceptance": interrupt_acceptance,
+        "lifecycle_acceptance": lifecycle_acceptance,
+        "native_tool_acceptance": native_tool_acceptance,
+        "packaging_acceptance": packaging_acceptance,
+        "provider_acceptance": provider_acceptance,
+        "provider_conformance": provider_conformance,
+        "provider_resilience_acceptance": provider_resilience_acceptance,
+        "redaction_acceptance": redaction_acceptance,
+        "eval_suite_acceptance": eval_suite_acceptance,
+        "state_bundle_acceptance": state_bundle_acceptance,
+        "storage_acceptance": storage_acceptance,
+        "task_profile_acceptance": task_profile_acceptance,
+        "trace_export_acceptance": trace_export_acceptance,
+        "trace_replay_acceptance": trace_replay_acceptance,
+        "recovery": recovery,
+        "resume": resume,
+    }
+    ready_gates = tuple(name for name, report in gates.items() if report.get("ready") is True)
+    blocked_gates = tuple(name for name, report in gates.items() if report.get("ready") is not True)
+    issue_counts: dict[str, int] = {}
+    for issue in issues:
+        issue_counts[issue.source] = issue_counts.get(issue.source, 0) + 1
+    packaging_public_api = packaging_acceptance.get("public_api") or {}
+    packaging_examples = (packaging_acceptance.get("examples") or {}).get("examples") or {}
+    provider_matrix = provider_conformance.get("check_matrix") or {}
+    storage_interfaces = sdk_manifest.get("storage_backend_interfaces") or {}
+    return {
+        "schema_version": "agent-core-validation-summary/v1",
+        "status": status,
+        "ready": status == "ready",
+        "gate_count": len(gates),
+        "ready_gate_count": len(ready_gates),
+        "blocked_gate_count": len(blocked_gates),
+        "ready_gates": list(ready_gates),
+        "blocked_gates": list(blocked_gates),
+        "issue_count": len(issues),
+        "error_count": sum(1 for issue in issues if issue.severity == "error"),
+        "issue_counts_by_source": dict(sorted(issue_counts.items())),
+        "runtime_free": (
+            runtime_boundary.get("ready") is True
+            and repository_boundary.get("ready") is True
+            and int(runtime_boundary.get("hit_count") or 0) == 0
+            and int(repository_boundary.get("hit_count") or 0) == 0
+        ),
+        "public_api_count": int(packaging_public_api.get("public_api_count") or 0),
+        "contract_api_count": int(packaging_public_api.get("contract_api_count") or 0),
+        "root_export_count": int(packaging_public_api.get("root_export_count") or 0),
+        "examples_executed": {
+            name: {
+                "exit_code": ((info.get("run") or {}).get("exit_code")),
+                "json_valid": bool((info.get("run") or {}).get("json_valid")),
+            }
+            for name, info in packaging_examples.items()
+            if isinstance(info, dict)
+        },
+        "provider_conformance": {
+            "provider_source": provider_matrix.get("provider_source"),
+            "required_checks": list(provider_matrix.get("required_checks") or ()),
+            "failed_required_checks": list(
+                provider_matrix.get("failed_required_checks") or ()
+            ),
+            "error_issue_codes": list(provider_matrix.get("error_issue_codes") or ()),
+        },
+        "storage_backend_interfaces": {
+            "role_count": len(storage_interfaces.get("roles") or ()),
+            "builtin_kinds": list(storage_interfaces.get("builtin_kinds") or ()),
+            "external_kinds": list(storage_interfaces.get("external_kinds") or ()),
+            "role_contract_count": len(storage_interfaces.get("role_contracts") or ()),
+        },
+    }
 
 
 def _extend_boundary_issues(

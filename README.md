@@ -415,8 +415,11 @@ acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
 packaging acceptance, provider acceptance, provider-conformance checks,
 eval-suite checks, storage acceptance, task-profile acceptance, recovery acceptance, and resume acceptance,
 then returns one
-`AgentCoreValidationReport`. This is the default package-level check a host
-runtime should pass before starting adapter-specific migration tests.
+`AgentCoreValidationReport`. Its top-level `summary` is the migration gate view:
+gate counts, blocked gates, runtime-boundary status, API counts, executed
+examples, provider conformance checks, and storage backend role/kind coverage.
+This is the default package-level check a host runtime should pass before
+starting adapter-specific migration tests.
 
 ## Core Capabilities
 

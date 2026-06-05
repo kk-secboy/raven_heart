@@ -247,9 +247,12 @@ acceptance, guardrail acceptance, lifecycle acceptance, native-tool acceptance,
 packaging acceptance, provider acceptance, provider-conformance checks,
 budget acceptance, redaction acceptance, eval-suite checks, storage acceptance, task-profile
 acceptance, recovery acceptance, and resume acceptance, then returns one
-`AgentCoreValidationReport` with all subreports and blocking issues. This is the
-SDK-level check a runtime should pass before adapter implementation or
-product-specific migration tests begin.
+`AgentCoreValidationReport` with all subreports and blocking issues. Its
+top-level `summary` gives the adapter-migration view: gate counts, blocked
+gates, runtime-boundary status, API counts, executed examples, provider
+conformance checks, and storage backend coverage. This is the SDK-level check a
+runtime should pass before adapter implementation or product-specific migration
+tests begin.
 
 ## Boundary Table
 
