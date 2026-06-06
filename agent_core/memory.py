@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -28,6 +29,25 @@ MemoryBackendKind = Literal[
     "custom",
 ]
 MemoryQueryMode = Literal["keyword", "semantic", "vector", "graph", "hybrid"]
+MemoryRecallIntent = Literal["generic", "fact_check", "advice", "emotional", "brainstorm"]
+MemoryInjectionRoute = Literal[
+    "must_aware",
+    "action_tips",
+    "reliability_warning",
+    "emotional_context",
+    "connection_links",
+    "context",
+]
+CORE_PACT_SCORE_KEYS = ("c", "o", "r", "e", "p", "a", "t")
+CORE_PACT_METADATA_KEYS = {
+    "c": ("c_score", "connectivity", "connection", "c"),
+    "o": ("o_score", "origin", "reliability", "trust", "confidence", "o"),
+    "r": ("r_score", "relevance", "r"),
+    "e": ("e_score", "emotion", "emotional", "e"),
+    "p": ("p_score", "preference", "constraint", "p"),
+    "a": ("a_score", "actionability", "actionable", "a"),
+    "t": ("t_score", "timeliness", "freshness", "recent", "t"),
+}
 
 
 @dataclass(frozen=True)
@@ -143,6 +163,77 @@ class MemoryHit:
 
 
 @dataclass(frozen=True)
+class MemoryInjectionCandidate:
+    hit: MemoryHit
+    route: MemoryInjectionRoute
+    utility: float
+    scores: dict[str, float] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-injection-candidate/v1",
+            "route": self.route,
+            "utility": round(self.utility, 6),
+            "score": self.hit.score,
+            "source": self.hit.source,
+            "content_bytes": len(self.hit.content.encode("utf-8")),
+            "content_sha256": sha256(self.hit.content.encode("utf-8")).hexdigest()
+            if self.hit.content
+            else "",
+            "scores": {key: round(value, 6) for key, value in self.scores.items()},
+            "metadata": dict(self.hit.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class MemoryInjectionResult:
+    intent: MemoryRecallIntent
+    query: str = ""
+    candidates: tuple[MemoryInjectionCandidate, ...] = ()
+    selected: tuple[MemoryInjectionCandidate, ...] = ()
+    content: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-injection-result/v1",
+            "intent": self.intent,
+            "query": self.query,
+            "candidate_count": len(self.candidates),
+            "selected_count": len(self.selected),
+            "routes": [item.route for item in self.selected],
+            "content_bytes": len(self.content.encode("utf-8")),
+            "content_sha256": sha256(self.content.encode("utf-8")).hexdigest()
+            if self.content
+            else "",
+            "candidates": [item.manifest() for item in self.candidates],
+            "selected": [item.manifest() for item in self.selected],
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class MemoryEntityProfile:
+    """Prompt-safe memory entity profile generated at SDK write time."""
+
+    tags: tuple[str, ...] = ()
+    potential_questions: tuple[str, ...] = ()
+    scores: dict[str, float] = field(default_factory=dict)
+    core_pact_vector: tuple[float, ...] = ()
+    strategy: str = "deterministic_core_pact_profile"
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-entity-profile/v1",
+            "tags": list(self.tags),
+            "potential_questions": list(self.potential_questions),
+            "scores": {key: round(float(value), 6) for key, value in self.scores.items()},
+            "core_pact_vector": [round(float(value), 6) for value in self.core_pact_vector],
+            "strategy": self.strategy,
+        }
+
+
+@dataclass(frozen=True)
 class MemoryWrite:
     content: str
     source: str = ""
@@ -158,6 +249,735 @@ class MemoryWrite:
             "source": self.source,
             "metadata": dict(self.metadata),
         }
+
+
+@dataclass(frozen=True)
+class MemoryTriageRequest:
+    content: str
+    source: str = "timeline_diff"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-triage-request/v1",
+            "content_bytes": len(self.content.encode("utf-8")),
+            "content_sha256": sha256(self.content.encode("utf-8")).hexdigest()
+            if self.content
+            else "",
+            "source": self.source,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class MemoryTriageDecision:
+    should_write: bool
+    item: MemoryWrite | None = None
+    reason: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-triage-decision/v1",
+            "should_write": self.should_write,
+            "reason": self.reason,
+            "item": self.item.manifest() if self.item is not None else {},
+            "metadata": dict(self.metadata),
+        }
+
+
+class MemoryTriagePort(Protocol):
+    async def triage(self, request: MemoryTriageRequest) -> MemoryTriageDecision:
+        """Decide whether a flushed timeline diff should enter long-term memory."""
+
+
+class DeterministicMemoryTriage:
+    """Default dependency-free triage for loop memory flushes."""
+
+    def __init__(self, *, min_content_bytes: int = 12, max_content_bytes: int = 24 * 1024) -> None:
+        self.min_content_bytes = max(0, int(min_content_bytes))
+        self.max_content_bytes = max(512, int(max_content_bytes))
+
+    async def triage(self, request: MemoryTriageRequest) -> MemoryTriageDecision:
+        content = request.content.strip()
+        if len(content.encode("utf-8")) < self.min_content_bytes:
+            return MemoryTriageDecision(False, reason="content_too_small")
+        raw = content.encode("utf-8")
+        metadata = dict(request.metadata)
+        if len(raw) > self.max_content_bytes:
+            content = raw[: self.max_content_bytes].decode("utf-8", errors="ignore").rstrip()
+            metadata["triage_compacted"] = True
+            metadata["original_content_bytes"] = len(raw)
+            metadata["original_content_sha256"] = sha256(raw).hexdigest()
+        return MemoryTriageDecision(
+            True,
+            item=MemoryWrite(content=content, source=request.source, metadata=metadata),
+            reason="deterministic_relevant_diff",
+            metadata={"strategy": "deterministic_size_gate"},
+        )
+
+
+@dataclass(frozen=True)
+class MemoryFlushSignal:
+    content: str
+    run_id: str = ""
+    turn_id: str = ""
+    iteration: int = 0
+    status: str = ""
+    is_done: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def bytes(self) -> int:
+        return len(self.content.encode("utf-8"))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-memory-flush-signal/v1",
+            "content_bytes": self.bytes,
+            "content_sha256": sha256(self.content.encode("utf-8")).hexdigest()
+            if self.content
+            else "",
+            "run_id": self.run_id,
+            "turn_id": self.turn_id,
+            "iteration": self.iteration,
+            "status": self.status,
+            "is_done": self.is_done,
+            "metadata": dict(self.metadata),
+        }
+
+
+class MemoryFlushBuffer:
+    """Internal Yaklang-style memory flush buffer over original timeline diffs."""
+
+    def __init__(
+        self,
+        *,
+        triage: MemoryTriagePort | None = None,
+        byte_threshold: int = 16 * 1024,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        self.triage = triage or DeterministicMemoryTriage()
+        self.byte_threshold = max(1, int(byte_threshold))
+        self.timeout_seconds = max(0.0, float(timeout_seconds))
+        self._signals: list[MemoryFlushSignal] = []
+        self._first_at: datetime | None = None
+        self._seen_hashes: set[str] = set()
+        self.last_manifest: dict[str, Any] = {
+            "schema_version": "agent-core-memory-flush-buffer/v1",
+            "pending_signal_count": 0,
+            "flushed": False,
+        }
+
+    async def observe(self, signal: MemoryFlushSignal) -> tuple[MemoryWrite, ...]:
+        if not signal.content.strip():
+            return ()
+        if not self._signals:
+            self._first_at = datetime.now(UTC)
+        self._signals.append(signal)
+        if not self._should_flush(signal):
+            self.last_manifest = self._manifest(flushed=False, decisions=())
+            return ()
+        return await self.flush(reason="done" if signal.is_done else "threshold_or_timeout")
+
+    async def flush(self, *, reason: str = "manual") -> tuple[MemoryWrite, ...]:
+        signals = tuple(self._signals)
+        self._signals = []
+        self._first_at = None
+        if not signals:
+            self.last_manifest = self._manifest(flushed=False, decisions=(), reason=reason)
+            return ()
+        content = "\n\n".join(signal.content.strip() for signal in signals if signal.content.strip())
+        content_hash = sha256(content.encode("utf-8")).hexdigest() if content else ""
+        if content_hash in self._seen_hashes:
+            self.last_manifest = self._manifest(
+                flushed=True,
+                decisions=(),
+                reason="duplicate_flush",
+                signals=signals,
+            )
+            return ()
+        self._seen_hashes.add(content_hash)
+        metadata = {
+            "flush_reason": reason,
+            "signal_count": len(signals),
+            "signals": [signal.manifest() for signal in signals],
+            "run_id": signals[-1].run_id,
+            "turn_id": signals[-1].turn_id,
+            "iteration": signals[-1].iteration,
+            "status": signals[-1].status,
+        }
+        decision = await self.triage.triage(
+            MemoryTriageRequest(content=content, source="timeline_diff", metadata=metadata)
+        )
+        self.last_manifest = self._manifest(
+            flushed=True,
+            decisions=(decision,),
+            reason=reason,
+            signals=signals,
+        )
+        if not decision.should_write or decision.item is None:
+            return ()
+        return (decision.item,)
+
+    def _should_flush(self, signal: MemoryFlushSignal) -> bool:
+        if signal.is_done:
+            return True
+        if sum(item.bytes for item in self._signals) >= self.byte_threshold:
+            return True
+        if self._first_at is None or self.timeout_seconds <= 0:
+            return False
+        age = (datetime.now(UTC) - self._first_at).total_seconds()
+        return age >= self.timeout_seconds
+
+    def _manifest(
+        self,
+        *,
+        flushed: bool,
+        decisions: tuple[MemoryTriageDecision, ...],
+        reason: str = "",
+        signals: tuple[MemoryFlushSignal, ...] | None = None,
+    ) -> dict[str, Any]:
+        pending = tuple(self._signals)
+        flushed_signals = tuple(signals or ())
+        return {
+            "schema_version": "agent-core-memory-flush-buffer/v1",
+            "flushed": flushed,
+            "reason": reason,
+            "pending_signal_count": len(pending),
+            "pending_bytes": sum(signal.bytes for signal in pending),
+            "flushed_signal_count": len(flushed_signals),
+            "flushed_bytes": sum(signal.bytes for signal in flushed_signals),
+            "decisions": [decision.manifest() for decision in decisions],
+            "byte_threshold": self.byte_threshold,
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+
+def infer_memory_recall_intent(
+    query: str,
+    *,
+    topics: tuple[str, ...] = (),
+    keywords: tuple[str, ...] = (),
+    metadata: dict[str, Any] | None = None,
+) -> MemoryRecallIntent:
+    """Infer how recalled memories should be used in the next prompt."""
+
+    metadata = dict(metadata or {})
+    override = str(metadata.get("memory_intent") or metadata.get("intent") or "").strip().lower()
+    if override in {"generic", "fact_check", "advice", "emotional", "brainstorm"}:
+        return cast(MemoryRecallIntent, override)
+    text = " ".join((query, " ".join(topics), " ".join(keywords))).lower()
+    if _contains_any(
+        text,
+        (
+            "verify",
+            "validate",
+            "confirm",
+            "evidence",
+            "exact",
+            "fact",
+            "whether",
+            "prove",
+            "source",
+        ),
+    ):
+        return "fact_check"
+    if _contains_any(text, ("should", "how to", "fix", "plan", "recommend", "next", "action", "execute")):
+        return "advice"
+    if _contains_any(text, ("idea", "brainstorm", "explore", "alternatives", "options")):
+        return "brainstorm"
+    if _contains_any(text, ("feel", "frustrated", "tone", "emotional", "concern", "worry")):
+        return "emotional"
+    return "generic"
+
+
+def build_memory_injection(
+    hits: tuple[MemoryHit, ...],
+    *,
+    query: str = "",
+    intent: MemoryRecallIntent = "generic",
+    max_total: int = 12,
+    max_per_route: int = 4,
+    max_content_chars: int = 600,
+    min_utility: float = 0.0,
+) -> MemoryInjectionResult:
+    candidates = tuple(
+        sorted(
+            (_memory_injection_candidate(hit, query=query, intent=intent) for hit in hits),
+            key=lambda item: (-item.utility, item.route, item.hit.source),
+        )
+    )
+    selected: list[MemoryInjectionCandidate] = []
+    route_counts: dict[str, int] = {}
+    for route in _memory_route_order(intent):
+        for candidate in candidates:
+            if candidate.route != route:
+                continue
+            if candidate.utility < min_utility:
+                continue
+            if len(selected) >= max(1, int(max_total)):
+                break
+            if route_counts.get(route, 0) >= max(1, int(max_per_route)):
+                continue
+            selected.append(candidate)
+            route_counts[route] = route_counts.get(route, 0) + 1
+        if len(selected) >= max(1, int(max_total)):
+            break
+    content = _render_memory_injection(tuple(selected), max_content_chars=max_content_chars)
+    return MemoryInjectionResult(
+        intent=intent,
+        query=query,
+        candidates=candidates,
+        selected=tuple(selected),
+        content=content,
+        metadata={
+            "strategy": "deterministic_core_pact_route_rerank",
+            "max_total": max_total,
+            "max_per_route": max_per_route,
+            "max_content_chars": max_content_chars,
+            "min_utility": min_utility,
+        },
+    )
+
+
+def build_memory_entity_profile(
+    item: MemoryWrite | MemoryRecord,
+    *,
+    query_hint: str = "",
+) -> MemoryEntityProfile:
+    content = str(item.content or "").strip()
+    metadata = dict(item.metadata)
+    existing = metadata.get("memory_entity_profile")
+    if isinstance(existing, dict):
+        scores = _core_pact_scores_from_metadata(existing) or _core_pact_scores_from_metadata(metadata)
+        vector = _core_pact_vector_from_metadata(existing) or _core_pact_vector(scores)
+        tags = _string_tuple(existing.get("tags")) or _string_tuple(metadata.get("tags")) or _infer_memory_tags(content, metadata)
+        questions = (
+            _string_tuple(existing.get("potential_questions"))
+            or _string_tuple(metadata.get("potential_questions"))
+            or _infer_potential_questions(content, tags)
+        )
+        return MemoryEntityProfile(
+            tags=tags,
+            potential_questions=questions,
+            scores=scores,
+            core_pact_vector=vector,
+            strategy=str(existing.get("strategy") or "metadata_existing_profile"),
+        )
+    tags = _string_tuple(metadata.get("tags")) or _infer_memory_tags(content, metadata)
+    questions = _string_tuple(metadata.get("potential_questions")) or _infer_potential_questions(content, tags)
+    scores = _infer_core_pact_scores(content, metadata, query_hint=query_hint)
+    return MemoryEntityProfile(
+        tags=tags,
+        potential_questions=questions,
+        scores=scores,
+        core_pact_vector=_core_pact_vector(scores),
+    )
+
+
+def enrich_memory_write(item: MemoryWrite) -> MemoryWrite:
+    profile = build_memory_entity_profile(item)
+    metadata = _metadata_with_memory_profile(dict(item.metadata), profile)
+    return MemoryWrite(content=item.content, source=item.source, metadata=metadata)
+
+
+def _memory_injection_candidate(
+    hit: MemoryHit,
+    *,
+    query: str,
+    intent: MemoryRecallIntent,
+) -> MemoryInjectionCandidate:
+    scores = _memory_signal_scores(hit, query=query)
+    weights = _memory_intent_weights(intent)
+    similarity = _clamp01(hit.score)
+    utility = similarity * weights["sim"]
+    for key in ("c", "o", "r", "e", "p", "a", "t"):
+        utility += scores[key] * weights.get(key, 0.0)
+    route = _memory_injection_route(scores, intent)
+    return MemoryInjectionCandidate(
+        hit=hit,
+        route=route,
+        utility=_clamp01(utility),
+        scores={**scores, "sim": similarity},
+    )
+
+
+def _memory_signal_scores(hit: MemoryHit, *, query: str) -> dict[str, float]:
+    metadata = dict(hit.metadata)
+    content = hit.content.lower()
+    kind = str(metadata.get("kind") or metadata.get("entity_type") or "").lower()
+    source = str(hit.source or metadata.get("source") or "").lower()
+    score = _clamp01(hit.score)
+    terms = _memory_terms(query)
+    overlap = _term_overlap(content, terms)
+    relevance = max(score, overlap)
+    actionability = _core_pact_score(metadata, "a")
+    if actionability == 0.0 and _contains_any(
+        " ".join((content, kind)),
+        ("should", "must", "use ", "run ", "check ", "prefer", "step", "guidance", "playbook"),
+    ):
+        actionability = 0.82
+    preference = _core_pact_score(metadata, "p")
+    if preference == 0.0 and _contains_any(" ".join((content, kind)), ("prefer", "must", "always", "never", "policy")):
+        preference = 0.78
+    origin = _core_pact_score(metadata, "o")
+    if origin == 0.0:
+        origin = 0.35 if _contains_any(" ".join((content, source, kind)), ("unverified", "unknown", "guess")) else 0.72
+    emotional = _core_pact_score(metadata, "e")
+    connectivity = _core_pact_score(metadata, "c")
+    if connectivity == 0.0 and len(terms) > 1 and overlap > 0:
+        connectivity = min(1.0, overlap + 0.25)
+    timeliness = _core_pact_score(metadata, "t")
+    if timeliness == 0.0:
+        timeliness = 0.55
+    return {
+        "c": _clamp01(connectivity),
+        "o": _clamp01(origin),
+        "r": max(_core_pact_score(metadata, "r"), _clamp01(relevance)),
+        "e": _clamp01(emotional),
+        "p": _clamp01(preference),
+        "a": _clamp01(actionability),
+        "t": _clamp01(timeliness),
+    }
+
+
+def _memory_injection_route(
+    scores: dict[str, float],
+    intent: MemoryRecallIntent,
+) -> MemoryInjectionRoute:
+    candidates: dict[MemoryInjectionRoute, bool] = {
+        "action_tips": scores["a"] >= 0.78 and scores["r"] >= 0.35,
+        "must_aware": (scores["r"] >= 0.70 and scores["p"] >= 0.55)
+        or (scores["p"] >= 0.82 and scores["r"] >= 0.35),
+        "reliability_warning": scores["r"] >= 0.62 and scores["o"] <= 0.42,
+        "emotional_context": scores["e"] >= 0.55 and (intent == "emotional" or scores["r"] >= 0.45),
+        "connection_links": scores["c"] >= 0.70 and scores["r"] >= 0.30,
+    }
+    for route in _memory_route_order(intent):
+        if route != "context" and candidates.get(route):
+            return route
+    return "context"
+
+
+def _memory_route_order(intent: MemoryRecallIntent) -> tuple[MemoryInjectionRoute, ...]:
+    if intent == "advice":
+        return (
+            "action_tips",
+            "must_aware",
+            "reliability_warning",
+            "context",
+            "connection_links",
+            "emotional_context",
+        )
+    if intent == "fact_check":
+        return (
+            "reliability_warning",
+            "must_aware",
+            "context",
+            "action_tips",
+            "connection_links",
+            "emotional_context",
+        )
+    if intent == "emotional":
+        return (
+            "emotional_context",
+            "must_aware",
+            "context",
+            "reliability_warning",
+            "action_tips",
+            "connection_links",
+        )
+    if intent == "brainstorm":
+        return (
+            "connection_links",
+            "context",
+            "must_aware",
+            "action_tips",
+            "reliability_warning",
+            "emotional_context",
+        )
+    return (
+        "must_aware",
+        "action_tips",
+        "reliability_warning",
+        "context",
+        "connection_links",
+        "emotional_context",
+    )
+
+
+def _memory_intent_weights(intent: MemoryRecallIntent) -> dict[str, float]:
+    if intent == "fact_check":
+        return {"sim": 0.45, "o": 0.32, "r": 0.22, "t": 0.16}
+    if intent == "advice":
+        return {"sim": 0.42, "a": 0.30, "p": 0.22, "r": 0.18}
+    if intent == "emotional":
+        return {"sim": 0.35, "e": 0.38, "p": 0.24, "r": 0.12}
+    if intent == "brainstorm":
+        return {"sim": 0.35, "c": 0.34, "r": 0.24, "a": 0.10}
+    return {"sim": 0.40, "r": 0.20, "c": 0.14, "t": 0.12, "a": 0.12, "p": 0.08, "o": 0.08}
+
+
+def _render_memory_injection(
+    candidates: tuple[MemoryInjectionCandidate, ...],
+    *,
+    max_content_chars: int,
+) -> str:
+    if not candidates:
+        return ""
+    by_route: dict[str, list[MemoryInjectionCandidate]] = {}
+    for candidate in candidates:
+        by_route.setdefault(candidate.route, []).append(candidate)
+    lines = ["[memory]", "### Retrieved Memories (Contextual)"]
+    for route in ("must_aware", "action_tips", "reliability_warning", "context", "connection_links", "emotional_context"):
+        items = by_route.get(route) or []
+        if not items:
+            continue
+        lines.append(f"[ {route} ]")
+        for candidate in items:
+            hit = candidate.hit
+            source = hit.source or "memory"
+            content = _shrink_memory_content(hit.content, max_content_chars)
+            scores = candidate.scores
+            lines.append(
+                "- "
+                f"{source} "
+                f"(u={candidate.utility:.3f} sim={scores.get('sim', 0.0):.3f} "
+                f"R={scores.get('r', 0.0):.2f} O={scores.get('o', 0.0):.2f} "
+                f"A={scores.get('a', 0.0):.2f} P={scores.get('p', 0.0):.2f}): "
+                f"{content}"
+            )
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _metadata_with_memory_profile(
+    metadata: dict[str, Any],
+    profile: MemoryEntityProfile,
+) -> dict[str, Any]:
+    enriched = dict(metadata)
+    manifest = profile.manifest()
+    enriched["memory_entity_profile"] = manifest
+    enriched.setdefault("tags", list(profile.tags))
+    enriched.setdefault("potential_questions", list(profile.potential_questions))
+    enriched["core_pact_scores"] = dict(manifest["scores"])
+    enriched["core_pact_vector"] = list(manifest["core_pact_vector"])
+    for key, value in profile.scores.items():
+        enriched.setdefault(f"{key}_score", float(value))
+    return enriched
+
+
+def _infer_core_pact_scores(
+    content: str,
+    metadata: dict[str, Any],
+    *,
+    query_hint: str = "",
+) -> dict[str, float]:
+    existing = _core_pact_scores_from_metadata(metadata)
+    if existing:
+        return existing
+    text = " ".join((content, str(metadata.get("kind") or ""), str(metadata.get("source") or ""))).lower()
+    tags = _string_tuple(metadata.get("tags"))
+    questions = _string_tuple(metadata.get("potential_questions"))
+    query_terms = _memory_terms(query_hint)
+    relevance = _term_overlap(content, query_terms) if query_terms else 0.55
+    actionability = 0.78 if _contains_any(
+        text,
+        ("should", "must", "use ", "run ", "check ", "prefer", "step", "guidance", "playbook", "fix"),
+    ) else 0.42
+    preference = 0.76 if _contains_any(text, ("prefer", "always", "never", "policy", "constraint", "must")) else 0.36
+    origin = 0.32 if _contains_any(text, ("unverified", "unknown", "guess", "maybe")) else 0.68
+    emotion = 0.70 if _contains_any(text, ("frustrated", "worried", "angry", "blocked")) else 0.20
+    connectivity = min(0.9, 0.30 + 0.08 * len(tags) + 0.05 * len(questions))
+    timeliness = 0.78 if _contains_any(text, ("now", "current", "latest", "today", "recent")) else 0.55
+    return {
+        "c": _clamp01(connectivity),
+        "o": _clamp01(origin),
+        "r": _clamp01(relevance),
+        "e": _clamp01(emotion),
+        "p": _clamp01(preference),
+        "a": _clamp01(actionability),
+        "t": _clamp01(timeliness),
+    }
+
+
+def _infer_memory_tags(content: str, metadata: dict[str, Any], *, limit: int = 8) -> tuple[str, ...]:
+    explicit = _string_tuple(metadata.get("tags"))
+    if explicit:
+        return explicit[:limit]
+    candidates = [
+        str(metadata.get("kind") or ""),
+        str(metadata.get("entity_type") or ""),
+        str(metadata.get("scope") or ""),
+        str(metadata.get("bucket") or ""),
+        *_memory_terms(content),
+    ]
+    stop = {
+        "this",
+        "that",
+        "with",
+        "from",
+        "have",
+        "about",
+        "before",
+        "after",
+        "should",
+        "must",
+        "memory",
+    }
+    tags: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        tag = _normalize_memory_text(candidate).replace(" ", "_")
+        if not tag or len(tag) < 3 or tag in stop or tag in seen:
+            continue
+        seen.add(tag)
+        tags.append(tag[:48])
+        if len(tags) >= limit:
+            break
+    return tuple(tags)
+
+
+def _infer_potential_questions(
+    content: str,
+    tags: tuple[str, ...],
+    *,
+    limit: int = 4,
+) -> tuple[str, ...]:
+    collapsed = " ".join(str(content or "").split())
+    if not collapsed:
+        return ()
+    subject = ", ".join(tags[:3]) if tags else _shrink_memory_content(collapsed, 64)
+    questions = [
+        f"What prior context is relevant to {subject}?",
+        f"When should this memory affect actions about {subject}?",
+    ]
+    if _contains_any(collapsed.lower(), ("must", "should", "prefer", "always", "never")):
+        questions.append(f"What constraints or preferences apply to {subject}?")
+    if _contains_any(collapsed.lower(), ("unverified", "evidence", "confirm", "verify")):
+        questions.append(f"What evidence should be verified for {subject}?")
+    return tuple(dict.fromkeys(questions))[:limit]
+
+
+def _core_pact_score(metadata: dict[str, Any], key: str) -> float:
+    scores = _core_pact_scores_from_metadata(metadata)
+    if key in scores:
+        return _clamp01(scores[key])
+    return _metadata_score(metadata, CORE_PACT_METADATA_KEYS[key])
+
+
+def _core_pact_scores_from_metadata(metadata: dict[str, Any]) -> dict[str, float]:
+    nested = metadata.get("core_pact_scores")
+    if not isinstance(nested, dict):
+        nested = metadata.get("scores")
+    scores: dict[str, float] = {}
+    if isinstance(nested, dict):
+        for key in CORE_PACT_SCORE_KEYS:
+            if key in nested:
+                scores[key] = _clamp01(nested.get(key))
+            elif f"{key}_score" in nested:
+                scores[key] = _clamp01(nested.get(f"{key}_score"))
+    for key in CORE_PACT_SCORE_KEYS:
+        if key not in scores:
+            value = _metadata_score(metadata, CORE_PACT_METADATA_KEYS[key])
+            if value:
+                scores[key] = value
+    if not scores:
+        return {}
+    return {key: _clamp01(scores.get(key, 0.0)) for key in CORE_PACT_SCORE_KEYS}
+
+
+def _core_pact_vector_from_metadata(metadata: dict[str, Any]) -> tuple[float, ...]:
+    raw = metadata.get("core_pact_vector")
+    if raw is None:
+        raw = metadata.get("vector")
+    values = _float_tuple(raw)
+    if len(values) == len(CORE_PACT_SCORE_KEYS):
+        return tuple(_clamp01(value) for value in values)
+    return ()
+
+
+def _core_pact_vector(scores: dict[str, float]) -> tuple[float, ...]:
+    return tuple(_clamp01(scores.get(key, 0.0)) for key in CORE_PACT_SCORE_KEYS)
+
+
+def _metadata_score(metadata: dict[str, Any], keys: tuple[str, ...]) -> float:
+    for key in keys:
+        if key not in metadata:
+            continue
+        value = metadata.get(key)
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        try:
+            return _clamp01(float(value))
+        except (TypeError, ValueError):
+            text = str(value).strip().lower()
+            if text in {"high", "strong", "trusted", "verified"}:
+                return 0.9
+            if text in {"medium", "normal", "partial"}:
+                return 0.55
+            if text in {"low", "weak", "unverified", "unknown"}:
+                return 0.25
+    return 0.0
+
+
+def _memory_terms(text: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for token in re.findall(r"[a-zA-Z0-9_/-]{3,}", str(text or "").lower())
+        if token
+    )
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value.strip(),) if value.strip() else ()
+    try:
+        return tuple(str(item).strip() for item in value or () if str(item).strip())
+    except TypeError:
+        return ()
+
+
+def _float_tuple(value: Any) -> tuple[float, ...]:
+    try:
+        return tuple(float(item) for item in value or ())
+    except (TypeError, ValueError):
+        return ()
+
+
+def _term_overlap(text: str, query_terms: frozenset[str]) -> float:
+    if not query_terms:
+        return 0.0
+    terms = _memory_terms(text)
+    if not terms:
+        return 0.0
+    return min(1.0, len(terms & query_terms) / max(1, len(query_terms)))
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    text = str(text or "").lower()
+    return any(needle in text for needle in needles)
+
+
+def _clamp01(value: Any) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if numeric < 0:
+        return 0.0
+    if numeric > 1:
+        return 1.0
+    return numeric
+
+
+def _shrink_memory_content(text: str, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    limit = max(32, int(limit))
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
 
 
 class MemoryPort(Protocol):
@@ -515,7 +1335,7 @@ class MemoryCenter(MemoryPort):
                 namespaces=tuple(namespaces),
                 supports_keyword=supports_keyword,
                 supports_semantic=supports_semantic,
-                supports_vector=supports_vector,
+                supports_vector=supports_vector or _store_supports_strategy_vector(store),
                 supports_graph=supports_graph,
                 tags=tuple(tags),
                 metadata=dict(metadata or {}),
@@ -679,6 +1499,14 @@ class MemoryRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = ""
 
+    @property
+    def entity_profile(self) -> MemoryEntityProfile:
+        return build_memory_entity_profile(self)
+
+    @property
+    def core_pact_vector(self) -> tuple[float, ...]:
+        return self.entity_profile.core_pact_vector
+
     def hit(self, *, score: float) -> MemoryHit:
         return MemoryHit(
             content=self.content,
@@ -712,10 +1540,12 @@ class InMemoryMemoryStore(MemoryPort):
                 model=self.embedding_model,
                 dimensions=self.embedding_dimensions or len(query.vector),
                 limit=query.limit,
+                query_vector=query.vector,
             )
-        return _rank_memory_records(query.query, records, limit=query.limit)
+        return _rank_memory_records(query.query, records, limit=query.limit, query_vector=query.vector)
 
     async def write(self, item: MemoryWrite) -> None:
+        item = enrich_memory_write(item)
         self.records.append(
             MemoryRecord(
                 content=item.content,
@@ -729,9 +1559,14 @@ class InMemoryMemoryStore(MemoryPort):
         return {
             "schema_version": "agent-core-in-memory-memory-store/v1",
             "backend_kind": "in_memory",
-            "backend": storage_backend_manifest(role="memory", kind="in_memory"),
+            "backend": storage_backend_manifest(
+                role="memory",
+                kind="in_memory",
+                capabilities=("keyword", "semantic", "vector"),
+            ),
             "record_count": len(self.records),
             "semantic_ranking": self.embedding_provider is not None,
+            "strategy_vector_index": True,
         }
 
 
@@ -863,9 +1698,15 @@ class SQLiteMemoryStore(MemoryPort):
 
     async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
         records = [record for record in self._records() if _matches_filters(record, query.filters)]
-        return _rank_memory_records(query.query, records, limit=query.limit)
+        return _rank_memory_records(
+            query.query,
+            records,
+            limit=query.limit,
+            query_vector=query.vector,
+        )
 
     async def write(self, item: MemoryWrite) -> None:
+        item = enrich_memory_write(item)
         with sqlite3.connect(self.path) as conn:
             conn.execute(
                 """
@@ -889,10 +1730,11 @@ class SQLiteMemoryStore(MemoryPort):
                 role="memory",
                 kind="sqlite",
                 location=str(self.path),
-                capabilities=("keyword", "semantic"),
+                capabilities=("keyword", "semantic", "vector"),
             ),
             "path": str(self.path),
             "record_count": len(self._records()),
+            "strategy_vector_index": True,
         }
 
     def _init(self) -> None:
@@ -950,9 +1792,15 @@ class MarkdownMemoryStore(MemoryPort):
 
     async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
         records = [record for record in self._records() if _matches_filters(record, query.filters)]
-        return _rank_memory_records(query.query, records, limit=query.limit)
+        return _rank_memory_records(
+            query.query,
+            records,
+            limit=query.limit,
+            query_vector=query.vector,
+        )
 
     async def write(self, item: MemoryWrite) -> None:
+        item = enrich_memory_write(item)
         payload = {
             "source": item.source,
             "metadata": item.metadata,
@@ -975,11 +1823,12 @@ class MarkdownMemoryStore(MemoryPort):
                 role="memory",
                 kind="markdown",
                 location=str(self.path),
-                capabilities=("keyword", "semantic"),
+                capabilities=("keyword", "semantic", "vector"),
             ),
             "root": str(self.root),
             "path": str(self.path),
             "record_count": len(self._records()),
+            "strategy_vector_index": True,
         }
 
     def _records(self) -> tuple[MemoryRecord, ...]:
@@ -1059,25 +1908,30 @@ def _parse_markdown_entries(text: str) -> tuple[dict[str, Any], ...]:
     return tuple(entries)
 
 
-def _rank_memory_records(query: str, records: list[MemoryRecord], *, limit: int) -> tuple[MemoryHit, ...]:
-    documents = tuple(
-        SearchDocument(
-            item=record,
-            text=" ".join(
-                (
-                    record.content,
-                    record.source,
-                    " ".join(str(value) for value in record.metadata.values()),
-                )
-            ),
-            name=record.source,
-        )
-        for record in records
-    )
-    ranked = rank_documents(query, documents, limit=limit)
-    if query.strip():
-        return tuple(record.hit(score=max(0.001, 1.0 / (index + 1))) for index, record in enumerate(ranked))
-    return tuple(record.hit(score=0.0) for record in records[:limit])
+def _rank_memory_records(
+    query: str,
+    records: list[MemoryRecord],
+    *,
+    limit: int,
+    query_vector: tuple[float, ...] = (),
+) -> tuple[MemoryHit, ...]:
+    if not records:
+        return ()
+    documents = _memory_search_documents(records)
+    keyword_scores = _keyword_scores(query, documents)
+    strategy_scores = _strategy_vector_scores(query, records, query_vector=query_vector)
+    if not query.strip() and not query_vector:
+        return tuple(record.hit(score=0.0) for record in records[:limit])
+    scored: list[tuple[float, str, str, MemoryRecord]] = []
+    for record in records:
+        keyword_score = keyword_scores.get(id(record), 0.0)
+        strategy_score = strategy_scores.get(id(record), 0.0)
+        score = (keyword_score * 0.72) + (strategy_score * 0.28)
+        if score <= 0:
+            continue
+        scored.append((score, record.created_at, record.source, record))
+    scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return tuple(record.hit(score=_clamp01(score)) for score, _, _, record in scored[:limit])
 
 
 async def _rank_memory_records_semantic(
@@ -1088,32 +1942,141 @@ async def _rank_memory_records_semantic(
     model: str = "",
     dimensions: int = 0,
     limit: int,
+    query_vector: tuple[float, ...] = (),
 ) -> tuple[MemoryHit, ...]:
-    documents = tuple(
-        SearchDocument(
-            item=record,
-            text=" ".join(
-                (
-                    record.content,
-                    record.source,
-                    " ".join(str(value) for value in record.metadata.values()),
-                )
-            ),
-            name=record.source,
-        )
-        for record in records
-    )
+    if not records:
+        return ()
+    documents = _memory_search_documents(records)
     ranked = await rank_semantic_documents(
         query,
         documents,
         provider=provider,
         model=model,
         dimensions=dimensions,
-        limit=limit,
+        limit=0,
     )
-    if query.strip():
-        return tuple(hit.item.hit(score=hit.score) for hit in ranked)
-    return tuple(record.hit(score=0.0) for record in records[:limit])
+    if not query.strip() and not query_vector:
+        return tuple(record.hit(score=0.0) for record in records[:limit])
+    if not ranked:
+        return _rank_memory_records(query, records, limit=limit, query_vector=query_vector)
+    semantic_scores = {id(hit.item): _clamp01(hit.score) for hit in ranked}
+    keyword_scores = _keyword_scores(query, documents)
+    strategy_scores = _strategy_vector_scores(query, records, query_vector=query_vector)
+    scored: list[tuple[float, str, str, MemoryRecord]] = []
+    for record in records:
+        semantic_score = semantic_scores.get(id(record), 0.0)
+        keyword_score = keyword_scores.get(id(record), 0.0)
+        strategy_score = strategy_scores.get(id(record), 0.0)
+        score = (semantic_score * 0.56) + (keyword_score * 0.26) + (strategy_score * 0.18)
+        if score <= 0:
+            continue
+        scored.append((score, record.created_at, record.source, record))
+    scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return tuple(record.hit(score=_clamp01(score)) for score, _, _, record in scored[:limit])
+
+
+def _memory_search_documents(records: list[MemoryRecord]) -> tuple[SearchDocument[MemoryRecord], ...]:
+    return tuple(
+        SearchDocument(
+            item=record,
+            text=_memory_record_search_text(record),
+            name=record.source,
+        )
+        for record in records
+    )
+
+
+def _memory_record_search_text(record: MemoryRecord) -> str:
+    profile = record.entity_profile
+    metadata_text = _memory_record_metadata_search_text(record.metadata)
+    return " ".join(
+        (
+            record.content,
+            record.source,
+            metadata_text,
+            " ".join(profile.tags),
+            " ".join(profile.potential_questions),
+        )
+    )
+
+
+def _memory_record_metadata_search_text(metadata: dict[str, Any]) -> str:
+    ignored = {
+        "memory_entity_profile",
+        "core_pact_scores",
+        "core_pact_vector",
+        "signals",
+        "timeline_diff",
+        "metadata",
+    }
+    parts: list[str] = []
+    for key, value in metadata.items():
+        if key in ignored:
+            continue
+        if key.endswith("_manifest") or key.endswith("_json"):
+            continue
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                parts.append(text[:160])
+            continue
+        if isinstance(value, bool | int | float):
+            parts.append(str(value))
+            continue
+        if isinstance(value, (list, tuple, set)):
+            scalars = [
+                str(item).strip()
+                for item in value
+                if isinstance(item, str | bool | int | float) and str(item).strip()
+            ]
+            parts.extend(item[:80] for item in scalars[:8])
+    return " ".join(parts)
+
+
+def _keyword_scores(
+    query: str,
+    documents: tuple[SearchDocument[MemoryRecord], ...],
+) -> dict[int, float]:
+    if not query.strip() or not documents:
+        return {}
+    ranked = rank_documents(query, documents, limit=0)
+    return {id(record): max(0.001, 1.0 / (index + 1)) for index, record in enumerate(ranked)}
+
+
+def _strategy_vector_scores(
+    query: str,
+    records: list[MemoryRecord],
+    *,
+    query_vector: tuple[float, ...] = (),
+) -> dict[int, float]:
+    vector = _resolve_query_core_pact_vector(query, query_vector)
+    if not vector:
+        return {}
+    scores: dict[int, float] = {}
+    for record in records:
+        score = _cosine_score(vector, record.core_pact_vector)
+        if score > 0:
+            scores[id(record)] = score
+    return scores
+
+
+def _resolve_query_core_pact_vector(query: str, query_vector: tuple[float, ...]) -> tuple[float, ...]:
+    if len(query_vector) == len(CORE_PACT_SCORE_KEYS):
+        return tuple(_clamp01(value) for value in query_vector)
+    if not query.strip():
+        return ()
+    return _core_pact_vector(_infer_core_pact_scores(query, {}, query_hint=query))
+
+
+def _cosine_score(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    numerator = sum(a * b for a, b in zip(left, right, strict=True))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm <= 0 or right_norm <= 0:
+        return 0.0
+    return _clamp01(numerator / (left_norm * right_norm))
 
 
 def _matches_filters(record: MemoryRecord, filters: dict[str, Any]) -> bool:
@@ -1144,6 +2107,19 @@ def _store_supports_route(spec: MemoryStoreSpec, route: MemoryRoute) -> bool:
     if mode == "hybrid":
         return spec.supports_keyword or spec.supports_semantic or spec.supports_vector or spec.supports_graph
     return True
+
+
+def _store_supports_strategy_vector(store: MemoryPort) -> bool:
+    if isinstance(store, (InMemoryMemoryStore, SQLiteMemoryStore, MarkdownMemoryStore)):
+        return True
+    manifest = getattr(store, "manifest", None)
+    if not callable(manifest):
+        return False
+    try:
+        value = manifest()
+    except Exception:
+        return False
+    return bool(isinstance(value, dict) and value.get("strategy_vector_index"))
 
 
 def _memory_query_audit_manifest(query: MemoryQuery) -> dict[str, Any]:

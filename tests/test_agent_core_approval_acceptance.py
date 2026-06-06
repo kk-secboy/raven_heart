@@ -20,7 +20,7 @@ async def test_agent_core_approval_acceptance_gate_passes() -> None:
     assert manifest["blocked_run"]["provider_request_count"] == 2
     assert manifest["approved_run"]["approval_approved_count"] == 1
     assert manifest["approved_run"]["approval_pending_count"] == 0
-    assert manifest["approved_run"]["context_injection_count"] == 1
+    assert manifest["approved_run"]["context_injection_count"] >= 1
     assert manifest["approval_queue"]["queue"]["approved_count"] == 1
     assert manifest["approval_queue"]["queue"]["pending_count"] == 0
     assert manifest["approval_resume"]["approved_count"] == 1

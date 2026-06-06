@@ -183,6 +183,43 @@ async def test_plan_executor_runs_ready_steps_and_updates_dependencies() -> None
 
 
 @pytest.mark.asyncio
+async def test_plan_executor_records_step_timeline_baseline_and_diff() -> None:
+    planner = InMemoryPlanner()
+    manager = AgentSessionManager()
+    manager.register(
+        AgentSession(
+            profile=AgentProfile(name="worker"),
+            provider=MockLLMProvider([{"action": "finish", "arguments": {"output": "done"}}]),
+            tools=MockToolRuntime(),
+        )
+    )
+
+    report = await PlanExecutor(
+        planner=planner,
+        manager=manager,
+        default_session="worker",
+    ).execute(
+        "ship sdk",
+        context={"plan_id": "plan-1", "steps": [{"step_id": "audit", "goal": "Audit core"}]},
+    )
+
+    assert report.status == "completed"
+    metadata = report.steps[0].metadata
+    assert metadata["timeline_baseline"]["schema_version"] == "agent-core-timeline-cursor/v1"
+    assert metadata["timeline_baseline"]["last_item_id"] == ""
+    diff = metadata["timeline_diff"]
+    assert diff["schema_version"] == "agent-core-timeline-diff/v1"
+    assert diff["cursor"] == metadata["timeline_baseline"]
+    assert diff["item_count"] >= 3
+    assert {"task", "model", "final"}.issubset(set(diff["kinds"]))
+    assert metadata["timeline_diff_item_count"] == diff["item_count"]
+    assert "final" in metadata["timeline_diff_kinds"]
+    planned_step = report.plan.step("audit")
+    assert planned_step is not None
+    assert planned_step.metadata["timeline_diff"]["item_count"] == diff["item_count"]
+
+
+@pytest.mark.asyncio
 async def test_plan_executor_uses_step_session_metadata() -> None:
     planner = InMemoryPlanner()
     manager = AgentSessionManager()

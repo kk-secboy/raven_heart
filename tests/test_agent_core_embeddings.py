@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent_core.embeddings import (
@@ -12,6 +14,7 @@ from agent_core.embeddings import (
     deterministic_text_embedding,
     rank_semantic_documents,
 )
+from agent_core.live_adapters import ZhipuEmbedding3Provider
 from agent_core.memory import InMemoryMemoryStore, MemoryQuery, MemoryRecord
 from agent_core.search import SearchDocument
 
@@ -118,6 +121,46 @@ async def test_in_memory_store_can_use_embedding_semantic_ranking() -> None:
     assert hits[0].source == "credential"
     assert hits[0].score > hits[1].score
     assert store.manifest()["semantic_ranking"] is True
+
+
+class _FakeZhipuEmbedding3Provider(ZhipuEmbedding3Provider):
+    def __init__(self) -> None:
+        super().__init__(api_key="test", max_inputs_per_request=4, default_dimensions=3)
+        self.input_counts: list[int] = []
+
+    def _post(self, body: bytes) -> bytes:
+        payload = json.loads(body.decode("utf-8"))
+        inputs = payload["input"]
+        texts = [inputs] if isinstance(inputs, str) else list(inputs)
+        self.input_counts.append(len(texts))
+        return json.dumps(
+            {
+                "model": payload["model"],
+                "data": [
+                    {"index": index, "embedding": [float(index + 1), 0.0, 1.0]}
+                    for index, _ in enumerate(texts)
+                ],
+                "usage": {"total_tokens": len(texts)},
+            }
+        ).encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_zhipu_embedding_provider_chunks_large_batches() -> None:
+    provider = _FakeZhipuEmbedding3Provider()
+
+    response = await provider.embed(
+        EmbeddingRequest(
+            inputs=tuple(
+                EmbeddingInput(text=f"doc {index}", name=f"doc-{index}") for index in range(9)
+            )
+        )
+    )
+
+    assert provider.input_counts == [4, 4, 1]
+    assert [vector.index for vector in response.vectors] == list(range(9))
+    assert [vector.name for vector in response.vectors] == [f"doc-{index}" for index in range(9)]
+    assert response.metadata["usage"]["total_tokens"] == 9
 
 
 def test_deterministic_text_embedding_and_cosine_are_stable() -> None:

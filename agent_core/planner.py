@@ -407,7 +407,13 @@ class PlanExecutor:
 
     async def _execute_step(self, plan: Plan, step: PlanStep) -> PlanExecutionStep:
         session_name = str(step.metadata.get("session_name") or self.default_session)
+        session = None
+        timeline_cursor = None
+        timeline_baseline: dict[str, Any] = {}
         try:
+            session = self.manager.session(session_name)
+            timeline_cursor = session.timeline.cursor()
+            timeline_baseline = timeline_cursor.manifest()
             outcome = await self.manager.run(
                 session_name,
                 AgentRunRequest(
@@ -421,14 +427,26 @@ class PlanExecutor:
                 ),
             )
         except Exception as exc:
+            metadata: dict[str, Any] = {}
+            if session is not None and timeline_cursor is not None:
+                metadata = _plan_step_timeline_metadata(
+                    baseline=timeline_baseline,
+                    diff=session.timeline.diff_since(timeline_cursor),
+                )
             return PlanExecutionStep(
                 plan_id=plan.plan_id,
                 step_id=step.step_id,
                 session_name=session_name,
                 status="failed",
                 error=str(exc),
+                metadata=metadata,
             )
-        return _execution_step_from_outcome(plan, step, session_name, outcome)
+        record = _execution_step_from_outcome(plan, step, session_name, outcome)
+        return _plan_step_with_timeline(
+            record,
+            baseline=timeline_baseline,
+            diff=session.timeline.diff_since(timeline_cursor),
+        )
 
 
 class InMemoryPlanner(PlannerPort):
@@ -611,6 +629,37 @@ def _execution_step_from_outcome(
             "trace_run_id": outcome.trace_manifest.get("run", {}).get("run_id", ""),
         },
     )
+
+
+def _plan_step_with_timeline(
+    record: PlanExecutionStep,
+    *,
+    baseline: dict[str, Any],
+    diff: Any,
+) -> PlanExecutionStep:
+    return PlanExecutionStep(
+        plan_id=record.plan_id,
+        step_id=record.step_id,
+        session_name=record.session_name,
+        status=record.status,
+        run_id=record.run_id,
+        output=record.output,
+        error=record.error,
+        metadata={
+            **dict(record.metadata),
+            **_plan_step_timeline_metadata(baseline=baseline, diff=diff),
+        },
+    )
+
+
+def _plan_step_timeline_metadata(*, baseline: dict[str, Any], diff: Any) -> dict[str, Any]:
+    manifest = diff.manifest()
+    return {
+        "timeline_baseline": dict(baseline),
+        "timeline_diff": manifest,
+        "timeline_diff_item_count": int(manifest.get("item_count") or 0),
+        "timeline_diff_kinds": list(manifest.get("kinds") or ()),
+    }
 
 
 _PLAN_MARKDOWN_RE = re.compile(r"<!--\s*planner-record\s+([A-Za-z0-9+/=]+)\s*-->")

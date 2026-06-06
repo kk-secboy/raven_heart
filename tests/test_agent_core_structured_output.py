@@ -14,6 +14,14 @@ from agent_core.structured import JsonStructuredOutputValidator, StructuredOutpu
 from agent_core.testing import InMemoryHarness, MockLLMProvider, MockToolRuntime
 
 
+def _request_prompt_text(request) -> str:
+    return "\n\n".join(
+        message.content
+        for message in request.messages
+        if message.metadata.get("agent_core_prompt")
+    )
+
+
 def _answer_schema() -> dict[str, object]:
     return {
         "type": "object",
@@ -131,7 +139,7 @@ async def test_agent_runner_injects_structured_output_schema_into_prompt() -> No
         )
     )
 
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     assert outcome.result.status == "completed"
     assert "existing schema note" in prompt_text
     assert "== Structured Output ==" in prompt_text

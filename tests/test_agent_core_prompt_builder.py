@@ -70,13 +70,21 @@ async def test_prompt_builder_places_tools_skills_timeline_in_expected_buckets()
 
     assert "system rules" in prompt.bucket(PromptBucketRole.HIGH_STATIC).content
     assert "[tool_inventory]" in prompt.bucket(PromptBucketRole.FROZEN).content
-    assert "[timeline_frozen]" in prompt.bucket(PromptBucketRole.FROZEN).content
+    assert "[timeline_frozen]" not in prompt.bucket(PromptBucketRole.FROZEN).content
     assert "[skills_context]" in prompt.bucket(PromptBucketRole.SEMI_DYNAMIC_1).content
     assert "[recent_tools_cache]" in prompt.bucket(PromptBucketRole.SEMI_DYNAMIC_1).content
+    assert "[skills_context]" not in prompt.bucket(PromptBucketRole.SEMI_DYNAMIC_2).content
     assert "[schema]" in prompt.bucket(PromptBucketRole.SEMI_DYNAMIC_2).content
+    assert "[timeline_frozen]" in prompt.bucket(PromptBucketRole.TIMELINE_OPEN).content
     assert "[timeline_open]" in prompt.bucket(PromptBucketRole.TIMELINE_OPEN).content
     assert "[workspace]" in prompt.bucket(PromptBucketRole.TIMELINE_OPEN).content
     assert "inspect target" in prompt.bucket(PromptBucketRole.DYNAMIC).content
+    assert prompt.bucket(PromptBucketRole.SEMI_DYNAMIC_1).manifest()["cache_hint"][
+        "cacheable"
+    ] is False
+    assert prompt.bucket(PromptBucketRole.SEMI_DYNAMIC_2).manifest()["cache_hint"][
+        "cacheable"
+    ] is True
 
 
 def test_prompt_builder_places_context_injections_by_target_bucket() -> None:
@@ -262,7 +270,42 @@ def test_context_material_selector_reports_target_score_and_budget_drops() -> No
         "selected": 1,
         "target_denied": 1,
     }
-    assert manifest["targets"] == {"semi_dynamic_1": 1}
+    assert manifest["targets"] == {"timeline_open": 1}
+
+
+def test_context_material_selector_places_stable_skill_and_volatile_memory_materials() -> None:
+    result = DefaultContextMaterialSelector().select(
+        ContextMaterialSelectionRequest(
+            task="payment auth",
+            materials=(
+                ContextMaterial(
+                    name="auth_skill",
+                    content="payment auth validation checklist",
+                    role="skill",
+                    priority=4,
+                ),
+                ContextMaterial(
+                    name="auth_memory",
+                    content="payment auth failed before on retry",
+                    role="memory",
+                    priority=3,
+                ),
+            ),
+            max_materials=2,
+            max_bytes=256,
+        )
+    )
+
+    by_name = {selection.material.name: selection for selection in result.selections}
+
+    assert by_name["auth_skill"].target == PromptBucketRole.SEMI_DYNAMIC_1
+    assert by_name["auth_memory"].target == PromptBucketRole.TIMELINE_OPEN
+    assert {
+        injection.name: injection.target for injection in result.injections
+    } == {
+        "auth_skill": PromptBucketRole.SEMI_DYNAMIC_1,
+        "auth_memory": PromptBucketRole.TIMELINE_OPEN,
+    }
 
 
 def test_skills_context_renders_loaded_and_available_sections() -> None:

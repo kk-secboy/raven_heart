@@ -1210,7 +1210,7 @@ async def test_agent_runner_exports_run_trace_bundle() -> None:
     assert trace["prompt"]["metadata"]["profile"] == "traceable"
     assert trace["summary"]["capability_discovery_match_count"] == trace["capability_discovery"]["match_count"]
     assert trace["summary"]["memory_search_hit_count"] == 0
-    assert trace["summary"]["context_injection_count"] == 0
+    assert trace["summary"]["context_injection_count"] >= 1
     assert trace["summary"]["storage_backend_count"] >= 7
     assert trace["storage_backends"]["roles"]["memory"] == 1
     assert trace["storage_backends"]["roles"]["journal"] == 1

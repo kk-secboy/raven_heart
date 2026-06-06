@@ -19,7 +19,7 @@ from agent_core.actions import ActionRegistry, ActionVerifierPort
 from agent_core.approvals import ApprovalResumeContext, ApprovalStorePort, NullApprovalStore
 from agent_core.artifacts import ArtifactStorePort
 from agent_core.backends import storage_backend_catalog_from_components, storage_backend_manifest
-from agent_core.capabilities import CapabilityCatalog, CapabilityQuery
+from agent_core.capabilities import CapabilityCatalog, CapabilityQuery, CapabilityRecallRequest
 from agent_core.config import AgentProfile, RuntimeBudget
 from agent_core.context import (
     AgentContextPack,
@@ -32,6 +32,7 @@ from agent_core.context import (
     ContextMaterialSelectionResult,
     ContextMaterialSelectorPort,
     ContextMaterialStorePort,
+    DefaultContextMaterialSelector,
 )
 from agent_core.events import (
     AgentEvent,
@@ -52,7 +53,25 @@ from agent_core.harness import (
 )
 from agent_core.lifecycle import AgentLifecycleEvent, AgentLifecycleHookCenter, NullLifecycleHooks
 from agent_core.loop_guard import LoopGuard
-from agent_core.memory import MemoryHit, MemoryPort, MemoryQuery, NullMemory
+from agent_core.knowledge import (
+    DefaultKnowledgeRecall,
+    DefaultMidtermTimelineRecall,
+    KnowledgeRecallPort,
+    KnowledgeRecallRequest,
+    MidtermTimelineRecallPort,
+    MidtermTimelineRecallRequest,
+)
+from agent_core.memory import (
+    MemoryFlushBuffer,
+    MemoryFlushSignal,
+    MemoryHit,
+    MemoryPort,
+    MemoryQuery,
+    MemoryWrite,
+    NullMemory,
+    build_memory_injection,
+    infer_memory_recall_intent,
+)
 from agent_core.mcp import MCPCenter, MCPContextMaterialRequest
 from agent_core.policy import NullPolicyDecisionStore, PolicyDecisionStorePort, PolicyPort
 from agent_core.preflight import (
@@ -78,6 +97,20 @@ from agent_core.task_contract import AgentTaskContract
 from agent_core.timeline import TimelineBudget, TimelineStore, TimelineStorePort
 from agent_core.tools import NullToolReplay, ToolReplayPort, ToolRuntimePort
 from agent_core.trace import AgentJournalReplay, AgentRunTraceBundle, NullRunTraceStore, RunTraceStorePort
+from agent_core.turn_runtime import (
+    CapabilityRefreshPort,
+    DeterministicPerceptionEvaluator,
+    LoopStateFrame,
+    NullCapabilityRefresh,
+    PerceptionDownstreamScheduler,
+    PerceptionControllerPort,
+    ToolResultEvent,
+    TurnCompletedEvent,
+    TurnContextRefresherPort,
+    TurnRefreshRequest,
+    TurnRefreshResult,
+    YaklangStylePerceptionController,
+)
 
 
 @dataclass
@@ -111,9 +144,16 @@ class AgentSession:
     structured_output_validator: StructuredOutputValidatorPort | None = None
     loop_guard: LoopGuard | None = None
     artifact_store: ArtifactStorePort | None = None
+    turn_refresher: TurnContextRefresherPort | None = None
+    perception_controller: PerceptionControllerPort | None = None
+    capability_refresher: CapabilityRefreshPort | None = None
+    knowledge_recall: KnowledgeRecallPort | None = None
+    midterm_timeline_recall: MidtermTimelineRecallPort | None = None
     cancel_token: CancelToken = field(default_factory=CancelToken)
     native_tool_calls: bool = False
     stream: bool = False
+    provider_cache_mode: str = "strip"
+    provider_cache_min_segment_bytes: int = 1024
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def reset_cancel_token(self) -> None:
@@ -158,8 +198,22 @@ class AgentSession:
             "lifecycle_hooks": self.lifecycle_hooks.manifest(),
             "preflight": self.preflight.manifest(),
             "artifact_store": _component_manifest_sync(self.artifact_store),
+            "turn_refresher": _component_manifest_sync(self.turn_refresher)
+            or {"enabled": self.turn_refresher is not None},
+            "perception_controller": _component_manifest_sync(self.perception_controller)
+            or {"enabled": self.perception_controller is not None},
+            "capability_refresher": _component_manifest_sync(self.capability_refresher)
+            or {"enabled": self.capability_refresher is not None},
+            "knowledge_recall": _component_manifest_sync(self.knowledge_recall)
+            or {"enabled": self.knowledge_recall is not None},
+            "midterm_timeline_recall": _component_manifest_sync(self.midterm_timeline_recall)
+            or {"enabled": self.midterm_timeline_recall is not None},
             "native_tool_calls": self.native_tool_calls,
             "stream": self.stream,
+            "provider_cache": {
+                "mode": self.provider_cache_mode,
+                "min_segment_bytes": self.provider_cache_min_segment_bytes,
+            },
             "context_reducer": _context_reducer_manifest(self.context_reducer),
             "context_material_selector": _context_material_selector_manifest(
                 self.context_material_selector
@@ -252,6 +306,10 @@ class AgentRunOutcome:
     timeline_reduction_manifest: dict[str, Any] = field(default_factory=dict)
     capability_discovery_manifest: dict[str, Any] = field(default_factory=dict)
     memory_search_manifest: dict[str, Any] = field(default_factory=dict)
+    knowledge_recall_manifest: dict[str, Any] = field(default_factory=dict)
+    midterm_timeline_recall_manifest: dict[str, Any] = field(default_factory=dict)
+    downstream_plan_manifest: dict[str, Any] = field(default_factory=dict)
+    loop_state_manifest: dict[str, Any] = field(default_factory=dict)
     preflight_manifest: dict[str, Any] = field(default_factory=dict)
     trace_manifest: dict[str, Any] = field(default_factory=dict)
 
@@ -727,36 +785,47 @@ class AgentRunner:
             if not preflight.ok:
                 return await self._preflight_blocked_outcome(run_request, preflight)
             resume_manifest = await self._resume_manifest(run_request.resume_token)
-            capability_discovery_manifest = self._capability_discovery_manifest(run_request)
-            memory_recall = await self._memory_recall(run_request)
-            context_material_selection = await self._context_material_selection(run_request)
-            timeline_reduction_manifest = await self._reduce_timeline_if_needed(run_request)
-            context = self._context_for(
-                run_request,
+            bootstrap_prompt = PromptIR.from_parts(
+                dynamic=run_request.task,
+                metadata={
+                    "schema_version": "agent-core-bootstrap-prompt/v1",
+                    "profile": self.session.profile.name,
+                    "request_metadata": dict(run_request.metadata),
+                    "resume": resume_manifest,
+                },
+            )
+            turn_refresher = self.session.turn_refresher or _RunnerTurnContextRefresher(
+                self,
+                run_request=run_request,
                 resume_manifest=resume_manifest,
-                injections=(*memory_recall.injections, *context_material_selection.injections),
-                context_material_selection_manifest=context_material_selection.manifest,
-                timeline_reduction_manifest=timeline_reduction_manifest,
             )
-            prompt = self._prompt_builder().build(context)
-            prompt_budget_plan = self._prompt_budget_plan(run_request)
-            prompt = _prompt_with_budget_plan(prompt, prompt_budget_plan)
-            if self.session.prompt_bucket_budget_policy is not None:
-                prompt = self.session.prompt_bucket_budget_policy.apply(prompt)
-            prompt = await self._semantic_trim_prompt_if_needed(
-                run_request,
-                prompt,
-                prompt_budget_plan,
-            )
-            prompt = prompt.trim_to_budget(prompt_budget_plan.target_prompt_bytes)
             executor = self._executor(
                 run_request.approval_resume,
                 run_request.structured_output,
                 run_request.timeout_seconds,
                 run_request.native_tool_calls,
                 run_request.stream,
+                turn_refresher=turn_refresher,
             )
-            result = await executor.run(run_request.task, prompt)
+            result = await executor.run(run_request.task, bootstrap_prompt)
+            prompt_manifest = dict(getattr(executor, "last_prompt_manifest", {}) or {})
+            capability_discovery_manifest = dict(
+                getattr(turn_refresher, "last_capability_manifest", {}) or {}
+            )
+            memory_search_manifest = dict(getattr(turn_refresher, "last_memory_manifest", {}) or {})
+            knowledge_recall_manifest = dict(
+                getattr(turn_refresher, "last_knowledge_manifest", {}) or {}
+            )
+            midterm_timeline_recall_manifest = dict(
+                getattr(turn_refresher, "last_midterm_timeline_manifest", {}) or {}
+            )
+            downstream_plan_manifest = dict(
+                getattr(turn_refresher, "last_downstream_plan_manifest", {}) or {}
+            )
+            loop_state_manifest = dict(getattr(turn_refresher, "last_loop_state_manifest", {}) or {})
+            timeline_reduction_manifest = dict(
+                getattr(turn_refresher, "last_timeline_reduction_manifest", {}) or {}
+            )
             await self._emit_lifecycle_event(
                 AgentLifecycleEvent(
                     type="run_completed",
@@ -774,12 +843,12 @@ class AgentRunner:
             trace_manifest = await self._trace_manifest(
                 result,
                 session_manifest=session_manifest,
-                prompt_manifest=prompt.manifest(),
+                prompt_manifest=prompt_manifest,
                 resume_manifest=resume_manifest,
                 resume_plan_manifest=_request_resume_plan_manifest(run_request),
                 timeline_reduction_manifest=timeline_reduction_manifest,
                 capability_discovery_manifest=capability_discovery_manifest,
-                memory_search_manifest=memory_recall.manifest,
+                memory_search_manifest=memory_search_manifest,
                 preflight_manifest=preflight.manifest(),
                 request=run_request,
             )
@@ -787,12 +856,16 @@ class AgentRunner:
             return AgentRunOutcome(
                 result=result,
                 session_manifest=session_manifest,
-                prompt_manifest=prompt.manifest(),
+                prompt_manifest=prompt_manifest,
                 resume_manifest=resume_manifest,
                 resume_plan_manifest=_request_resume_plan_manifest(run_request),
                 timeline_reduction_manifest=timeline_reduction_manifest,
                 capability_discovery_manifest=capability_discovery_manifest,
-                memory_search_manifest=memory_recall.manifest,
+                memory_search_manifest=memory_search_manifest,
+                knowledge_recall_manifest=knowledge_recall_manifest,
+                midterm_timeline_recall_manifest=midterm_timeline_recall_manifest,
+                downstream_plan_manifest=downstream_plan_manifest,
+                loop_state_manifest=loop_state_manifest,
                 preflight_manifest=preflight.manifest(),
                 trace_manifest=trace_manifest,
             )
@@ -1044,15 +1117,24 @@ class AgentRunner:
         }
         return manifest
 
-    def _capability_discovery_manifest(self, request: AgentRunRequest) -> dict[str, Any]:
+    def _capability_discovery_manifest(
+        self,
+        request: AgentRunRequest,
+        *,
+        query_text: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         catalog = self.session.capability_catalog()
-        query_text = (request.context.dynamic_task if request.context else "") or request.task
-        return catalog.discover(
+        resolved_query = query_text or (request.context.dynamic_task if request.context else "") or request.task
+        manifest = catalog.discover(
             CapabilityQuery(
-                query=query_text,
+                query=resolved_query,
                 limit=16,
             )
         ).manifest()
+        if metadata:
+            manifest["metadata"] = {**dict(manifest.get("metadata") or {}), **dict(metadata)}
+        return manifest
 
     async def _memory_injections(self, request: AgentRunRequest) -> tuple[ContextInjection, ...]:
         return (await self._memory_recall(request)).injections
@@ -1060,13 +1142,13 @@ class AgentRunner:
     async def _context_material_selection(
         self,
         request: AgentRunRequest,
+        *,
+        query: ContextMaterialQuery | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> AgentContextMaterialSelection:
-        selector = self.session.context_material_selector
-        if selector is None:
-            return AgentContextMaterialSelection()
-        store_materials, store_manifest = await self._stored_context_materials(request)
+        store_materials, store_manifest = await self._stored_context_materials(request, query=query)
         mcp_materials, mcp_manifest = await self._mcp_context_materials(request)
-        extra_metadata = {}
+        extra_metadata = dict(metadata or {})
         if store_manifest:
             extra_metadata["context_material_store"] = store_manifest
         if mcp_manifest:
@@ -1075,9 +1157,11 @@ class AgentRunner:
             request,
             extra_materials=(*store_materials, *mcp_materials),
             extra_metadata=extra_metadata,
+            task_override=query.query if query is not None else "",
         )
         if not selection_request.materials:
             return AgentContextMaterialSelection()
+        selector = self.session.context_material_selector or DefaultContextMaterialSelector()
         result = selector.select(selection_request)
         if inspect.isawaitable(result):
             result = await result
@@ -1098,22 +1182,36 @@ class AgentRunner:
     async def _stored_context_materials(
         self,
         request: AgentRunRequest,
+        *,
+        query: ContextMaterialQuery | None = None,
     ) -> tuple[tuple[ContextMaterial, ...], dict[str, Any]]:
-        if request.context_material_query is None or self.session.context_material_store is None:
+        context_query = query or request.context_material_query
+        if context_query is None or self.session.context_material_store is None:
             return (), {}
         store = self.session.context_material_store
         plan_search = getattr(store, "plan_search", None)
         plan_manifest = {}
         if callable(plan_search):
-            plan = plan_search(request.context_material_query)
+            plan = plan_search(context_query)
             plan_manifest_method = getattr(plan, "manifest", None)
             if callable(plan_manifest_method):
                 plan_manifest = plan_manifest_method()
-        materials = await store.search(request.context_material_query)
+        try:
+            materials = await store.search(context_query)
+        except Exception as exc:
+            return (), {
+                "schema_version": "agent-core-context-material-store-selection/v1",
+                "status": "failed",
+                "material_count": 0,
+                "query": context_query.manifest(),
+                "plan": plan_manifest,
+                "error": str(exc),
+            }
         return materials, {
             "schema_version": "agent-core-context-material-store-selection/v1",
+            "status": "completed",
             "material_count": len(materials),
-            "query": request.context_material_query.manifest(),
+            "query": context_query.manifest(),
             "plan": plan_manifest,
             "materials": [material.manifest() for material in materials],
         }
@@ -1124,10 +1222,25 @@ class AgentRunner:
     ) -> tuple[tuple[ContextMaterial, ...], dict[str, Any]]:
         if request.mcp_context_materials is None or self.session.mcp is None:
             return (), {}
-        result = await self.session.mcp.context_materials(request.mcp_context_materials)
+        try:
+            result = await self.session.mcp.context_materials(request.mcp_context_materials)
+        except Exception as exc:
+            return (), {
+                "schema_version": "agent-core-mcp-context-material-selection/v1",
+                "status": "failed",
+                "request": request.mcp_context_materials.manifest(),
+                "material_count": 0,
+                "error": str(exc),
+            }
         return result.materials, result.manifest()
 
-    async def _memory_recall(self, request: AgentRunRequest) -> AgentMemoryRecall:
+    async def _memory_recall(
+        self,
+        request: AgentRunRequest,
+        *,
+        query_text: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> AgentMemoryRecall:
         if not self.session.profile.capabilities.memory_enabled:
             return AgentMemoryRecall(
                 manifest={
@@ -1138,10 +1251,39 @@ class AgentRunner:
                 }
             )
         context = request.context or AgentContextPack()
-        query_text = context.dynamic_task or request.task
-        query = MemoryQuery(query=query_text, limit=5)
+        resolved_query_text = query_text or context.dynamic_task or request.task
+        query = MemoryQuery(
+            query=resolved_query_text,
+            limit=5,
+        )
         plan_manifest = _memory_search_plan_manifest(self.session.memory, query)
-        hits = await self.session.memory.search(query)
+        fallback_manifest: dict[str, Any] = {}
+        try:
+            hits = await asyncio.wait_for(self.session.memory.search(query), timeout=0.2)
+            timed_out = False
+        except asyncio.TimeoutError:
+            timed_out = True
+            fallback_query = MemoryQuery(
+                query=resolved_query_text,
+                limit=5,
+                mode="keyword",
+            )
+            try:
+                hits = await asyncio.wait_for(
+                    self.session.memory.search(fallback_query),
+                    timeout=0.05,
+                )
+                fallback_timed_out = False
+            except asyncio.TimeoutError:
+                hits = ()
+                fallback_timed_out = True
+            fallback_manifest = {
+                "schema_version": "agent-core-memory-recall-fallback/v1",
+                "reason": "quick_semantic_timeout",
+                "query": fallback_query.manifest(),
+                "hit_count": len(hits),
+                "timed_out": fallback_timed_out,
+            }
         manifest = {
             "schema_version": "agent-core-memory-recall/v1",
             "enabled": True,
@@ -1149,21 +1291,113 @@ class AgentRunner:
             "plan": plan_manifest,
             "hit_count": len(hits),
             "hits": [_memory_hit_manifest(hit) for hit in hits],
+            "metadata": {
+                **dict(metadata or {}),
+                **({"quick_timeout_seconds": 0.2, "timed_out": True} if timed_out else {}),
+                **({"fallback": fallback_manifest} if fallback_manifest else {}),
+            },
         }
+        return self._memory_recall_from_hits(
+            hits,
+            resolved_query_text=resolved_query_text,
+            manifest=manifest,
+            metadata=metadata,
+        )
+
+    async def _keyword_memory_recall(
+        self,
+        request: AgentRunRequest,
+        *,
+        query_text: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> AgentMemoryRecall:
+        if not self.session.profile.capabilities.memory_enabled:
+            return AgentMemoryRecall(
+                manifest={
+                    "schema_version": "agent-core-memory-recall/v1",
+                    "enabled": False,
+                    "reason": "profile_memory_disabled",
+                    "hit_count": 0,
+                }
+            )
+        context = request.context or AgentContextPack()
+        resolved_query_text = query_text or context.dynamic_task or request.task
+        query = MemoryQuery(
+            query=resolved_query_text,
+            limit=5,
+            mode="keyword",
+        )
+        plan_manifest = _memory_search_plan_manifest(self.session.memory, query)
+        try:
+            hits = await asyncio.wait_for(self.session.memory.search(query), timeout=0.2)
+            timed_out = False
+        except asyncio.TimeoutError:
+            hits = ()
+            timed_out = True
+        manifest = {
+            "schema_version": "agent-core-memory-recall/v1",
+            "enabled": True,
+            "query": query.manifest(),
+            "plan": plan_manifest,
+            "hit_count": len(hits),
+            "hits": [_memory_hit_manifest(hit) for hit in hits],
+            "metadata": {
+                **dict(metadata or {}),
+                "strategy": "yaklang_fast_keyword",
+                "timed_out": timed_out,
+            },
+        }
+        return self._memory_recall_from_hits(
+            hits,
+            resolved_query_text=resolved_query_text,
+            manifest=manifest,
+            metadata=metadata,
+        )
+
+    def _memory_recall_from_hits(
+        self,
+        hits: tuple[MemoryHit, ...],
+        *,
+        resolved_query_text: str,
+        manifest: dict[str, Any],
+        metadata: dict[str, Any] | None,
+    ) -> AgentMemoryRecall:
         if not hits:
             return AgentMemoryRecall(manifest=manifest)
+        topics = _string_sequence((metadata or {}).get("perception_topics"))
+        keywords = _string_sequence((metadata or {}).get("perception_keywords"))
+        downstream_plan = (metadata or {}).get("downstream_plan")
+        if isinstance(downstream_plan, dict):
+            topics = (*topics, *_string_sequence(downstream_plan.get("topics")))
+            keywords = (*keywords, *_string_sequence(downstream_plan.get("keywords")))
+        intent = infer_memory_recall_intent(
+            resolved_query_text,
+            topics=topics,
+            keywords=keywords,
+            metadata=dict(metadata or {}),
+        )
+        injection = build_memory_injection(
+            hits,
+            query=resolved_query_text,
+            intent=intent,
+        )
+        manifest["injection"] = injection.manifest()
         return AgentMemoryRecall(
             injections=(
                 ContextInjection(
                     name="memory_recall",
-                    content=_memory_context_block(hits),
-                    target=PromptBucketRole.SEMI_DYNAMIC_1,
+                    content=injection.content or _memory_context_block(hits),
+                    target=PromptBucketRole.TIMELINE_OPEN,
                     source="memory",
                     priority=80,
                     metadata={
-                        "query": query_text,
+                        "query": resolved_query_text,
                         "hit_count": len(hits),
+                        "intent": intent,
+                        "routes": list(injection.manifest().get("routes") or ()),
                         "sources": [hit.source for hit in hits if hit.source],
+                        "memory_injection": injection.manifest(),
+                        **dict(metadata or {}),
                     },
                 ),
             ),
@@ -1177,6 +1411,7 @@ class AgentRunner:
         timeout_seconds: float | None = None,
         native_tool_calls: bool | None = None,
         stream: bool | None = None,
+        turn_refresher: TurnContextRefresherPort | None = None,
     ) -> ReActExecutor:
         budget = self.session.profile.budget
         effective_native_tool_calls = (
@@ -1195,8 +1430,10 @@ class AgentRunner:
             policy_decision_store=self.session.policy_decision_store,
             approval_store=self.session.approval_store,
             approval_resume=approval_resume,
-            memory=NullMemory(),
+            memory=self.session.memory,
             skills=self.session.skills,
+            mcp=self.session.mcp,
+            capability_catalog=self.session.capability_catalog(),
             timeline=self.session.timeline,
             tool_replay=self.session.tool_replay,
             action_verifier=self.session.action_verifier,
@@ -1204,6 +1441,7 @@ class AgentRunner:
             loop_guard=self.session.loop_guard,
             artifact_store=self.session.artifact_store,
             cancel_token=self.session.cancel_token,
+            turn_refresher=turn_refresher,
             config=ReActConfig(
                 model=self.session.profile.model,
                 max_iterations=budget.max_iterations,
@@ -1212,6 +1450,8 @@ class AgentRunner:
                 timeout_seconds=timeout_seconds,
                 stream=effective_stream,
                 native_tool_calls=effective_native_tool_calls,
+                provider_cache_mode=self.session.provider_cache_mode,
+                provider_cache_min_segment_bytes=self.session.provider_cache_min_segment_bytes,
             ),
         )
 
@@ -1332,6 +1572,567 @@ class AgentRunner:
                 "stream": self._stream_for_request(request),
             },
         )
+
+
+class _DefaultRunnerCapabilityRefresh:
+    """Default turn-time capability recall backed by CapabilityCatalog."""
+
+    def __init__(self, runner: AgentRunner) -> None:
+        self.runner = runner
+        self._injections: tuple[ContextInjection, ...] = ()
+        self.last_manifest: dict[str, Any] = {"enabled": False, "reason": "not_started"}
+
+    async def refresh(self, request: TurnRefreshRequest) -> dict[str, Any]:
+        metadata = dict(request.metadata)
+        downstream = metadata.get("perception_downstream_refresh")
+        perception_state = metadata.get("perception_state")
+        state = {}
+        if isinstance(perception_state, dict):
+            state = dict(perception_state.get("state") or perception_state)
+        query = str(metadata.get("perception_recall_query") or request.task or "").strip()
+        perception_terms = (
+            *_string_sequence(state.get("topics")),
+            *_string_sequence(state.get("keywords")),
+        )
+        action_history = _metadata_sequence(metadata.get("action_history"))
+        loaded_capabilities = _loaded_capabilities_from_action_history(action_history)
+        recall = self.runner.session.capability_catalog().recall(
+            CapabilityRecallRequest(
+                query=query,
+                limit=12,
+                perception_terms=perception_terms,
+                recent_tools=(
+                    *_recent_tools_from_action_history(action_history),
+                    *tuple(
+                        item.get("name", "")
+                        for item in loaded_capabilities
+                        if item.get("kind") in {"tool", "mcp_tool"}
+                    ),
+                ),
+                failed_tools=_failed_tools_from_action_history(action_history),
+                scenario_whitelist=_string_sequence(metadata.get("scenario_whitelist")),
+                metadata={
+                    "turn_id": request.turn_id,
+                    "iteration": request.iteration,
+                    "perception_downstream_refresh": metadata.get(
+                        "perception_downstream_refresh"
+                    ),
+                    "loaded_capabilities": loaded_capabilities,
+                },
+            )
+        )
+        manifest = recall.manifest()
+        self.last_manifest = manifest
+        rendered = recall.render_prompt()
+        should_inject = bool(downstream) or bool(recall.failed_tools) or bool(loaded_capabilities)
+        if should_inject and (recall.matches or recall.failed_tools):
+            self._injections = (
+                ContextInjection(
+                    name="capability_recall",
+                    content=rendered,
+                    target=PromptBucketRole.TIMELINE_OPEN,
+                    source="capability",
+                    priority=76,
+                    metadata=manifest,
+                ),
+            )
+        else:
+            self._injections = ()
+        return manifest
+
+    def context_injections(self) -> tuple[ContextInjection, ...]:
+        return self._injections
+
+    def manifest(self) -> dict[str, Any]:
+        return self.last_manifest
+
+
+class _RunnerTurnContextRefresher:
+    """Internal default refresher that moves run-start context work into the loop."""
+
+    def __init__(
+        self,
+        runner: AgentRunner,
+        *,
+        run_request: AgentRunRequest,
+        resume_manifest: dict[str, Any],
+    ) -> None:
+        self.runner = runner
+        self.run_request = run_request
+        self.resume_manifest = dict(resume_manifest)
+        self.perception = runner.session.perception_controller or YaklangStylePerceptionController(
+            evaluator=DeterministicPerceptionEvaluator()
+        )
+        self.capability = runner.session.capability_refresher or _DefaultRunnerCapabilityRefresh(runner)
+        self.knowledge = runner.session.knowledge_recall or DefaultKnowledgeRecall(
+            store=runner.session.context_material_store,
+            mcp=runner.session.mcp,
+        )
+        self.midterm_timeline = (
+            runner.session.midterm_timeline_recall
+            or DefaultMidtermTimelineRecall(runner.session.timeline)
+        )
+        self.downstream_scheduler = PerceptionDownstreamScheduler()
+        self.perception_injections: tuple[ContextInjection, ...] = ()
+        self.capability_injections: tuple[ContextInjection, ...] = ()
+        self.knowledge_injections: tuple[ContextInjection, ...] = ()
+        self.midterm_timeline_injections: tuple[ContextInjection, ...] = ()
+        self.task_state_injections: tuple[ContextInjection, ...] = ()
+        self.memory_flush_buffer = MemoryFlushBuffer()
+        self._pending_memory_recall: asyncio.Task[AgentMemoryRecall] | None = None
+        self.last_memory_manifest: dict[str, Any] = {}
+        self.last_completed_memory_recall: AgentMemoryRecall | None = None
+        self.last_context_material_manifest: dict[str, Any] = {}
+        self.last_timeline_reduction_manifest: dict[str, Any] = {}
+        self.last_capability_manifest: dict[str, Any] = {}
+        self.last_knowledge_manifest: dict[str, Any] = {}
+        self.last_midterm_timeline_manifest: dict[str, Any] = {}
+        self.last_memory_flush_manifest: dict[str, Any] = {}
+        self.last_downstream_plan_manifest: dict[str, Any] = {}
+        self.last_loop_state_manifest: dict[str, Any] = {}
+
+    async def before_model_call(self, request: TurnRefreshRequest) -> TurnRefreshResult:
+        self._drain_perception_observation_to_timeline()
+        timeline_diff = self.runner.session.timeline.diff_since(request.timeline_cursor)
+        perception_manifest = self.perception.manifest()
+        downstream_refresh = _consume_perception_downstream_refresh(self.perception)
+        downstream_plan = self.downstream_scheduler.plan(
+            downstream_refresh,
+            fallback_query=(self.run_request.context.dynamic_task if self.run_request.context else "")
+            or self.run_request.task,
+        )
+        downstream_intents = downstream_plan.intents
+        perception_recall_query = downstream_plan.query or _perception_recall_query(
+            downstream_refresh=downstream_refresh,
+            fallback=(self.run_request.context.dynamic_task if self.run_request.context else "")
+            or self.run_request.task,
+        )
+        perception_query_metadata = _perception_query_metadata(downstream_refresh)
+        perception_query_metadata["downstream_plan"] = downstream_plan.manifest()
+        memory_recall = await self._fast_memory_recall(
+            enabled=downstream_plan.intent_enabled("memory_recall", default=True),
+            query_text=perception_recall_query,
+            metadata=perception_query_metadata,
+        )
+        context_material_query = _perception_context_material_query(
+            downstream_refresh=downstream_refresh,
+            fallback=self.run_request.context_material_query,
+        )
+        context_material_selection = (
+            await self.runner._context_material_selection(
+                self.run_request,
+                query=context_material_query,
+                metadata=(
+                    {"perception_downstream_refresh": downstream_refresh}
+                    if downstream_refresh
+                    else {}
+                ),
+            )
+            if downstream_plan.intent_enabled("context_material_recall", default=True)
+            else AgentContextMaterialSelection(
+                manifest={
+                    "schema_version": "agent-core-context-material-selection/v1",
+                    "enabled": False,
+                    "reason": "perception_intent_disabled",
+                }
+            )
+        )
+        timeline_reduction_manifest = await self.runner._reduce_timeline_if_needed(self.run_request)
+        capability_request = TurnRefreshRequest(
+            task=request.task,
+            iteration=request.iteration,
+            run_id=request.run_id,
+            turn_id=request.turn_id,
+            bootstrap_prompt=request.bootstrap_prompt,
+            token_budget=request.token_budget,
+            timeline_cursor=request.timeline_cursor,
+            compact_delta=request.compact_delta,
+            metadata={
+                **dict(request.metadata),
+                "perception_state": perception_manifest,
+                "perception_downstream_refresh": downstream_refresh,
+                "perception_downstream_intents": downstream_intents,
+                "perception_recall_query": perception_recall_query,
+                "timeline_diff": timeline_diff.manifest(),
+                "action_history": _metadata_sequence(request.metadata.get("action_history")),
+                "recent_tools": _recent_tools_from_action_history(
+                    _metadata_sequence(request.metadata.get("action_history"))
+                ),
+                "failed_tools": _failed_tools_from_action_history(
+                    _metadata_sequence(request.metadata.get("action_history"))
+                ),
+                "scenario_whitelist": (
+                    *_string_sequence(self.runner.session.metadata.get("scenario_whitelist")),
+                    *_string_sequence(self.run_request.metadata.get("scenario_whitelist")),
+                ),
+            },
+        )
+        capability_manifest = (
+            await self.capability.refresh(capability_request)
+            if downstream_plan.intent_enabled("capability_search", default=True)
+            else {"enabled": False, "reason": "perception_intent_disabled"}
+        )
+        if downstream_plan.intent_enabled("capability_search", default=True) and not capability_manifest.get("enabled"):
+            capability_query = _perception_capability_query(
+                downstream_refresh=downstream_refresh,
+                fallback=perception_recall_query,
+            )
+            capability_manifest = self.runner._capability_discovery_manifest(
+                self.run_request,
+                query_text=capability_query,
+                metadata={
+                    "perception_downstream_refresh": downstream_refresh,
+                    "perception_state": perception_manifest,
+                },
+            )
+
+        knowledge_result = (
+            await self.knowledge.recall(
+                KnowledgeRecallRequest(
+                    query=perception_recall_query,
+                    topics=downstream_plan.topics,
+                    keywords=downstream_plan.keywords,
+                    limit=5,
+                    metadata={
+                        "turn_id": request.turn_id,
+                        "iteration": request.iteration,
+                        "downstream_plan": downstream_plan.manifest(),
+                    },
+                )
+            )
+            if downstream_plan.intent_enabled("knowledge_search", default=False)
+            else None
+        )
+        if knowledge_result is not None:
+            self.knowledge_injections = knowledge_result.injections
+            knowledge_manifest = knowledge_result.manifest()
+        else:
+            self.knowledge_injections = ()
+            knowledge_manifest = {"enabled": False, "reason": "perception_intent_disabled"}
+
+        midterm_result = (
+            await self.midterm_timeline.recall(
+                MidtermTimelineRecallRequest(
+                    query=perception_recall_query,
+                    topics=downstream_plan.topics,
+                    keywords=downstream_plan.keywords,
+                    limit=6,
+                    metadata={
+                        "turn_id": request.turn_id,
+                        "iteration": request.iteration,
+                        "downstream_plan": downstream_plan.manifest(),
+                    },
+                )
+            )
+            if downstream_plan.intent_enabled("midterm_timeline_recall", default=False)
+            else None
+        )
+        if midterm_result is not None:
+            self.midterm_timeline_injections = midterm_result.injections
+            midterm_manifest = midterm_result.manifest()
+        else:
+            self.midterm_timeline_injections = ()
+            midterm_manifest = {"enabled": False, "reason": "perception_intent_disabled"}
+
+        current_perception_injections = _perception_context_injections(self.perception)
+        if current_perception_injections:
+            self.perception_injections = current_perception_injections
+        current_capability_injections = _capability_context_injections(self.capability)
+        if current_capability_injections:
+            self.capability_injections = current_capability_injections
+        recent_tool_injections = _recent_tools_cache_context_injections(
+            _metadata_sequence(request.metadata.get("action_history"))
+        )
+        self.task_state_injections = _task_state_context_injections(
+            self.run_request,
+            request=request,
+            timeline_diff=timeline_diff,
+            context_material_selection=context_material_selection.manifest,
+            perception_state=perception_manifest,
+            memory_flush=self.last_memory_flush_manifest,
+        )
+        self.last_loop_state_manifest = (
+            dict(self.task_state_injections[0].metadata.get("loop_state") or {})
+            if self.task_state_injections
+            else {}
+        )
+
+        self.last_memory_manifest = memory_recall.manifest
+        self.last_context_material_manifest = context_material_selection.manifest
+        self.last_timeline_reduction_manifest = timeline_reduction_manifest
+        self.last_capability_manifest = capability_manifest
+        self.last_knowledge_manifest = knowledge_manifest
+        self.last_midterm_timeline_manifest = midterm_manifest
+        self.last_downstream_plan_manifest = downstream_plan.manifest()
+
+        context = self.runner._context_for(
+            self.run_request,
+            resume_manifest=self.resume_manifest,
+            injections=(
+                *memory_recall.injections,
+                *context_material_selection.injections,
+                *self.capability_injections,
+                *recent_tool_injections,
+                *self.knowledge_injections,
+                *self.midterm_timeline_injections,
+                *self.perception_injections,
+                *self.task_state_injections,
+            ),
+            context_material_selection_manifest=context_material_selection.manifest,
+            timeline_reduction_manifest=timeline_reduction_manifest,
+        )
+        prompt = self.runner._prompt_builder().build(context)
+        prompt_budget_plan = self.runner._prompt_budget_plan(self.run_request)
+        prompt = _prompt_with_budget_plan(prompt, prompt_budget_plan)
+        if self.runner.session.prompt_bucket_budget_policy is not None:
+            prompt = self.runner.session.prompt_bucket_budget_policy.apply(prompt)
+        prompt = await self.runner._semantic_trim_prompt_if_needed(
+            self.run_request,
+            prompt,
+            prompt_budget_plan,
+        )
+        prompt = prompt.trim_to_budget(prompt_budget_plan.target_prompt_bytes)
+        metadata = {
+            "turn_refresh": request.manifest(),
+            "capability_selection": capability_manifest,
+            "knowledge_recall": knowledge_manifest,
+            "midterm_timeline_recall": midterm_manifest,
+            "memory_recall": memory_recall.manifest,
+            "context_material_selection": context_material_selection.manifest,
+            "timeline_reduction": timeline_reduction_manifest,
+            "perception": perception_manifest,
+            "perception_downstream_refresh": downstream_refresh,
+            "perception_downstream_plan": downstream_plan.manifest(),
+            "loop_state": self.last_loop_state_manifest,
+            "memory_flush": self.last_memory_flush_manifest,
+        }
+        prompt = PromptIR(buckets=prompt.buckets, metadata={**prompt.metadata, **metadata})
+        return TurnRefreshResult(
+            prompt=prompt,
+            timeline_cursor=timeline_diff.next_cursor,
+            timeline_diff=timeline_diff,
+            memory_hits=tuple(memory_recall.manifest.get("hits") or ()),
+            context_injections=(
+                *memory_recall.injections,
+                *context_material_selection.injections,
+                *self.capability_injections,
+                *recent_tool_injections,
+                *self.knowledge_injections,
+                *self.midterm_timeline_injections,
+                *self.perception_injections,
+                *self.task_state_injections,
+            ),
+            perception_state=self.perception.manifest(),
+            capability_selection=capability_manifest,
+            metadata=metadata,
+        )
+
+    async def after_model_response(self, event: Any) -> None:
+        return None
+
+    async def after_tool_result(self, event: ToolResultEvent) -> None:
+        injections = await self.perception.after_tool_result(event)
+        if injections:
+            self.perception_injections = (*self.perception_injections, *injections)[-8:]
+        self._drain_perception_observation_to_timeline()
+
+    async def after_turn(self, event: TurnCompletedEvent) -> None:
+        if not self.runner.session.profile.capabilities.memory_enabled:
+            return
+        diff = event.timeline_diff
+        if diff is None or not diff.changed:
+            if event.status in {
+                "finished",
+                "provider_tool_finished",
+                "loop_stalled",
+                "output_validation_failed",
+                "max_iterations",
+            }:
+                writes = await self.memory_flush_buffer.flush(reason=event.status)
+                self.last_memory_flush_manifest = dict(self.memory_flush_buffer.last_manifest)
+                for write in writes:
+                    await self.runner.session.memory.write(write)
+            return
+        rendered = diff.render().strip()
+        if not rendered:
+            return
+        writes = await self.memory_flush_buffer.observe(
+            MemoryFlushSignal(
+                content=rendered,
+                run_id=event.run_id,
+                turn_id=event.turn_id,
+                iteration=event.iteration,
+                status=event.status,
+                is_done=event.status
+                in {"finished", "provider_tool_finished", "loop_stalled", "output_validation_failed"},
+                metadata={"timeline_diff": diff.manifest()},
+            )
+        )
+        self.last_memory_flush_manifest = dict(self.memory_flush_buffer.last_manifest)
+        for write in writes:
+            await self.runner.session.memory.write(write)
+
+    def _drain_perception_observation_to_timeline(self) -> None:
+        observation = _consume_perception_observation(self.perception)
+        if not observation or not observation.get("updated"):
+            return
+        content = _render_perception_observation(observation)
+        if not content:
+            return
+        self.runner.session.timeline.add(
+            content,
+            kind="perception",
+            perception=observation,
+        )
+
+    def _harvest_pending_memory_recall(self) -> AgentMemoryRecall | None:
+        task = self._pending_memory_recall
+        if task is None or not task.done():
+            return None
+        self._pending_memory_recall = None
+        try:
+            recall = task.result()
+        except Exception as exc:  # pragma: no cover - defensive guard for async background tasks
+            recall = AgentMemoryRecall(
+                manifest={
+                    "schema_version": "agent-core-memory-recall/v1",
+                    "enabled": True,
+                    "hit_count": 0,
+                    "strategy": "yaklang_fast_background",
+                    "error": str(exc),
+                }
+            )
+        self.last_completed_memory_recall = recall
+        self.last_memory_manifest = recall.manifest
+        return recall
+
+    async def _fast_memory_recall(
+        self,
+        *,
+        enabled: bool,
+        query_text: str,
+        metadata: dict[str, Any],
+    ) -> AgentMemoryRecall:
+        if not enabled:
+            self._pending_memory_recall = None
+            self.last_completed_memory_recall = None
+            return AgentMemoryRecall(
+                manifest={
+                    "schema_version": "agent-core-memory-recall/v1",
+                    "enabled": False,
+                    "reason": "perception_intent_disabled",
+                    "hit_count": 0,
+                    "metadata": metadata,
+                }
+            )
+
+        completed = self._harvest_pending_memory_recall()
+        if completed is not None:
+            manifest = {
+                **completed.manifest,
+                "strategy": "yaklang_fast_background",
+                "used_from_background": True,
+            }
+            return AgentMemoryRecall(injections=completed.injections, manifest=manifest)
+
+        if self._pending_memory_recall is None:
+            self._pending_memory_recall = asyncio.create_task(
+                self.runner._memory_recall(
+                    self.run_request,
+                    query_text=query_text,
+                    metadata={**metadata, "strategy": "yaklang_fast_background"},
+                )
+            )
+
+        keyword_task: asyncio.Task[AgentMemoryRecall] | None = None
+        wait_tasks: set[asyncio.Task[AgentMemoryRecall]] = {self._pending_memory_recall}
+        if self._local_keyword_memory_recall_enabled():
+            keyword_task = asyncio.create_task(
+                self.runner._keyword_memory_recall(
+                    self.run_request,
+                    query_text=query_text,
+                    metadata={**metadata, "strategy": "yaklang_fast_keyword"},
+                )
+            )
+            wait_tasks.add(keyword_task)
+        done, _pending = await asyncio.wait(
+            wait_tasks,
+            timeout=0.2,
+        )
+        keyword_recall: AgentMemoryRecall | None = None
+        if keyword_task is not None and keyword_task in done:
+            keyword_recall = keyword_task.result()
+        elif keyword_task is not None and not keyword_task.done():
+            keyword_task.cancel()
+
+        if done:
+            recall = None
+            if self._pending_memory_recall in done:
+                recall = self._harvest_pending_memory_recall()
+            selected = recall
+            selected_hit_count = int(selected.manifest.get("hit_count") or 0) if selected else 0
+            keyword_hit_count = (
+                int(keyword_recall.manifest.get("hit_count") or 0) if keyword_recall else 0
+            )
+            if keyword_recall is not None and (
+                selected is None
+                or (not selected_hit_count and keyword_hit_count)
+            ):
+                selected = keyword_recall
+            if selected is not None:
+                manifest = {
+                    **selected.manifest,
+                    "strategy": "yaklang_fast_background",
+                    "wait_seconds": 0.2,
+                    "timed_out": False,
+                }
+                if selected is keyword_recall and self._pending_memory_recall is not None:
+                    manifest["semantic_pending"] = True
+                    manifest["strategy"] = "yaklang_fast_keyword"
+                return AgentMemoryRecall(injections=selected.injections, manifest=manifest)
+
+        cached = self.last_completed_memory_recall
+        if cached is not None:
+            return AgentMemoryRecall(
+                injections=cached.injections,
+                manifest={
+                    **cached.manifest,
+                    "strategy": "yaklang_fast_background",
+                    "timed_out": True,
+                    "used_cached": True,
+                    "wait_seconds": 0.2,
+                    "pending": True,
+                },
+            )
+        return AgentMemoryRecall(
+            manifest={
+                "schema_version": "agent-core-memory-recall/v1",
+                "enabled": True,
+                "hit_count": 0,
+                "query": {
+                    "query": query_text,
+                    "limit": 5,
+                    "mode": "hybrid",
+                },
+                "strategy": "yaklang_fast_background",
+                "timed_out": True,
+                "wait_seconds": 0.2,
+                "pending": True,
+                "metadata": metadata,
+            }
+        )
+
+    def _local_keyword_memory_recall_enabled(self) -> bool:
+        manifest_fn = getattr(self.runner.session.memory, "manifest", None)
+        if not callable(manifest_fn):
+            return True
+        try:
+            manifest = manifest_fn()
+        except Exception:
+            return False
+        if str(manifest.get("schema_version") or "") == "agent-core-external-memory-store/v1":
+            return False
+        return str(manifest.get("backend_kind") or "") in {"in_memory", "sqlite", "markdown"}
 
 
 class AgentSessionManager:
@@ -2003,21 +2804,23 @@ def _context_material_selection_request(
     *,
     extra_materials: tuple[ContextMaterial, ...] = (),
     extra_metadata: dict[str, Any] | None = None,
+    task_override: str = "",
 ) -> ContextMaterialSelectionRequest:
     base = request.context_material_selection
     materials = (*tuple(request.context_materials), *tuple(extra_materials))
+    task = str(task_override or request.task)
     metadata = {
         "request_metadata": dict(request.metadata),
         **dict(extra_metadata or {}),
     }
     if base is None:
         return ContextMaterialSelectionRequest(
-            task=request.task,
+            task=task,
             materials=materials,
             metadata=metadata,
         )
     return ContextMaterialSelectionRequest(
-        task=base.task or request.task,
+        task=task_override or base.task or request.task,
         materials=(*tuple(base.materials or request.context_materials), *tuple(extra_materials)),
         max_materials=base.max_materials,
         max_bytes=base.max_bytes,
@@ -2261,6 +3064,346 @@ def _memory_hit_manifest(hit: MemoryHit) -> dict[str, Any]:
         else "",
         "metadata": dict(hit.metadata),
     }
+
+
+def _consume_perception_downstream_refresh(perception: Any) -> dict[str, Any]:
+    consume = getattr(perception, "consume_downstream_refresh", None)
+    if not callable(consume):
+        return {}
+    refresh = consume()
+    return dict(refresh) if isinstance(refresh, dict) else {}
+
+
+def _consume_perception_observation(perception: Any) -> dict[str, Any]:
+    consume = getattr(perception, "consume_observation", None)
+    if not callable(consume):
+        return {}
+    observation = consume()
+    return dict(observation) if isinstance(observation, dict) else {}
+
+
+def _render_perception_observation(observation: dict[str, Any]) -> str:
+    state = observation.get("state")
+    if not isinstance(state, dict):
+        return ""
+    summary = str(state.get("summary") or "").strip()
+    topics = _string_sequence(state.get("topics"))
+    keywords = _string_sequence(state.get("keywords"))
+    epoch = state.get("epoch")
+    trigger = str(observation.get("trigger") or state.get("last_trigger") or "").strip()
+    parts: list[str] = []
+    prefix = "Perception"
+    if epoch not in (None, ""):
+        prefix += f" epoch={epoch}"
+    if trigger:
+        prefix += f" trigger={trigger}"
+    if summary:
+        parts.append(f"{prefix}: {summary}")
+    else:
+        parts.append(prefix)
+    if topics:
+        parts.append("topics=" + ", ".join(topics))
+    if keywords:
+        parts.append("keywords=" + ", ".join(keywords))
+    intent_shift = str(state.get("intent_shift") or "").strip()
+    if intent_shift:
+        parts.append(f"intent_shift={intent_shift}")
+    return " | ".join(parts).strip()
+
+
+def _string_sequence(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,) if value.strip() else ()
+    try:
+        return tuple(str(item).strip() for item in value or () if str(item).strip())
+    except TypeError:
+        return ()
+
+
+def _perception_context_injections(perception: Any) -> tuple[ContextInjection, ...]:
+    context_injections = getattr(perception, "context_injections", None)
+    if not callable(context_injections):
+        return ()
+    injections = context_injections()
+    try:
+        return tuple(item for item in injections or () if isinstance(item, ContextInjection))
+    except TypeError:
+        return ()
+
+
+def _capability_context_injections(capability: Any) -> tuple[ContextInjection, ...]:
+    context_injections = getattr(capability, "context_injections", None)
+    if not callable(context_injections):
+        return ()
+    injections = context_injections()
+    try:
+        return tuple(item for item in injections or () if isinstance(item, ContextInjection))
+    except TypeError:
+        return ()
+
+
+def _perception_downstream_intents(downstream_refresh: dict[str, Any]) -> tuple[str, ...]:
+    values = downstream_refresh.get("intents") if isinstance(downstream_refresh, dict) else ()
+    intents = _string_sequence(values)
+    if intents:
+        return intents
+    intent = downstream_refresh.get("intent") if isinstance(downstream_refresh, dict) else {}
+    if isinstance(intent, dict):
+        intents = _string_sequence(intent.get("intents"))
+    return intents
+
+
+def _intent_enabled(intents: tuple[str, ...], intent: str, *, default: bool) -> bool:
+    if not intents:
+        return default
+    return intent in set(intents)
+
+
+def _metadata_sequence(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(dict(item) for item in value if isinstance(item, dict))
+
+
+def _recent_tools_from_action_history(history: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
+    tools: list[str] = []
+    for item in history:
+        if item.get("ok") is False:
+            continue
+        tool_name = str(item.get("tool_name") or "").strip()
+        if tool_name:
+            tools.append(tool_name)
+    return tuple(dict.fromkeys(reversed(tools)))
+
+
+def _loaded_capabilities_from_action_history(
+    history: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    loaded: list[dict[str, Any]] = []
+    for item in history:
+        if item.get("ok") is False:
+            continue
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        result_metadata = metadata.get("tool_result_metadata")
+        if not isinstance(result_metadata, dict):
+            continue
+        load = result_metadata.get("load_capability")
+        if not isinstance(load, dict):
+            continue
+        match = load.get("match")
+        if isinstance(match, dict) and match.get("name"):
+            loaded.append(dict(match))
+    deduped: dict[str, dict[str, Any]] = {}
+    for item in loaded:
+        key = f"{item.get('kind')}:{item.get('name')}"
+        deduped[key] = item
+    return tuple(deduped.values())
+
+
+def _recent_tools_cache_context_injections(
+    history: tuple[dict[str, Any], ...],
+) -> tuple[ContextInjection, ...]:
+    recent = _recent_tools_from_action_history(history)
+    if not recent:
+        return ()
+    failed = set(_failed_tools_from_action_history(history))
+    lines = [
+        "[recent_tools_cache]",
+        "Fast Tool Routing:",
+        "- Prefer call_tool for an exact recent tool when it fits the current task.",
+        "- Use search_capabilities or load_capability when the needed tool is not listed.",
+        "Recent tools:",
+    ]
+    for name in recent[:8]:
+        suffix = " status=recent_failed" if name in failed else " status=recent_ok"
+        lines.append(f"- {name}{suffix}")
+    content = "\n".join(lines)
+    return (
+        ContextInjection(
+            name="recent_tools_cache",
+            content=content,
+            target=PromptBucketRole.SEMI_DYNAMIC_1,
+            source="capability",
+            priority=77,
+            metadata={
+                "schema_version": "agent-core-recent-tools-cache/v1",
+                "recent_tools": list(recent[:8]),
+                "failed_tools": list(failed),
+            },
+        ),
+    )
+
+
+def _failed_tools_from_action_history(history: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
+    tools: list[str] = []
+    for item in history:
+        if item.get("ok") is not False:
+            continue
+        tool_name = str(item.get("tool_name") or "").strip()
+        if tool_name:
+            tools.append(tool_name)
+    return tuple(dict.fromkeys(reversed(tools)))
+
+
+def _task_state_context_injections(
+    run_request: AgentRunRequest,
+    *,
+    request: TurnRefreshRequest,
+    timeline_diff: Any,
+    context_material_selection: dict[str, Any],
+    perception_state: dict[str, Any],
+    memory_flush: dict[str, Any],
+) -> tuple[ContextInjection, ...]:
+    task_metadata = dict(run_request.metadata.get("task_state") or {})
+    action_history = _metadata_sequence(request.metadata.get("action_history"))
+    timeline_manifest = (
+        timeline_diff.manifest()
+        if timeline_diff is not None and getattr(timeline_diff, "changed", False)
+        else {}
+    )
+    frame = LoopStateFrame(
+        task=request.task,
+        iteration=request.iteration,
+        run_id=request.run_id,
+        turn_id=request.turn_id,
+        root_task=str(task_metadata.get("root_task", run_request.metadata.get("root_task") or "")),
+        parent_task=str(task_metadata.get("parent_task", run_request.metadata.get("parent_task") or "")),
+        current_task=str(task_metadata.get("current_task", run_request.metadata.get("current_task") or "")),
+        plan_context=str(task_metadata.get("plan_context", run_request.metadata.get("plan_context") or "")),
+        current_objective=str(
+            task_metadata.get("current_objective", run_request.metadata.get("current_objective") or "")
+        ),
+        next_movement=str(task_metadata.get("next_movement", run_request.metadata.get("next_movement") or "")),
+        dynamic_feedback=str(
+            task_metadata.get("dynamic_feedback", run_request.metadata.get("dynamic_feedback") or "")
+        ),
+        repair_context=str(task_metadata.get("repair_context", run_request.metadata.get("repair_context") or "")),
+        approval_context=str(
+            task_metadata.get("approval_context", run_request.metadata.get("approval_context") or "")
+        ),
+        verification_state=str(
+            task_metadata.get("verification_state", run_request.metadata.get("verification_state") or "")
+        ),
+        action_history=action_history,
+        failed_tools=_failed_tools_from_action_history(action_history),
+        perception_state=perception_state,
+        memory_flush=memory_flush,
+        timeline_diff=timeline_manifest,
+        context_material_selection=context_material_selection,
+        metadata={"request_metadata": dict(run_request.metadata)},
+    )
+    content = frame.render_prompt()
+    if not content:
+        return ()
+    manifest = frame.manifest()
+    return (
+        ContextInjection(
+            name="task_state_frame",
+            content="[task_state_frame]\n" + content,
+            target=PromptBucketRole.TIMELINE_OPEN,
+            source="runtime",
+            priority=70,
+            metadata={
+                "schema_version": "agent-core-task-state-frame/v1",
+                "iteration": request.iteration,
+                "turn_id": request.turn_id,
+                "has_plan_context": bool(frame.plan_context),
+                "action_history_count": len(action_history),
+                "loop_state": manifest,
+            },
+        ),
+    )
+
+
+def _perception_capability_query(
+    *,
+    downstream_refresh: dict[str, Any],
+    fallback: str,
+) -> str:
+    state = downstream_refresh.get("state") if isinstance(downstream_refresh, dict) else {}
+    if not isinstance(state, dict):
+        return fallback
+    parts: list[str] = []
+    summary = str(state.get("summary") or "").strip()
+    if summary:
+        parts.append(summary)
+    for key in ("topics", "keywords"):
+        values = state.get(key)
+        if isinstance(values, str):
+            parts.append(values)
+            continue
+        try:
+            parts.extend(str(item) for item in values or () if str(item).strip())
+        except TypeError:
+            continue
+    return " ".join(parts).strip() or fallback
+
+
+def _perception_recall_query(
+    *,
+    downstream_refresh: dict[str, Any],
+    fallback: str,
+) -> str:
+    state = downstream_refresh.get("state") if isinstance(downstream_refresh, dict) else {}
+    if not isinstance(state, dict):
+        return fallback
+    parts: list[str] = []
+    summary = str(state.get("summary") or "").strip()
+    if summary:
+        parts.append(summary)
+    topics = _string_sequence(state.get("topics"))
+    if topics:
+        parts.append("Topics: " + ", ".join(topics))
+    keywords = _string_sequence(state.get("keywords"))
+    if keywords:
+        parts.append("Keywords: " + ", ".join(keywords))
+    return "\n".join(parts).strip() or fallback
+
+
+def _perception_context_material_query(
+    *,
+    downstream_refresh: dict[str, Any],
+    fallback: ContextMaterialQuery | None,
+) -> ContextMaterialQuery | None:
+    query_text = _perception_recall_query(downstream_refresh=downstream_refresh, fallback="")
+    if not query_text:
+        return fallback
+    filters = {
+        **(dict(fallback.filters) if fallback is not None else {}),
+    }
+    if fallback is not None:
+        return replace(
+            fallback,
+            query=query_text,
+            filters=filters,
+            mode=fallback.mode or "hybrid",
+        )
+    return ContextMaterialQuery(
+        query=query_text,
+        limit=8,
+        mode="hybrid",
+        filters=filters,
+    )
+
+
+def _perception_query_metadata(downstream_refresh: dict[str, Any]) -> dict[str, Any]:
+    if not downstream_refresh:
+        return {}
+    state = downstream_refresh.get("state") if isinstance(downstream_refresh, dict) else {}
+    state_manifest = dict(state) if isinstance(state, dict) else {}
+    metadata: dict[str, Any] = {
+        "query_source": "perception_downstream_refresh",
+        "perception_trigger": downstream_refresh.get("trigger"),
+        "perception_reason": downstream_refresh.get("reason"),
+    }
+    if state_manifest:
+        metadata["perception_epoch"] = state_manifest.get("epoch")
+        metadata["perception_topics"] = list(_string_sequence(state_manifest.get("topics")))
+        metadata["perception_keywords"] = list(_string_sequence(state_manifest.get("keywords")))
+        metadata["perception_summary"] = str(state_manifest.get("summary") or "")
+    return metadata
 
 
 def _append_context_block(existing: str, block: str) -> str:

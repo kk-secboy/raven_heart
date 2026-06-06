@@ -195,7 +195,7 @@ class AgentCoreExternalBackendAcceptanceHarness:
         for store in external_context_stores:
             context_materials.register_spec(store.spec, store)
 
-        with tempfile.TemporaryDirectory(prefix="agent-core-backends-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="agent-core-backends-", ignore_cleanup_errors=True) as tmp:
             builtin_matrix = _builtin_backend_matrix(Path(tmp))
             session = AgentSession(
                 profile=AgentProfile(

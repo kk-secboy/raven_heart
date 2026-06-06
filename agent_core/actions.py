@@ -126,9 +126,13 @@ class ActionRegistry:
         name = str(data.get("action") or data.get("name") or "").strip()
         if not name:
             raise ActionError("action payload missing action/name")
-        arguments = data.get("arguments", data.get("args", {}))
+        arguments = data.get("arguments", data.get("args"))
         if arguments is None:
-            arguments = {}
+            arguments = {
+                str(key): value
+                for key, value in data.items()
+                if key not in {"action", "name", "next_action"}
+            }
         if not isinstance(arguments, dict):
             raise ActionError("action arguments must be an object")
         parsed = ParsedAction(name=name, arguments=arguments, raw=raw)

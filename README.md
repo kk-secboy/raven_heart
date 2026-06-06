@@ -721,11 +721,12 @@ routing, SLA policy, SIEM export, and durable workflow storage.
 - `ReducerRequest` and `ReducerResult` manifests for replay and audit.
 - Pinned item retention plus recent-window retention.
 - `apply_reduction_to_timeline()` for updating a `TimelineStore` with compressed
-  head text and archive refs.
+  head text and archive refs without deleting original timeline facts.
 - Optional `AgentSession.context_reducer` integration. When configured,
-  `AgentRunner` reduces over-budget timeline state before building `PromptIR`,
+  the turn refresher reduces over-budget prompt views before each model call,
   then exposes the reduction manifest on both `AgentRunOutcome` and prompt
-  metadata.
+  metadata. `TimelineStore` remains the source of original facts; prompt
+  reduction only changes the prompt-facing view.
 
 The SDK owns reduction mechanics and manifests. Runtimes may replace the reducer
 with an LLM summarizer, vector/archive backed compressor, or domain-specific

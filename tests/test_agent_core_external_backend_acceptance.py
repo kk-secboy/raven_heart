@@ -26,7 +26,7 @@ async def test_agent_core_external_backend_acceptance_gate_passes() -> None:
         "custom",
     }
     assert manifest["run"]["status"] == "completed"
-    assert manifest["external_memory"]["call_count"] == 4
+    assert manifest["external_memory"]["call_count"] == 5
     assert set(manifest["external_memory"]["kinds"]) == {
         "postgres",
         "graph",

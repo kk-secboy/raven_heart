@@ -27,6 +27,7 @@ from agent_core.providers import (
     LLMToolChoice,
     LLMToolContract,
     LLMUsageLimits,
+    ProviderCachePolicy,
     RetryHint,
     TransportLLMProvider,
     UsageInfo,
@@ -424,10 +425,87 @@ def test_chat_completions_codec_encodes_chat_completion_payloads() -> None:
     assert payload["tool_choice"] == {"type": "function", "function": {"name": "lookup"}}
     assert payload["response_format"]["type"] == "json_schema"
     assert payload["response_format"]["json_schema"]["name"] == "finding"
+    assert "metadata" not in payload
     assert (
         codec.manifest()["schema_version"]
         == "agent-core-chat-completions-llm-provider-codec/v1"
     )
+
+
+def test_chat_completions_codec_applies_provider_cache_policy_to_cacheable_segments() -> None:
+    codec = ChatCompletionsLLMProviderCodec(
+        cache_policy=ProviderCachePolicy.ephemeral(min_segment_bytes=4)
+    )
+    payload = codec.encode_request(
+        LLMRequest(
+            messages=[
+                LLMMessage(
+                    role="system",
+                    content="stable rules",
+                    metadata={"cache_hint": {"cacheable": True}},
+                ),
+                LLMMessage(
+                    role="user",
+                    content="dynamic",
+                    metadata={"cache_hint": {"cacheable": False}},
+                ),
+            ],
+            model="dashscope-compatible",
+        )
+    )
+
+    assert payload["messages"][0]["content"] == [
+        {
+            "type": "text",
+            "text": "stable rules",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+    assert payload["messages"][1]["content"] == "dynamic"
+
+
+def test_chat_completions_codec_strips_cache_control_by_default() -> None:
+    payload = ChatCompletionsLLMProviderCodec().encode_request(
+        LLMRequest(
+            messages=[
+                LLMMessage(
+                    role="system",
+                    content="stable rules",
+                    metadata={"cache_hint": {"cacheable": True}},
+                )
+            ],
+            model="openai-compatible",
+        )
+    )
+
+    assert payload["messages"][0] == {"role": "system", "content": "stable rules"}
+
+
+def test_chat_completions_codec_does_not_cache_assistant_content_parts() -> None:
+    codec = ChatCompletionsLLMProviderCodec(
+        cache_policy=ProviderCachePolicy.ephemeral(min_segment_bytes=4)
+    )
+    payload = codec.encode_request(
+        LLMRequest(
+            messages=[
+                LLMMessage(
+                    role="assistant",
+                    content="",
+                    content_parts=(
+                        LLMContentPart.text_part(
+                            "assistant output",
+                            metadata={"cache_hint": {"cacheable": True}},
+                        ),
+                    ),
+                )
+            ],
+            model="dashscope-compatible",
+        )
+    )
+
+    assert payload["messages"][0]["content"] == [
+        {"type": "text", "text": "assistant output"}
+    ]
 
 
 def test_chat_completions_codec_decodes_chat_completion_payloads() -> None:

@@ -17,8 +17,14 @@ from agent_core.harness import CancelToken
 from agent_core.loop_guard import LoopGuardConfig
 from agent_core.memory import MemoryHit
 from agent_core.prompt import PromptIR
-from agent_core.providers import LLMRequest, LLMResponse
-from agent_core.react import ReActConfig, ReActExecutor
+from agent_core.providers import LLMMessage, LLMRequest, LLMResponse, LLMToolCall
+from agent_core.react import (
+    ReActConfig,
+    ReActExecutor,
+    _message_bytes,
+    _messages_bytes,
+    _native_tool_contracts_bytes,
+)
 from agent_core.config import RuntimeBudget
 from agent_core.skills import SkillRegistry, SkillsContext
 from agent_core.timeline import TimelineStore
@@ -141,6 +147,166 @@ async def test_react_executor_feedbacks_action_schema_errors() -> None:
     assert provider.requests[1].messages[-1].content.startswith('{"feedback": "action_error"')
 
 
+def test_react_executor_provider_messages_apply_total_request_budget() -> None:
+    executor = ReActExecutor(
+        provider=MockLLMProvider([]),
+        tool_runtime=MockToolRuntime({}),
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        config=ReActConfig(
+            budget=RuntimeBudget(max_prompt_bytes=900),
+            loop_delta_max_bytes=700,
+        ),
+    )
+    prompt = PromptIR.from_parts(
+        dynamic="fresh prompt fact\n" + ("x" * 850),
+    )
+    compact_delta = [
+        LLMMessage(role="assistant", content="previous answer " + ("a" * 280)),
+        LLMMessage(role="user", name="lookup", content="tool output " + ("b" * 280)),
+    ]
+
+    messages = executor._provider_messages(prompt, compact_delta)
+    total_bytes = sum(_message_bytes(message) for message in messages)
+
+    assert total_bytes <= 900
+    assert messages[0].metadata["agent_core_prompt"] is True
+    assert len(messages[0].content.encode("utf-8")) < len(prompt.render().encode("utf-8"))
+
+
+def test_react_executor_provider_messages_split_prompt_like_yaklang_cache_sections() -> None:
+    executor = ReActExecutor(
+        provider=MockLLMProvider([]),
+        tool_runtime=MockToolRuntime({}),
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        config=ReActConfig(budget=RuntimeBudget(max_prompt_bytes=4000)),
+    )
+    prompt = PromptIR.from_parts(
+        high_static="system rules",
+        frozen="tool inventory",
+        semi_dynamic_1="skills context",
+        semi_dynamic_2="schema context",
+        timeline_open="latest tool fact",
+        dynamic="current task",
+    )
+
+    messages = executor._provider_messages(prompt, [])
+
+    assert [message.role for message in messages] == ["system", "user", "user", "user", "user"]
+    assert [
+        message.metadata["agent_core_prompt_segment"] for message in messages
+    ] == [
+        "high_static",
+        "frozen",
+        "semi_dynamic_1",
+        "semi_dynamic_2",
+        "timeline_open_dynamic",
+    ]
+    assert messages[0].metadata["cache_hint"]["cacheable"] is True
+    assert messages[2].metadata["cache_hint"]["cacheable"] is False
+    assert messages[3].metadata["cache_hint"]["cacheable"] is True
+    assert messages[-1].metadata["cache_hint"]["cacheable"] is False
+    assert "latest tool fact" in messages[-1].content
+    assert "current task" in messages[-1].content
+    assert "skills context" in messages[2].content
+    assert "schema context" in messages[3].content
+
+    next_prompt = PromptIR.from_parts(
+        high_static="system rules",
+        frozen="tool inventory",
+        semi_dynamic_1="different skills context",
+        semi_dynamic_2="schema context",
+        timeline_open="different latest tool fact",
+        dynamic="different current task",
+    )
+    next_messages = executor._provider_messages(next_prompt, [])
+
+    assert [message.content for message in next_messages[:2]] == [
+        message.content for message in messages[:2]
+    ]
+    assert next_messages[2].content != messages[2].content
+    assert next_messages[3].content == messages[3].content
+    stable_prefix = "\n\n".join(message.content for message in next_messages[:4])
+    assert "different latest tool fact" not in stable_prefix
+    assert "different current task" not in stable_prefix
+    assert "different skills context" in stable_prefix
+
+
+@pytest.mark.asyncio
+async def test_react_executor_provider_request_can_enable_provider_cache_policy() -> None:
+    provider = MockLLMProvider(
+        [{"action": "finish", "arguments": {"output": "done"}}]
+    )
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=MockToolRuntime({}),
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        config=ReActConfig(
+            budget=RuntimeBudget(max_prompt_bytes=4000),
+            provider_cache_mode="ephemeral",
+            provider_cache_min_segment_bytes=4,
+        ),
+    )
+
+    result = await executor.run(
+        "task",
+        PromptIR.from_parts(high_static="stable rules", dynamic="task"),
+    )
+
+    assert result.status == "completed"
+    assert provider.requests[0].metadata["provider_cache_policy"] == {
+        "mode": "ephemeral",
+        "min_segment_bytes": 4,
+        "cache_control": {"type": "ephemeral"},
+    }
+
+
+def test_react_executor_provider_messages_budget_drops_unbounded_delta_first() -> None:
+    executor = ReActExecutor(
+        provider=MockLLMProvider([]),
+        tool_runtime=MockToolRuntime({}),
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        config=ReActConfig(
+            budget=RuntimeBudget(max_prompt_bytes=700),
+            loop_delta_max_bytes=1200,
+        ),
+    )
+    prompt = PromptIR.from_parts(dynamic="task\n" + ("x" * 500))
+    compact_delta = [
+        LLMMessage(role="assistant", content="older " + ("a" * 900)),
+        LLMMessage(role="user", name="lookup", content="newer " + ("b" * 900)),
+    ]
+
+    messages = executor._provider_messages(prompt, compact_delta)
+
+    assert sum(_message_bytes(message) for message in messages) <= 700
+    assert [message.metadata.get("agent_core_prompt") for message in messages] == [True]
+    assert messages[0].metadata["agent_core_prompt_segment"] == "timeline_open_dynamic"
+
+
+def test_react_executor_provider_budget_can_trim_context_injection_view() -> None:
+    executor = ReActExecutor(
+        provider=MockLLMProvider([]),
+        tool_runtime=MockToolRuntime({}),
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        config=ReActConfig(budget=RuntimeBudget(max_prompt_bytes=900)),
+    )
+    prompt = PromptIR.from_parts(
+        timeline_open="[context_injection:memory source=memory]\n" + ("memory fact " * 300),
+        dynamic="current task",
+    )
+
+    default_trimmed = prompt.trim_to_budget(900)
+    provider_messages = executor._provider_messages(prompt, [])
+
+    assert default_trimmed.manifest()["metadata"]["trim"]["converged"] is False
+    assert sum(_message_bytes(message) for message in provider_messages) <= 900
+
+
 def test_action_registry_validates_registered_json_schema_subset() -> None:
     registry = ActionRegistry()
     registry.register(
@@ -159,6 +325,20 @@ def test_action_registry_validates_registered_json_schema_subset() -> None:
     assert parsed.name == "ask"
     with pytest.raises(ActionError):
         registry.parse({"action": "ask", "arguments": {"question": 123}})
+
+
+def test_action_registry_accepts_top_level_action_arguments() -> None:
+    registry = ActionRegistry()
+    registry.register(ActionSpec(name="call_tool"))
+    registry.register(ActionSpec(name="finish", terminal=True))
+
+    tool_action = registry.parse('{"action":"call_tool","tool_name":"exec_echo"}')
+    finish_action = registry.parse(
+        '```json\n{"action":"finish","finding":"stable result"}\n```'
+    )
+
+    assert tool_action.arguments == {"tool_name": "exec_echo"}
+    assert finish_action.arguments == {"finding": "stable result"}
 
 
 @pytest.mark.asyncio
@@ -401,6 +581,119 @@ async def test_react_executor_injects_memory_hits_into_provider_request() -> Non
     assert memory.queries[0].query == "use memory"
     assert provider.requests[0].messages[-1].name == "memory"
     assert "prior fact" in provider.requests[0].messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_react_executor_repairs_native_finish_without_output() -> None:
+    provider = MockLLMProvider(
+        [
+            LLMResponse(
+                tool_calls=(
+                    LLMToolCall(
+                        tool_name="finish",
+                        arguments={"terminal": True},
+                        call_id="finish-empty",
+                    ),
+                ),
+                finish_reason="tool_calls",
+            ),
+            "final answer after repair",
+        ]
+    )
+    harness = InMemoryHarness()
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=MockToolRuntime(),
+        action_registry=ActionRegistry(),
+        harness=harness,
+        config=ReActConfig(max_iterations=2, native_tool_calls=True),
+    )
+
+    result = await executor.run("finish with text", PromptIR.from_parts(dynamic="task"))
+
+    assert result.status == "completed"
+    assert result.output == "final answer after repair"
+    assert len(provider.requests) == 2
+    assert "finish requires a non-empty output string" in provider.requests[1].messages[-1].content
+    assert harness.checkpoints[0].state["status"] == "finish_error"
+    assert harness.finished[-1]["result"]["output"] == "final answer after repair"
+
+
+@pytest.mark.asyncio
+async def test_react_executor_budgets_native_tool_messages_and_tool_inventory() -> None:
+    provider = MockLLMProvider(
+        [
+            LLMResponse(
+                tool_calls=(
+                    LLMToolCall(
+                        tool_name="finish",
+                        arguments={"output": "done"},
+                        call_id="finish-ok",
+                    ),
+                ),
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+    tools = ToolRegistry()
+
+    async def noop(invocation: ToolInvocation) -> ToolResult:
+        return ToolResult(
+            call_id=invocation.call_id,
+            tool_name=invocation.tool_name,
+            content="unused",
+        )
+
+    tools.register(
+        ToolSpec(
+            name="inspect_alpha",
+            description="Return alpha callback-state nonce evidence",
+            parameters_schema={"type": "object", "properties": {}},
+            tags=("alpha", "callback"),
+        ),
+        noop,
+    )
+    for index in range(29):
+        tools.register(
+            ToolSpec(
+                name=f"irrelevant_{index:02d}",
+                description="Unrelated verbose tool " + ("x" * 240),
+                parameters_schema={
+                    "type": "object",
+                    "properties": {"payload": {"type": "string", "description": "x" * 80}},
+                },
+                tags=("noise",),
+            ),
+            noop,
+        )
+    executor = ReActExecutor(
+        provider=provider,
+        tool_runtime=tools,
+        action_registry=ActionRegistry(),
+        harness=InMemoryHarness(),
+        config=ReActConfig(
+            max_iterations=1,
+            native_tool_calls=True,
+            budget=RuntimeBudget(max_prompt_bytes=1400),
+            loop_delta_max_bytes=512,
+        ),
+    )
+
+    result = await executor.run(
+        "Alpha task: use inspect_alpha for callback nonce review.",
+        PromptIR.from_parts(
+            high_static="stable rules",
+            dynamic="Alpha task: inspect callback-state nonce handling. " + ("context " * 80),
+        ),
+    )
+
+    request = provider.requests[0]
+    tool_names = [tool.name for tool in request.tools]
+    assert result.status == "completed"
+    assert _messages_bytes(request.messages) <= 1400
+    assert _messages_bytes(request.messages) + _native_tool_contracts_bytes(request.tools) <= 1400
+    assert "inspect_alpha" in tool_names
+    assert len(tool_names) < 30
 
 
 @pytest.mark.asyncio

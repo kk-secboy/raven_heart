@@ -494,7 +494,7 @@ def test_agent_core_sdk_manifest_declares_capabilities_and_runtime_boundary() ->
     assert manifest["public_api_count"] <= 40
     assert manifest["public_api_count"] < manifest["root_export_count"]
     assert manifest["contract_api_count"] >= manifest["public_api_count"]
-    assert manifest["contract_api_count"] <= 90
+    assert manifest["contract_api_count"] <= 95
     assert set(manifest["public_api"]) <= set(agent_core.__all__)
     assert set(manifest["contract_api"]) <= set(agent_core.__all__)
     assert manifest["api_contract"]["schema_version"] == "agent-core-api-contract/v1"

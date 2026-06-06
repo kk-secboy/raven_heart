@@ -87,6 +87,14 @@ class ResumeAcceptanceProvider:
         return LLMResponse(action={"action": "finish", "arguments": {"output": "resumed-ok"}})
 
 
+def _request_prompt_text(request: LLMRequest) -> str:
+    return "\n\n".join(
+        message.content
+        for message in request.messages
+        if message.metadata.get("agent_core_prompt")
+    )
+
+
 @dataclass(frozen=True)
 class AgentCoreResumeAcceptanceHarness:
     """Run a deterministic checkpoint/resume acceptance scenario."""
@@ -154,7 +162,7 @@ class AgentCoreResumeAcceptanceHarness:
                 "provider_request_count": len(provider.requests),
                 "resume_prompt_injected": bool(
                     provider.requests
-                    and "== Resumed Checkpoint ==" in provider.requests[0].messages[0].content
+                    and "== Resumed Checkpoint ==" in _request_prompt_text(provider.requests[0])
                 ),
             },
             terminal_rejection=terminal_rejection,

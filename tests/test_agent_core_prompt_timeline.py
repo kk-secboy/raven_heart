@@ -238,6 +238,81 @@ def test_timeline_splits_frozen_and_open_when_over_budget() -> None:
     assert view.frozen_items[0].content.startswith("observation 0")
 
 
+def test_timeline_prompt_view_uses_yaklang_style_stable_time_buckets() -> None:
+    first = TimelineItem(
+        "old bucket fact",
+        kind="fact",
+        item_id="fact-old",
+        created_at="2026-06-02T10:00:05+00:00",
+    )
+    second = TimelineItem(
+        "latest bucket fact",
+        kind="fact",
+        item_id="fact-new",
+        created_at="2026-06-02T10:03:02+00:00",
+    )
+    timeline = TimelineStore([first, second])
+
+    view = timeline.view(TimelineBudget(max_bytes=4096, prompt_block_bytes=4096))
+
+    assert [block.item_ids for block in view.frozen_blocks] == [("fact-old",)]
+    assert [block.item_ids for block in view.open_blocks] == [("fact-new",)]
+    assert "<|TIMELINE_b3t" in view.render_frozen()
+    assert "# bucket=2026/06/02 10:00:00-10:03:00 interval=3m" in view.render_frozen()
+    assert "old bucket fact" in view.render_frozen()
+    assert "latest bucket fact" not in view.render_frozen()
+    assert "# bucket=2026/06/02 10:03:00-10:06:00 interval=3m" in view.render_open()
+    assert "latest bucket fact" in view.render_open()
+
+
+def test_timeline_prompt_view_keeps_frozen_prefix_stable_when_new_bucket_is_added() -> None:
+    timeline = TimelineStore(
+        [
+            TimelineItem(
+                "frozen fact",
+                kind="fact",
+                item_id="fact-1",
+                created_at="2026-06-02T10:00:05+00:00",
+            ),
+            TimelineItem(
+                "open fact",
+                kind="fact",
+                item_id="fact-2",
+                created_at="2026-06-02T10:03:05+00:00",
+            ),
+        ]
+    )
+    first_frozen = timeline.view(TimelineBudget(max_bytes=4096)).render_frozen()
+    timeline._items.append(
+        TimelineItem(
+            "new open fact",
+            kind="fact",
+            item_id="fact-3",
+            created_at="2026-06-02T10:06:05+00:00",
+        )
+    )
+    second_frozen = timeline.view(TimelineBudget(max_bytes=4096)).render_frozen()
+
+    assert first_frozen in second_frozen
+    assert "new open fact" not in second_frozen
+
+
+def test_timeline_diff_uses_original_fact_stream_independent_of_prompt_view() -> None:
+    timeline = TimelineStore()
+    first = timeline.add("first fact", kind="fact")
+    cursor = timeline.cursor()
+    second = timeline.add("second fact", kind="tool")
+
+    timeline.compressed_head = "compressed prompt digest"
+    timeline.archive_refs.append(f"timeline:{first.item_id}")
+    view = timeline.view(TimelineBudget(max_bytes=1))
+    diff = timeline.diff_since(cursor)
+
+    assert view.compressed_head == "compressed prompt digest"
+    assert [item.item_id for item in diff.items] == [second.item_id]
+    assert diff.next_cursor.last_item_id == second.item_id
+
+
 @pytest.mark.asyncio
 async def test_default_reducer_keeps_recent_window_and_compresses_old_items() -> None:
     timeline = TimelineStore()
@@ -270,6 +345,7 @@ async def test_default_reducer_exports_manifest_and_applies_to_timeline() -> Non
     manifest = result.manifest()
 
     active_ids = {item.item_id for item in timeline.items if not item.deleted}
+    assert active_ids == {item.item_id for item in timeline.items}
     assert pinned.item_id in active_ids
     assert latest.item_id in active_ids
     assert result.metadata["compressed_item_count"] > 0
@@ -277,7 +353,34 @@ async def test_default_reducer_exports_manifest_and_applies_to_timeline() -> Non
     assert manifest["retained_item_ids"] == [item.item_id for item in result.retained_items]
     assert timeline.compressed_head
     assert timeline.archive_refs == list(result.archive_refs)
+    assert timeline.archive_ref_records
+    assert timeline.archive_ref_records[0].reason == "batch_compress"
+    assert timeline.archive_ref_records[0].source_start_id
     assert view.compressed_head == timeline.compressed_head
+    assert [item.item_id for item in view.open_items] == [
+        item.item_id for item in result.retained_items
+    ]
+
+
+@pytest.mark.asyncio
+async def test_timeline_reduction_keeps_original_diff_facts() -> None:
+    timeline = TimelineStore()
+    before = timeline.add("before cursor", kind="fact")
+    cursor = timeline.cursor()
+    for index in range(5):
+        timeline.add(f"compress candidate {index} " + ("x" * 80), kind="observation")
+
+    result = await DefaultContextReducer().reduce(
+        ReducerRequest(items=timeline.items, max_bytes=180, recent_keep_ratio=0.2)
+    )
+    view = apply_reduction_to_timeline(timeline, result)
+    diff = timeline.diff_since(cursor)
+
+    assert before.deleted is False
+    assert all(not item.deleted for item in timeline.items)
+    assert len(diff.items) == 5
+    assert view.archive_ref_records
+    assert "[compressed_head]" in timeline.view(TimelineBudget(max_bytes=2048)).render_frozen()
 
 
 @pytest.mark.asyncio

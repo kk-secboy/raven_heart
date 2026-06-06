@@ -11,6 +11,8 @@ from agent_core.context import (
     MarkdownContextMaterialStore,
     SQLiteContextMaterialStore,
 )
+from agent_core.embeddings import EmbeddingRequest, EmbeddingResponse, EmbeddingVector
+from agent_core.knowledge import DefaultKnowledgeRecall, KnowledgeRecallRequest
 
 
 class _FailingContextMaterialStore:
@@ -19,6 +21,118 @@ class _FailingContextMaterialStore:
 
     async def write(self, material: ContextMaterial) -> None:
         raise RuntimeError("context write failed")
+
+
+class _FailingEmbeddingProvider:
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        raise RuntimeError("embedding batch failed")
+
+
+class _CountingEmbeddingProvider:
+    def __init__(self) -> None:
+        self.input_counts: list[int] = []
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        self.input_counts.append(len(request.inputs))
+        return EmbeddingResponse(
+            vectors=tuple(
+                EmbeddingVector(values=(1.0, float(index + 1)), index=index, name=item.name)
+                for index, item in enumerate(request.inputs)
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_default_knowledge_recall_accumulates_summary_and_expands_semantic_query() -> None:
+    store = InMemoryContextMaterialStore(
+        (
+            ContextMaterial(
+                name="csrf-session",
+                content="Validate session binding before accepting csrf callback tokens.",
+                role="knowledge",
+                priority=50,
+                metadata={"source": "kb"},
+            ),
+        )
+    )
+    recall = DefaultKnowledgeRecall(store=store, max_summary_bytes=1024)
+
+    result = await recall.recall(
+        KnowledgeRecallRequest(
+            query="callback token validation",
+            topics=("csrf session",),
+            keywords=("csrf", "session"),
+            limit=3,
+        )
+    )
+
+    prompt = result.render_prompt()
+    manifest = result.manifest()
+    assert result.materials
+    assert "[accumulated_search_summary]" in prompt
+    assert "Validate session binding" in prompt
+    assert manifest["metadata"]["strategy"] == "default_keyword_bm25_stateful"
+    assert manifest["metadata"]["search_count"] == 1
+    assert "csrf" in manifest["metadata"]["expanded_queries"]
+
+
+@pytest.mark.asyncio
+async def test_default_knowledge_recall_injects_fallback_hints_for_empty_results() -> None:
+    recall = DefaultKnowledgeRecall(store=InMemoryContextMaterialStore(()))
+
+    result = await recall.recall(KnowledgeRecallRequest(query="missing kb topic", limit=3))
+
+    assert result.materials == ()
+    assert result.fallback_hints
+    assert result.injections
+    prompt = result.injections[0].content
+    assert "[fallback_hints]" in prompt
+    assert "fall back to web/search/tool evidence" in prompt
+
+
+@pytest.mark.asyncio
+async def test_default_knowledge_recall_falls_back_to_keyword_when_embedding_fails() -> None:
+    store = InMemoryContextMaterialStore(
+        (
+            ContextMaterial(
+                name="auth-callback-kb",
+                content="Auth callback nonce must be persisted and replay checked.",
+                role="knowledge",
+                priority=70,
+                metadata={"tags": ("auth", "callback")},
+            ),
+        ),
+        embedding_provider=_FailingEmbeddingProvider(),
+    )
+    recall = DefaultKnowledgeRecall(store=store)
+
+    result = await recall.recall(KnowledgeRecallRequest(query="auth callback nonce", limit=3))
+
+    assert [material.name for material in result.materials] == ["auth-callback-kb"]
+    assert result.metadata["failure_count"] == 0
+    assert "Auth callback nonce" in result.render_prompt()
+
+
+@pytest.mark.asyncio
+async def test_in_memory_context_material_store_prefilters_semantic_candidates() -> None:
+    embedding = _CountingEmbeddingProvider()
+    store = InMemoryContextMaterialStore(
+        tuple(
+            ContextMaterial(
+                name=f"kb-{index:02d}",
+                content=f"auth callback candidate {index}",
+                role="knowledge",
+                priority=100 - index,
+            )
+            for index in range(50)
+        ),
+        embedding_provider=embedding,
+    )
+
+    results = await store.search(ContextMaterialQuery(query="auth callback", limit=3, mode="hybrid"))
+
+    assert len(results) == 3
+    assert embedding.input_counts == [13]
 
 
 @pytest.mark.asyncio
@@ -178,6 +292,41 @@ async def test_context_material_center_routes_and_manifests_external_backends() 
     assert manifest["calls"][1]["query"]["query_sha256"]
     assert "auth risk callback" not in str(manifest)
     assert external.manifest()["call_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_context_material_center_continues_when_one_store_search_fails() -> None:
+    center = ContextMaterialCenter(default_store="workspace")
+    center.register(
+        "workspace",
+        InMemoryContextMaterialStore(
+            (
+                ContextMaterial(
+                    name="good-kb",
+                    content="auth callback evidence remains searchable",
+                    role="knowledge",
+                    priority=10,
+                ),
+            )
+        ),
+        priority=5,
+    )
+    center.register_spec(
+        ExternalContextMaterialStore(
+            _FailingContextMaterialStore(),
+            name="broken",
+            backend_kind="postgres",
+            priority=50,
+        ).spec,
+        _FailingContextMaterialStore(),
+    )
+
+    results = await center.search(ContextMaterialQuery(query="auth callback", limit=3))
+    manifest = center.manifest()
+
+    assert [material.name for material in results] == ["good-kb"]
+    assert [call["status"] for call in manifest["calls"]] == ["failed", "completed"]
+    assert "context search failed" in manifest["calls"][0]["error"]
 
 
 @pytest.mark.asyncio

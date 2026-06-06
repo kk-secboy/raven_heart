@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from agent_core.timeline import TimelineItem, TimelineStore, TimelineView
+from agent_core.timeline import TimelineArchiveRef, TimelineItem, TimelineStore, TimelineView
 
 
 @dataclass(frozen=True)
@@ -110,25 +110,24 @@ class DefaultContextReducer:
 
 
 def apply_reduction_to_timeline(timeline: TimelineStore, result: ReducerResult) -> TimelineView:
-    """Apply a reducer result to a timeline without coupling to a storage backend."""
+    """Apply prompt-view reduction without mutating the original timeline facts.
 
-    retained_ids = {item.item_id for item in result.retained_items}
+    The timeline store remains the append-only source for diffing, memory flush, and
+    audit. Reduction updates only prompt-facing digest state and returns the retained
+    open items for the next prompt view.
+    """
+
     if result.compressed_head:
         timeline.compressed_head = "\n".join(
             item for item in (timeline.compressed_head, result.compressed_head) if item
         )
     for ref in result.archive_refs:
-        if ref not in timeline.archive_refs:
-            timeline.archive_refs.append(ref)
-    if result.archive_refs or result.compressed_head:
-        for item in timeline.items:
-            if item.deleted or item.item_id in retained_ids:
-                continue
-            timeline.soft_delete(item.item_id)
+        timeline.add_archive_ref(_archive_ref_from_reduction(ref, result))
     return TimelineView(
-        open_items=tuple(item for item in timeline.items if not item.deleted),
+        open_items=tuple(item for item in result.retained_items if not item.deleted),
         compressed_head=timeline.compressed_head,
         archive_refs=tuple(timeline.archive_refs),
+        archive_ref_records=tuple(timeline.archive_ref_records),
     )
 
 
@@ -148,5 +147,40 @@ def _result_metadata(
         "retained_bytes": sum(item.bytes for item in retained if not item.deleted),
         "compressed_item_count": len(compressed),
         "compressed_bytes": sum(item.bytes for item in compressed if not item.deleted),
+        "compressed_item_ids": [item.item_id for item in compressed],
+        "compressed_kinds": [item.kind for item in compressed],
+        "source_start_id": compressed[0].item_id if compressed else "",
+        "source_end_id": compressed[-1].item_id if compressed else "",
     }
+
+
+def _archive_ref_from_reduction(ref: str, result: ReducerResult) -> TimelineArchiveRef:
+    metadata = dict(result.metadata)
+    compressed_ids = [
+        str(item_id)
+        for item_id in metadata.get("compressed_item_ids", ())
+        if str(item_id)
+    ]
+    return TimelineArchiveRef(
+        archive_id=str(ref),
+        reason=str(metadata.get("reason") or "batch_compress"),
+        summary_preview=_summary_preview(result.compressed_head),
+        reducer_key_id=str(
+            metadata.get("source_end_id") or (compressed_ids[-1] if compressed_ids else "")
+        ),
+        source_start_id=str(
+            metadata.get("source_start_id") or (compressed_ids[0] if compressed_ids else "")
+        ),
+        source_end_id=str(
+            metadata.get("source_end_id") or (compressed_ids[-1] if compressed_ids else "")
+        ),
+        item_count=int(metadata.get("compressed_item_count") or len(compressed_ids)),
+    )
+
+
+def _summary_preview(text: str, limit: int = 240) -> str:
+    collapsed = " ".join(str(text).split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 3].rstrip() + "..."
 

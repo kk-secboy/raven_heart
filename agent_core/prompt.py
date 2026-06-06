@@ -30,9 +30,9 @@ PROMPT_BUCKET_ORDER = (
 DEFAULT_PROMPT_TRIM_ORDER = (
     PromptBucketRole.TIMELINE_OPEN,
     PromptBucketRole.SEMI_DYNAMIC_1,
+    PromptBucketRole.DYNAMIC,
     PromptBucketRole.SEMI_DYNAMIC_2,
     PromptBucketRole.FROZEN,
-    PromptBucketRole.DYNAMIC,
     PromptBucketRole.HIGH_STATIC,
 )
 
@@ -47,8 +47,10 @@ class CacheHint:
 def default_cache_hint(role: PromptBucketRole) -> CacheHint:
     if role in {PromptBucketRole.HIGH_STATIC, PromptBucketRole.FROZEN}:
         return CacheHint(True, "stable_cacheable_prefix", "cache_prefix")
-    if role in {PromptBucketRole.SEMI_DYNAMIC_1, PromptBucketRole.SEMI_DYNAMIC_2}:
+    if role == PromptBucketRole.SEMI_DYNAMIC_2:
         return CacheHint(True, "semi_dynamic_refresh_on_task_change", "cache_semistatic")
+    if role == PromptBucketRole.SEMI_DYNAMIC_1:
+        return CacheHint(False, "semi_dynamic_prefix_without_provider_boundary", "")
     return CacheHint(False, "dynamic_refresh_each_turn", "")
 
 
@@ -366,6 +368,8 @@ class DefaultPromptSemanticReducer:
                     dropped_units=stats["dropped_units"],
                 )
             )
+            if stats["reason"] == "semantic_budget_exhausted_keep_best_unit":
+                break
 
         final_prompt = PromptIR(
             buckets=tuple(by_role.get(role, PromptBucket(role)) for role in PROMPT_BUCKET_ORDER),
@@ -588,7 +592,7 @@ def _default_min_keep_bytes(role: PromptBucketRole) -> int:
     if role == PromptBucketRole.DYNAMIC:
         return 256
     if role == PromptBucketRole.FROZEN:
-        return 512
+        return 0
     return 0
 
 
@@ -603,9 +607,9 @@ def _default_preserve_head_ratio(role: PromptBucketRole) -> float:
 def _default_trim_reason(role: PromptBucketRole) -> str:
     reasons = {
         PromptBucketRole.TIMELINE_OPEN: "trim volatile timeline context first",
-        PromptBucketRole.SEMI_DYNAMIC_1: "trim recall, skills, and semi-dynamic context after timeline",
-        PromptBucketRole.SEMI_DYNAMIC_2: "trim task schema/examples after recall context",
-        PromptBucketRole.FROZEN: "trim capability catalog only after dynamic context",
+        PromptBucketRole.SEMI_DYNAMIC_1: "preserve recall and selected context until lower-priority prompt material is exhausted",
+        PromptBucketRole.SEMI_DYNAMIC_2: "trim task schema/examples before recall context",
+        PromptBucketRole.FROZEN: "stable capability catalog is protected",
         PromptBucketRole.DYNAMIC: "preserve current task as long as possible",
         PromptBucketRole.HIGH_STATIC: "stable system rules are protected",
     }
@@ -618,7 +622,11 @@ DEFAULT_PROMPT_TRIM_RULES = tuple(
         order=index,
         min_keep_bytes=_default_min_keep_bytes(role),
         preserve_head_ratio=_default_preserve_head_ratio(role),
-        protected=role == PromptBucketRole.HIGH_STATIC,
+        protected=role in {
+            PromptBucketRole.HIGH_STATIC,
+            PromptBucketRole.FROZEN,
+            PromptBucketRole.DYNAMIC,
+        },
         reason=_default_trim_reason(role),
     )
     for index, role in enumerate(DEFAULT_PROMPT_TRIM_ORDER)
@@ -726,6 +734,19 @@ class PromptIR:
     def manifest(self) -> dict[str, Any]:
         rendered = self.render()
         bucket_manifests = [bucket.manifest() for bucket in self.ordered_buckets()]
+        section_observations = [
+            {
+                "id": f"section.{item['role']}",
+                "role": item["role"],
+                "included": item["included"],
+                "bytes": item["bytes"],
+                "estimated_tokens": item["estimated_tokens"],
+                "sha256": item["sha256"],
+                "cache_hint": item["cache_hint"],
+                "metadata": item["metadata"],
+            }
+            for item in bucket_manifests
+        ]
         return {
             "schema_version": "agent-core-prompt-ir/v1",
             "prompt_bytes": len(rendered.encode("utf-8")),
@@ -734,6 +755,7 @@ class PromptIR:
             else "",
             "buckets": bucket_manifests,
             "buckets_by_role": {item["role"]: item for item in bucket_manifests},
+            "section_observations": section_observations,
             "metadata": dict(self.metadata),
         }
 
@@ -744,6 +766,7 @@ class PromptIR:
         trim_order: tuple[PromptBucketRole, ...] = DEFAULT_PROMPT_TRIM_ORDER,
         marker: str = "\n[...trimmed...]\n",
         rules: tuple[PromptTrimRule, ...] | None = None,
+        protect_context_injections: bool = True,
     ) -> "PromptIR":
         """Return a semantically trimmed prompt while preserving bucket order.
 
@@ -778,6 +801,18 @@ class PromptIR:
                 break
             bucket = by_role.get(role, PromptBucket(role))
             if not bucket.content:
+                continue
+            if protect_context_injections and "[context_injection:" in bucket.content:
+                steps.append(
+                    PromptTrimStep(
+                        role=role,
+                        original_bytes=bucket.bytes,
+                        final_bytes=bucket.bytes,
+                        overage_before=current_bytes - target,
+                        protected=True,
+                        reason="context_injection_boundary_protected",
+                    )
+                )
                 continue
             if rule.protected:
                 steps.append(
@@ -946,12 +981,77 @@ def _trim_bucket_content(
         return ""
     if target_bytes >= current_bytes:
         return text
+    if "[context_injection:" in text:
+        return _trim_context_injection_bucket_content(
+            text,
+            target_bytes,
+            marker=marker,
+        )
     head_budget = max(1, int(target_bytes * preserve_head_ratio))
     tail_budget = max(1, target_bytes - head_budget)
     head = _take_utf8_prefix(text, head_budget).rstrip()
     tail = _take_utf8_suffix(text, tail_budget).lstrip()
     trimmed = (head + marker + tail).strip()
     return trimmed if trimmed != marker.strip() else ""
+
+
+def _trim_context_injection_bucket_content(
+    text: str,
+    target_bytes: int,
+    *,
+    marker: str,
+) -> str:
+    parts = re.split(r"(?=\[context_injection:[^\n]+\]\n)", text.strip())
+    if not parts:
+        return _trim_text_unit_to_bytes(text, target_bytes, marker=marker)
+    headers: list[str] = []
+    bodies: list[str] = []
+    for part in parts:
+        if not part.strip():
+            continue
+        if part.startswith("[context_injection:") and "\n" in part:
+            header, body = part.split("\n", 1)
+            headers.append(header.strip())
+            bodies.append(body.strip())
+        else:
+            headers.append("")
+            bodies.append(part.strip())
+    header_bytes = sum(len((header + "\n").encode("utf-8")) for header in headers if header)
+    remaining = max(0, int(target_bytes) - header_bytes)
+    body_budget = max(0, remaining // max(1, len(bodies)))
+    rendered: list[str] = []
+    for header, body in zip(headers, bodies, strict=False):
+        if header:
+            if body_budget > 0 and body:
+                rendered.append(
+                    header
+                    + "\n"
+                    + _trim_text_unit_to_bytes(body, body_budget, marker=marker)
+                )
+            else:
+                rendered.append(header)
+        elif body_budget > 0 and body:
+            rendered.append(_trim_text_unit_to_bytes(body, body_budget, marker=marker))
+    result = "\n\n".join(part for part in rendered if part).strip()
+    if len(result.encode("utf-8")) <= target_bytes:
+        return result
+    return _take_utf8_prefix(result, target_bytes).rstrip()
+
+
+def _trim_text_unit_to_bytes(text: str, target_bytes: int, *, marker: str) -> str:
+    target = max(0, int(target_bytes))
+    raw = text.encode("utf-8")
+    if len(raw) <= target:
+        return text.strip()
+    marker_bytes = len(marker.encode("utf-8"))
+    if target <= marker_bytes:
+        return _take_utf8_prefix(text, target).strip()
+    keep = target - marker_bytes
+    head_budget = max(1, keep // 2)
+    tail_budget = max(1, keep - head_budget)
+    head = _take_utf8_prefix(text, head_budget).rstrip()
+    tail = _take_utf8_suffix(text, tail_budget).lstrip()
+    return f"{head}{marker}{tail}".strip()
 
 
 def _take_utf8_prefix(text: str, max_bytes: int) -> str:
@@ -1061,11 +1161,28 @@ def _semantic_trim_bucket_content(
     target_bytes = current_bytes - max(1, overage) - marker_bytes
     if min_keep_bytes:
         target_bytes = max(target_bytes, min_keep_bytes)
+    if "[context_injection:" in text:
+        rendered = _trim_context_injection_bucket_content(
+            text,
+            max(1, target_bytes),
+            marker=marker,
+        )
+        return rendered, {
+            "reason": "semantic_context_injection_trim",
+            "selected_units": 1 if rendered else 0,
+            "dropped_units": max(0, len(units) - 1),
+        }
     if target_bytes <= 0:
-        return "", {
-            "reason": "semantic_budget_exhausted",
-            "selected_units": 0,
-            "dropped_units": len(units),
+        scored_units = [
+            (_semantic_unit_score(unit, query_terms, index, len(units)), index, unit)
+            for index, unit in enumerate(units)
+        ]
+        scored_units.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        selected_index = scored_units[0][1]
+        return _render_semantic_units(units, {selected_index}, marker), {
+            "reason": "semantic_budget_exhausted_keep_best_unit",
+            "selected_units": 1,
+            "dropped_units": max(0, len(units) - 1),
         }
 
     scored = [
@@ -1126,7 +1243,12 @@ def _semantic_unit_score(unit: str, query_terms: frozenset[str], index: int, tot
     density = overlap / max(1, len(unit_terms))
     recency = index / max(1, total - 1)
     heading_bonus = 0.25 if unit.lstrip().startswith(("#", "-", "*", "[")) else 0.0
-    return overlap * 10.0 + density * 3.0 + recency + heading_bonus
+    injection_bonus = 0.0
+    if "[context_injection:" in unit:
+        injection_bonus += 20.0
+        if overlap:
+            injection_bonus += 80.0
+    return overlap * 10.0 + density * 3.0 + recency + heading_bonus + injection_bonus
 
 
 def _render_semantic_units(units: tuple[str, ...], selected: set[int], marker: str) -> str:

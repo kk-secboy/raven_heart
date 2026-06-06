@@ -15,6 +15,7 @@ MessageRole = Literal["system", "user", "assistant", "tool"]
 LLMContentPartKind = Literal["text", "image", "audio", "file", "binary", "json"]
 LLMToolChoiceMode = Literal["auto", "none", "required", "tool"]
 LLMResponseFormatKind = Literal["text", "json", "json_schema"]
+ProviderCacheMode = Literal["strip", "ephemeral"]
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,47 @@ class UsageInfo:
             "total_tokens": self.total_tokens,
             "cost_usd": self.cost_usd,
             "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ProviderCachePolicy:
+    """Provider-safe prompt cache shaping policy.
+
+    Prompt buckets expose provider-neutral cache hints. A concrete provider
+    codec decides whether those hints can become transport fields such as
+    ``cache_control``. Unsupported providers keep the default strip behavior.
+    """
+
+    mode: ProviderCacheMode = "strip"
+    min_segment_bytes: int = 1024
+    cache_control: dict[str, Any] = field(default_factory=lambda: {"type": "ephemeral"})
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"strip", "ephemeral"}:
+            raise ValueError(f"unsupported provider cache mode: {self.mode}")
+        object.__setattr__(self, "min_segment_bytes", max(0, int(self.min_segment_bytes)))
+        object.__setattr__(self, "cache_control", dict(self.cache_control))
+
+    @classmethod
+    def ephemeral(
+        cls,
+        *,
+        min_segment_bytes: int = 1024,
+        cache_control: dict[str, Any] | None = None,
+    ) -> "ProviderCachePolicy":
+        return cls(
+            mode="ephemeral",
+            min_segment_bytes=min_segment_bytes,
+            cache_control=dict(cache_control or {"type": "ephemeral"}),
+        )
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-provider-cache-policy/v1",
+            "mode": self.mode,
+            "min_segment_bytes": self.min_segment_bytes,
+            "cache_control": dict(self.cache_control),
         }
 
 
@@ -604,11 +646,18 @@ class DefaultLLMProviderCodec:
 class ChatCompletionsLLMProviderCodec:
     """Dependency-free codec for Chat Completions-style transports."""
 
+    def __init__(self, *, cache_policy: ProviderCachePolicy | None = None) -> None:
+        self.cache_policy = cache_policy or ProviderCachePolicy()
+
     def encode_request(self, request: LLMRequest) -> dict[str, Any]:
+        cache_policy = _provider_cache_policy_from_request(
+            request,
+            default=self.cache_policy,
+        )
         payload: dict[str, Any] = {
             "model": request.model,
             "messages": [
-                _chat_completions_message_payload(message)
+                _chat_completions_message_payload(message, cache_policy=cache_policy)
                 for message in request.messages
             ],
         }
@@ -629,8 +678,6 @@ class ChatCompletionsLLMProviderCodec:
         )
         if response_format:
             payload["response_format"] = response_format
-        if request.metadata:
-            payload["metadata"] = dict(request.metadata)
         return payload
 
     def decode_response(self, payload: dict[str, Any]) -> LLMResponse:
@@ -695,7 +742,10 @@ class ChatCompletionsLLMProviderCodec:
         )
 
     def manifest(self) -> dict[str, Any]:
-        return {"schema_version": "agent-core-chat-completions-llm-provider-codec/v1"}
+        return {
+            "schema_version": "agent-core-chat-completions-llm-provider-codec/v1",
+            "cache_policy": self.cache_policy.manifest(),
+        }
 
 
 class TransportLLMProvider(LLMProviderPort):
@@ -1857,27 +1907,88 @@ def _tool_call_from_payload(payload: Any) -> LLMToolCall | None:
     )
 
 
-def _chat_completions_message_payload(message: LLMMessage) -> dict[str, Any]:
+def _chat_completions_message_payload(
+    message: LLMMessage,
+    *,
+    cache_policy: ProviderCachePolicy | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": message.role}
     if message.name:
         payload["name"] = message.name
+    if message.role == "assistant":
+        tool_calls = _chat_completions_tool_calls_payload_from_metadata(message.metadata)
+        if tool_calls:
+            payload["tool_calls"] = tool_calls
     if message.role == "tool":
         tool_call_id = str(message.metadata.get("provider_tool_call_id") or message.name or "")
         if tool_call_id:
             payload["tool_call_id"] = tool_call_id
-    payload["content"] = _chat_completions_message_content(message)
+    payload["content"] = _chat_completions_message_content(
+        message,
+        cache_policy=cache_policy or ProviderCachePolicy(),
+    )
     return payload
 
 
-def _chat_completions_message_content(message: LLMMessage) -> Any:
+def _chat_completions_tool_calls_payload_from_metadata(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_calls = metadata.get("provider_tool_calls_payload") or ()
+    calls: list[dict[str, Any]] = []
+    try:
+        iterator = iter(raw_calls)
+    except TypeError:
+        return calls
+    for raw in iterator:
+        if not isinstance(raw, dict):
+            continue
+        call_id = str(raw.get("call_id") or raw.get("id") or "").strip()
+        name = str(raw.get("tool_name") or raw.get("name") or "").strip()
+        arguments = raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {}
+        if not call_id or not name:
+            continue
+        calls.append(
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(arguments, ensure_ascii=False, sort_keys=True),
+                },
+            }
+        )
+    return calls
+
+
+def _chat_completions_message_content(
+    message: LLMMessage,
+    *,
+    cache_policy: ProviderCachePolicy,
+) -> Any:
     if not message.content_parts:
+        if _message_cache_control_enabled(message, cache_policy):
+            return [
+                {
+                    "type": "text",
+                    "text": message.content,
+                    "cache_control": dict(cache_policy.cache_control),
+                }
+            ]
         return message.content
     parts: list[dict[str, Any]] = []
     if message.content:
-        parts.append({"type": "text", "text": message.content})
+        text_part: dict[str, Any] = {"type": "text", "text": message.content}
+        if _message_cache_control_enabled(message, cache_policy):
+            text_part["cache_control"] = dict(cache_policy.cache_control)
+        parts.append(text_part)
     for part in message.content_parts:
         if part.kind in {"text", "json"}:
-            parts.append({"type": "text", "text": part.text})
+            text_part: dict[str, Any] = {"type": "text", "text": part.text}
+            if _content_part_cache_control_enabled(
+                part,
+                cache_policy,
+                message_role=message.role,
+            ):
+                text_part["cache_control"] = dict(cache_policy.cache_control)
+            parts.append(text_part)
             continue
         if part.kind == "image":
             parts.append(
@@ -1926,6 +2037,65 @@ def _chat_completions_tool_choice_payload(choice: LLMToolChoice) -> Any:
     if choice.mode in {"auto", "none", "required"}:
         return choice.mode
     return {"type": "function", "function": {"name": choice.tool_name}}
+
+
+def _provider_cache_policy_from_request(
+    request: LLMRequest,
+    *,
+    default: ProviderCachePolicy,
+) -> ProviderCachePolicy:
+    raw = request.metadata.get("provider_cache_policy")
+    if isinstance(raw, ProviderCachePolicy):
+        return raw
+    if isinstance(raw, dict):
+        mode = str(raw.get("mode") or default.mode).strip().lower()
+        if mode in {"ephemeral", "cache_control", "explicit"}:
+            return ProviderCachePolicy.ephemeral(
+                min_segment_bytes=int(raw.get("min_segment_bytes") or default.min_segment_bytes),
+                cache_control=dict(raw.get("cache_control") or default.cache_control),
+            )
+        if mode in {"strip", "off", "none", "disabled"}:
+            return ProviderCachePolicy()
+    if request.metadata.get("provider_cache_control") is True:
+        return ProviderCachePolicy.ephemeral(
+            min_segment_bytes=default.min_segment_bytes,
+            cache_control=default.cache_control,
+        )
+    return default
+
+
+def _message_cache_control_enabled(
+    message: LLMMessage,
+    cache_policy: ProviderCachePolicy,
+) -> bool:
+    if cache_policy.mode != "ephemeral":
+        return False
+    if message.role not in {"system", "user"}:
+        return False
+    cache_hint = message.metadata.get("cache_hint")
+    if isinstance(cache_hint, dict) and cache_hint.get("cacheable") is not True:
+        return False
+    if cache_hint is None and message.metadata.get("cacheable") is not True:
+        return False
+    return len(message.content.encode("utf-8")) >= cache_policy.min_segment_bytes
+
+
+def _content_part_cache_control_enabled(
+    part: LLMContentPart,
+    cache_policy: ProviderCachePolicy,
+    *,
+    message_role: str,
+) -> bool:
+    if cache_policy.mode != "ephemeral":
+        return False
+    if message_role not in {"system", "user"}:
+        return False
+    cache_hint = part.metadata.get("cache_hint")
+    if isinstance(cache_hint, dict) and cache_hint.get("cacheable") is not True:
+        return False
+    if cache_hint is None and part.metadata.get("cacheable") is not True:
+        return False
+    return len(part.text.encode("utf-8")) >= cache_policy.min_segment_bytes
 
 
 def _chat_completions_response_format_payload(

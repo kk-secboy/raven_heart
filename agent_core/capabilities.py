@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from agent_core.actions import ActionRegistry, ActionSpec
@@ -21,6 +21,37 @@ CapabilityKind = Literal[
     "mcp_prompt",
     "mcp_server",
 ]
+
+
+_FIXED_INVENTORY_TOOL_PRIORITY = (
+    "search_capabilities",
+    "search_tools",
+    "load_capability",
+    "load_skill_resource",
+    "query_mcp_servers",
+    "query_mcp_tools",
+    "read_file",
+    "write_file",
+    "modify_file",
+    "find_file",
+    "grep",
+    "tree",
+    "bash",
+    "cmd",
+    "exec",
+    "web_search",
+    "do_http_request",
+    "batch_do_http_request",
+)
+
+_FIXED_INVENTORY_ACTION_PRIORITY = (
+    "finish",
+    "call_tool",
+    "search_capabilities",
+    "search_tools",
+    "load_capability",
+    "query_mcp_tools",
+)
 
 
 @dataclass(frozen=True)
@@ -112,6 +143,92 @@ class CapabilityDiscoveryResult:
 
 
 @dataclass(frozen=True)
+class CapabilityRecallRequest:
+    """Internal turn-time capability recall request."""
+
+    query: str = ""
+    limit: int = 12
+    perception_terms: tuple[str, ...] = ()
+    recent_tools: tuple[str, ...] = ()
+    failed_tools: tuple[str, ...] = ()
+    scenario_whitelist: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def normalized_query(self) -> str:
+        parts = [self.query, " ".join(self.perception_terms)]
+        return " ".join(part for part in parts if str(part).strip()).strip()
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": "agent-core-capability-recall-request/v1",
+            "query": self.query,
+            "limit": self.limit,
+            "perception_terms": list(self.perception_terms),
+            "recent_tools": list(self.recent_tools),
+            "failed_tools": list(self.failed_tools),
+            "scenario_whitelist": list(self.scenario_whitelist),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class CapabilityRecallResult:
+    """Turn-time capability recommendations suitable for prompt injection."""
+
+    request: CapabilityRecallRequest
+    matches: tuple[CapabilityMatch, ...] = ()
+    omitted_count: int = 0
+    failed_tools: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def manifest(self) -> dict[str, Any]:
+        counts: dict[str, int] = {}
+        for match in self.matches:
+            counts[match.kind] = counts.get(match.kind, 0) + 1
+        return {
+            "schema_version": "agent-core-capability-discovery/v1",
+            "enabled": True,
+            "recall_schema_version": "agent-core-capability-recall/v1",
+            "request": self.request.manifest(),
+            "query": {
+                "query": self.request.normalized_query(),
+                "limit": self.request.limit,
+            },
+            "match_count": len(self.matches),
+            "omitted_count": self.omitted_count,
+            "counts": counts,
+            "failed_tools": list(self.failed_tools),
+            "matches": [match.manifest() for match in self.matches],
+            "metadata": dict(self.metadata),
+        }
+
+    def render_prompt(self) -> str:
+        lines = ["[capability_recall]"]
+        if self.matches:
+            lines.append("Recommended capabilities for the next turn:")
+            for match in self.matches:
+                tags = f" tags={','.join(match.tags)}" if match.tags else ""
+                source = f" source={match.source}" if match.source else ""
+                lines.append(
+                    f"- {match.kind}:{match.name}{source}{tags}: {match.description}".rstrip()
+                )
+                hint = _capability_use_hint(match)
+                if hint:
+                    lines.append(f"  use: {hint}")
+        else:
+            lines.append("(no targeted capability matches)")
+        if self.failed_tools:
+            lines.append("Recent tool failures to route around:")
+            for tool_name in self.failed_tools:
+                lines.append(f"- {tool_name}")
+        if self.omitted_count:
+            lines.append(
+                f"{self.omitted_count} additional matches omitted; use capability search if needed."
+            )
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True)
 class CapabilityCatalog:
     actions: ActionRegistry | None = None
     tools: ToolRuntimePort | None = None
@@ -172,14 +289,69 @@ class CapabilityCatalog:
             metadata={"catalog": dict(self.metadata)},
         )
 
+    def recall(self, request: CapabilityRecallRequest | str) -> CapabilityRecallResult:
+        recall_request = (
+            request if isinstance(request, CapabilityRecallRequest) else CapabilityRecallRequest(query=str(request))
+        )
+        normalized_query = recall_request.normalized_query()
+        discovery = self.discover(
+            CapabilityQuery(
+                query=normalized_query,
+                limit=max(recall_request.limit * 3, recall_request.limit, 1),
+            )
+        )
+        whitelist = {
+            item.casefold()
+            for item in recall_request.scenario_whitelist
+            if str(item).strip()
+        }
+        failed = {
+            item.casefold()
+            for item in recall_request.failed_tools
+            if str(item).strip()
+        }
+        recent = {
+            item.casefold()
+            for item in recall_request.recent_tools
+            if str(item).strip()
+        }
+        scored: list[tuple[float, str, CapabilityMatch]] = []
+        for index, match in enumerate(discovery.matches):
+            if whitelist and match.kind in {"tool", "mcp_tool"} and match.name.casefold() not in whitelist:
+                continue
+            score = float(match.score or 0.0) + 1.0 / (index + 1)
+            if match.name.casefold() in recent:
+                score += 0.2
+            if match.name.casefold() in failed:
+                score -= 0.35
+            boosted = replace(match, score=round(score, 6))
+            scored.append((score, boosted.name, boosted))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        limit = max(0, int(recall_request.limit))
+        visible = tuple(item for _, _, item in scored[:limit]) if limit else ()
+        return CapabilityRecallResult(
+            request=recall_request,
+            matches=visible,
+            omitted_count=max(0, len(scored) - len(visible) + discovery.omitted_count),
+            failed_tools=tuple(recall_request.failed_tools),
+            metadata={
+                "strategy": "bm25_keyword_recent_failed_reroute",
+                "catalog": dict(self.metadata),
+                "discovery": discovery.manifest(),
+                "recent_tools": list(recall_request.recent_tools),
+                "failed_tools": list(recall_request.failed_tools),
+                "scenario_whitelist": list(recall_request.scenario_whitelist),
+            },
+        )
+
     def render_prompt(self, *, include_skills: bool = False) -> str:
         parts: list[str] = []
         if self.actions is not None:
-            actions = self.actions.render_actions()
+            actions = _render_fixed_action_inventory(self.actions, max_actions=6)
             if actions:
                 parts.append("[action_inventory]\n" + actions)
         if self.tools is not None:
-            inventory = _render_tool_inventory(self.tools, max_tokens=self.tool_token_budget)
+            inventory = _render_fixed_tool_inventory(self.tools, max_tokens=self.tool_token_budget)
             if inventory:
                 parts.append("[tool_inventory]\n" + inventory)
         if self.mcp is not None:
@@ -411,6 +583,29 @@ def _action_manifest(spec: ActionSpec) -> dict[str, Any]:
     }
 
 
+def _render_fixed_action_inventory(actions: ActionRegistry, *, max_actions: int) -> str:
+    specs = tuple(actions.specs())
+    if not specs:
+        return ""
+    priority = {name.casefold(): index for index, name in enumerate(_FIXED_INVENTORY_ACTION_PRIORITY)}
+    fixed = [spec for spec in specs if spec.name.casefold() in priority]
+    if fixed:
+        ordered = sorted(fixed, key=lambda item: (priority[item.name.casefold()], item.name.casefold()))
+    else:
+        ordered = sorted(specs, key=lambda item: item.name.casefold())
+    visible = ordered[: max(1, int(max_actions))]
+    omitted = max(0, len(specs) - len(visible))
+    lines = [_format_fixed_action_inventory_line(spec) for spec in visible]
+    if omitted:
+        lines.append(f"... and {omitted} more actions. Use search_capabilities/search_tools if needed.")
+    return "\n".join(lines)
+
+
+def _format_fixed_action_inventory_line(spec: ActionSpec) -> str:
+    terminal = " terminal=true" if spec.terminal else ""
+    return f"- {spec.name}{terminal}: {spec.description}".rstrip()
+
+
 def _tool_source(spec: ToolSpec, default: str) -> str:
     tool_center = spec.metadata.get("tool_center") if isinstance(spec.metadata, dict) else None
     if isinstance(tool_center, dict):
@@ -427,6 +622,75 @@ def _render_tool_inventory(tools: ToolRuntimePort, *, max_tokens: int) -> str:
         return str(render(max_tokens=max_tokens))
     specs = tools.specs()
     return "\n".join(f"- {spec.name}: {spec.description}".rstrip() for spec in specs)
+
+
+def _render_fixed_tool_inventory(tools: ToolRuntimePort, *, max_tokens: int) -> str:
+    specs = tuple(spec for spec in tools.specs() if spec.enabled)
+    if not specs:
+        return ""
+    fixed_names = {name.casefold(): index for index, name in enumerate(_FIXED_INVENTORY_TOOL_PRIORITY)}
+    fixed: list[ToolSpec] = []
+    remaining: list[ToolSpec] = []
+    for spec in specs:
+        if _is_fixed_inventory_tool(spec, fixed_names):
+            fixed.append(spec)
+        else:
+            remaining.append(spec)
+    fixed_sorted = sorted(
+        fixed,
+        key=lambda item: (
+            fixed_names.get(item.name.casefold(), len(fixed_names)),
+            item.name.casefold(),
+        ),
+    )
+    if fixed_sorted:
+        ordered = tuple(fixed_sorted)
+        dynamic_omitted = len(remaining)
+    elif len(specs) <= 20:
+        ordered = tuple(sorted(remaining, key=lambda item: item.name.casefold()))
+        dynamic_omitted = 0
+    else:
+        ordered = ()
+        dynamic_omitted = len(remaining)
+    lines: list[str] = []
+    used = 0
+    budget = max(0, int(max_tokens)) * 4
+    omitted = dynamic_omitted
+    for spec in ordered:
+        line = _format_fixed_tool_inventory_line(spec)
+        line_bytes = len((line + "\n").encode("utf-8"))
+        if lines and budget and used + line_bytes > budget:
+            omitted += 1
+            continue
+        if not lines and budget and line_bytes > budget:
+            lines.append(line)
+            used += line_bytes
+            omitted += max(0, len(ordered) - 1)
+            break
+        lines.append(line)
+        used += line_bytes
+    if omitted:
+        lines.append(
+            f"... and {omitted} more tools. Use capability_recall/search_capabilities for dynamic tools."
+        )
+    return "\n".join(lines)
+
+
+def _is_fixed_inventory_tool(spec: ToolSpec, priority_names: dict[str, int]) -> bool:
+    if spec.name.casefold() in priority_names:
+        return True
+    metadata = spec.metadata if isinstance(spec.metadata, dict) else {}
+    if bool(metadata.get("fixed_inventory") or metadata.get("core_inventory")):
+        return True
+    tags = {str(tag).casefold() for tag in spec.tags}
+    return bool(tags.intersection({"core", "fixed", "stable", "base"}))
+
+
+def _format_fixed_tool_inventory_line(spec: ToolSpec) -> str:
+    tags = f" tags={','.join(spec.tags)}" if spec.tags else ""
+    aliases = f" aliases={','.join(spec.aliases)}" if spec.aliases else ""
+    description = f": {spec.description}" if spec.description else ""
+    return f"- {spec.name}{tags}{aliases}{description}".rstrip()
 
 
 def _tool_manifest(tools: ToolRuntimePort | None) -> dict[str, Any]:
@@ -449,4 +713,18 @@ def _tool_manifest(tools: ToolRuntimePort | None) -> dict[str, Any]:
             for spec in tools.specs()
         ],
     }
+
+
+def _capability_use_hint(match: CapabilityMatch) -> str:
+    if match.kind in {"tool", "mcp_tool"}:
+        return f"call_tool with tool_name={match.name}"
+    if match.kind == "skill":
+        return f"load_capability or load_skill name={match.name}"
+    if match.kind == "mcp_server":
+        return f"query_mcp_tools after refreshing server={match.name}"
+    if match.kind in {"mcp_resource", "mcp_prompt"}:
+        return "request MCP context material or knowledge recall for this item"
+    if match.kind == "action":
+        return f"emit action {match.name}"
+    return ""
 

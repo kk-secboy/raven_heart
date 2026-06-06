@@ -361,7 +361,9 @@ async def _reopen_backend(
     run_store = _run_store(backend, paths["run_state"])
     loaded_trace = await trace_store.load(run_id)
     trace_records = await trace_store.query(RunTraceQuery(run_ids=(run_id,)))
-    memory_hits = await memory_store.search(MemoryQuery(query=f"{backend} durable", limit=5))
+    memory_hits = await memory_store.search(
+        MemoryQuery(query=f"{backend} durable", limit=5, filters={"kind": "seed"})
+    )
     context_materials = await context_store.search(
         ContextMaterialQuery(query=f"{backend} durable context", limit=5)
     )
@@ -549,4 +551,3 @@ def _policy_store(backend: DurableSessionBackend, path: Path) -> Any:
 
 def _run_store(backend: DurableSessionBackend, path: Path) -> Any:
     return SQLiteAgentRunStore(path) if backend == "sqlite" else MarkdownAgentRunStore(path)
-

@@ -12,20 +12,33 @@ from agent_core.tools import InMemoryToolReplay, ToolInvocation, ToolResult, Too
 
 
 class MockLLMProvider:
-    def __init__(self, responses: list[LLMResponse | dict[str, Any] | str]) -> None:
+    def __init__(
+        self,
+        responses: list[LLMResponse | dict[str, Any] | str],
+        *,
+        perception_responses: list[LLMResponse | dict[str, Any] | str] | None = None,
+    ) -> None:
         self.responses = list(responses)
+        self.perception_responses = list(perception_responses or [])
         self.requests: list[LLMRequest] = []
+        self.perception_requests: list[LLMRequest] = []
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
+        if request.metadata.get("agent_core_perception"):
+            self.perception_requests.append(request)
+            if self.perception_responses:
+                return _mock_response(self.perception_responses.pop(0))
+            return LLMResponse(
+                content=(
+                    '{"summary":"mock perception","topics":["mock"],'
+                    '"keywords":["mock"],"changed":true,"confidence":0.5,'
+                    '"intent_shift":"pivot"}'
+                )
+            )
         self.requests.append(request)
         if not self.responses:
             return LLMResponse(action={"action": "finish", "arguments": {"output": ""}})
-        item = self.responses.pop(0)
-        if isinstance(item, LLMResponse):
-            return item
-        if isinstance(item, dict):
-            return LLMResponse(action=item)
-        return LLMResponse(content=item)
+        return _mock_response(self.responses.pop(0))
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
         response = await self.complete(request)
@@ -34,6 +47,14 @@ class MockLLMProvider:
         if response.action:
             yield LLMStreamEvent(type="action", action=response.action)
         yield LLMStreamEvent(type="message_end")
+
+
+def _mock_response(item: LLMResponse | dict[str, Any] | str) -> LLMResponse:
+    if isinstance(item, LLMResponse):
+        return item
+    if isinstance(item, dict):
+        return LLMResponse(action=item)
+    return LLMResponse(content=item)
 
 
 class MockToolRuntime:

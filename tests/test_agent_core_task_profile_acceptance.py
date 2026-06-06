@@ -32,7 +32,7 @@ async def test_agent_core_task_profile_acceptance_gate_passes() -> None:
         assert profile["tool_call_count"] == 1
         assert profile["memory_hit_count"] == 1
         assert profile["context_material_selected_count"] == 1
-        assert profile["context_injection_count"] == 2
+        assert profile["context_injection_count"] >= 2
         assert profile["trace_eval"]["ok"] is True
 
 

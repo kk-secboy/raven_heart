@@ -13,7 +13,9 @@ from typing import Any, Literal, Protocol
 
 from agent_core.backends import StorageBackendKind, storage_backend_manifest
 from agent_core.capabilities import CapabilityCatalog
+from agent_core.embeddings import EmbeddingProviderPort, rank_semantic_documents
 from agent_core.prompt import PromptAssembler, PromptBucketRole, PromptIR
+from agent_core.search import SearchDocument
 from agent_core.skills import SkillsContext
 from agent_core.timeline import TimelineBudget, TimelineStore
 from agent_core.tools import ToolRuntimePort
@@ -281,8 +283,18 @@ class ContextMaterialStoreNotFoundError(KeyError):
 
 
 class InMemoryContextMaterialStore(ContextMaterialStorePort):
-    def __init__(self, materials: tuple[ContextMaterial, ...] = ()) -> None:
+    def __init__(
+        self,
+        materials: tuple[ContextMaterial, ...] = (),
+        *,
+        embedding_provider: EmbeddingProviderPort | None = None,
+        embedding_model: str = "",
+        embedding_dimensions: int = 0,
+    ) -> None:
         self.materials: list[ContextMaterial] = list(materials)
+        self.embedding_provider = embedding_provider
+        self.embedding_model = embedding_model
+        self.embedding_dimensions = embedding_dimensions
 
     async def search(self, query: ContextMaterialQuery) -> tuple[ContextMaterial, ...]:
         query = query.normalized()
@@ -291,8 +303,33 @@ class InMemoryContextMaterialStore(ContextMaterialStorePort):
         selected = [
             material
             for material in self.materials
-            if _material_matches_query(material, query, route)
+            if _material_matches_query(
+                material,
+                query,
+                route,
+                require_text_match=not (
+                    self.embedding_provider is not None and query.mode in {"semantic", "hybrid"}
+                ),
+            )
         ]
+        if self.embedding_provider is not None and query.mode in {"semantic", "hybrid"}:
+            semantic_candidates = _semantic_candidate_prefilter(
+                tuple(selected),
+                terms,
+                limit=query.limit,
+            )
+            try:
+                return await _rank_context_materials_semantic(
+                    query.query,
+                    semantic_candidates,
+                    provider=self.embedding_provider,
+                    model=self.embedding_model,
+                    dimensions=self.embedding_dimensions,
+                    limit=query.limit,
+                    terms=terms,
+                )
+            except Exception:
+                return _rank_context_materials_keyword(tuple(selected), terms, limit=query.limit)
         ranked = sorted(
             selected,
             key=lambda item: (-_context_material_score(item, terms), item.name),
@@ -311,9 +348,12 @@ class InMemoryContextMaterialStore(ContextMaterialStorePort):
                 name="in_memory",
                 inspectable=True,
                 queryable=True,
-                capabilities=("keyword", "semantic"),
+                capabilities=("keyword", "semantic", "vector")
+                if self.embedding_provider is not None
+                else ("keyword", "semantic"),
             ),
             "material_count": len(self.materials),
+            "semantic_ranking": self.embedding_provider is not None,
             "materials": [material.manifest() for material in self.materials],
         }
 
@@ -704,7 +744,21 @@ class ContextMaterialCenter(ContextMaterialStorePort):
                 tags=tuple(plan.route.tags),
                 min_priority=plan.query.min_priority,
             )
-            results = await mount.store.search(store_query)
+            try:
+                results = await mount.store.search(store_query)
+            except Exception as exc:
+                self._calls.append(
+                    ContextMaterialCallRecord(
+                        operation="search",
+                        store=mount.spec.name,
+                        backend_kind=mount.spec.backend_kind,
+                        status="failed",
+                        query=store_query,
+                        material_count=0,
+                        error=str(exc),
+                    )
+                )
+                continue
             self._calls.append(
                 ContextMaterialCallRecord(
                     operation="search",
@@ -1298,10 +1352,6 @@ class AgentPromptBuilder:
                 )
             if inventory:
                 parts.append("[tool_inventory]\n" + inventory)
-        if self.timeline is not None:
-            frozen = self.timeline.view(self.timeline_budget).render_frozen()
-            if frozen:
-                parts.append("[timeline_frozen]\n" + frozen)
         return "\n\n".join(parts)
 
     def _semi_dynamic_1(self, context: AgentContextPack) -> str:
@@ -1314,8 +1364,7 @@ class AgentPromptBuilder:
             parts.append("[recent_tools_cache]\n" + context.recent_tools_cache)
         return "\n\n".join(parts)
 
-    @staticmethod
-    def _semi_dynamic_2(context: AgentContextPack) -> str:
+    def _semi_dynamic_2(self, context: AgentContextPack) -> str:
         parts = []
         if context.task_instruction:
             parts.append("[task_instruction]\n" + context.task_instruction)
@@ -1328,6 +1377,9 @@ class AgentPromptBuilder:
     def _timeline_open(self, context: AgentContextPack) -> str:
         parts: list[str] = []
         if self.timeline is not None:
+            frozen = self.timeline.view(self.timeline_budget).render_frozen()
+            if frozen:
+                parts.append("[timeline_frozen]\n" + frozen)
             open_tail = self.timeline.view(self.timeline_budget).render_open()
             if open_tail:
                 parts.append("[timeline_open]\n" + open_tail)
@@ -1376,8 +1428,8 @@ def _context_material_target(role: str) -> PromptBucketRole:
         "capability": PromptBucketRole.FROZEN,
         "capabilities": PromptBucketRole.FROZEN,
         "mcp": PromptBucketRole.FROZEN,
-        "memory": PromptBucketRole.SEMI_DYNAMIC_1,
-        "recall": PromptBucketRole.SEMI_DYNAMIC_1,
+        "memory": PromptBucketRole.TIMELINE_OPEN,
+        "recall": PromptBucketRole.TIMELINE_OPEN,
         "skill": PromptBucketRole.SEMI_DYNAMIC_1,
         "skills": PromptBucketRole.SEMI_DYNAMIC_1,
         "schema": PromptBucketRole.SEMI_DYNAMIC_2,
@@ -1411,6 +1463,82 @@ def _context_material_score(material: ContextMaterial, query_terms: frozenset[st
     return round(float(material.priority) * 100.0 + overlap * 10.0 + density * 5.0 + role_bonus, 6)
 
 
+async def _rank_context_materials_semantic(
+    query: str,
+    materials: tuple[ContextMaterial, ...],
+    *,
+    provider: EmbeddingProviderPort,
+    model: str,
+    dimensions: int,
+    limit: int,
+    terms: frozenset[str],
+) -> tuple[ContextMaterial, ...]:
+    if not materials:
+        return ()
+    documents = tuple(
+        SearchDocument(
+            item=material,
+            text=" ".join(
+                (
+                    material.name,
+                    material.role,
+                    material.content,
+                    " ".join(str(item) for item in material.metadata.values()),
+                )
+            ),
+            priority=material.priority,
+            name=material.name,
+        )
+        for material in materials
+    )
+    ranked = await rank_semantic_documents(
+        query,
+        documents,
+        provider=provider,
+        model=model,
+        dimensions=dimensions,
+        limit=0,
+    )
+    if not ranked:
+        return _rank_context_materials_keyword(materials, terms, limit=limit)
+    semantic_scores = {id(hit.item): hit.score for hit in ranked}
+    scored = []
+    for material in materials:
+        semantic_score = semantic_scores.get(id(material), 0.0)
+        keyword_score = _context_material_score(material, terms)
+        score = semantic_score * 1000.0 + keyword_score * 0.12
+        if score <= 0:
+            continue
+        scored.append((score, material.name, material))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return tuple(material for _, _, material in scored[:limit])
+
+
+def _rank_context_materials_keyword(
+    materials: tuple[ContextMaterial, ...],
+    terms: frozenset[str],
+    *,
+    limit: int,
+) -> tuple[ContextMaterial, ...]:
+    ranked = sorted(
+        materials,
+        key=lambda item: (-_context_material_score(item, terms), item.name),
+    )
+    return tuple(ranked[:limit])
+
+
+def _semantic_candidate_prefilter(
+    materials: tuple[ContextMaterial, ...],
+    terms: frozenset[str],
+    *,
+    limit: int,
+) -> tuple[ContextMaterial, ...]:
+    candidate_limit = max(max(1, int(limit)) * 4, 12)
+    if len(materials) <= candidate_limit:
+        return materials
+    return _rank_context_materials_keyword(materials, terms, limit=candidate_limit)
+
+
 def _context_role_bonus(target: PromptBucketRole) -> float:
     bonuses = {
         PromptBucketRole.HIGH_STATIC: 0.5,
@@ -1427,6 +1555,8 @@ def _material_matches_query(
     material: ContextMaterial,
     query: ContextMaterialQuery,
     route: ContextMaterialRoute,
+    *,
+    require_text_match: bool = True,
 ) -> bool:
     if query.min_priority is not None and material.priority < query.min_priority:
         return False
@@ -1443,7 +1573,7 @@ def _material_matches_query(
             continue
         if material.metadata.get(key) != expected:
             return False
-    if not query.query:
+    if not require_text_match or not query.query:
         return True
     terms = _selection_terms(query.query)
     if not terms:

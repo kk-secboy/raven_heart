@@ -202,6 +202,36 @@ async def test_prompt_builder_places_capability_catalog_in_frozen_bucket() -> No
 
 
 @pytest.mark.asyncio
+async def test_capability_catalog_renders_stable_fixed_tool_inventory() -> None:
+    tools = ToolRegistry()
+
+    async def handler(invocation: ToolInvocation) -> ToolResult:
+        return ToolResult(call_id=invocation.call_id, tool_name=invocation.tool_name)
+
+    tools.register(ToolSpec(name="zz_dynamic_probe", description="temporary probe"), handler)
+    tools.register(ToolSpec(name="grep", description="Search files"), handler)
+    tools.register(
+        ToolSpec(
+            name="tenant_specific_loader",
+            description="temporary tenant loader",
+            metadata={"fixed_inventory": True},
+        ),
+        handler,
+    )
+    catalog = CapabilityCatalog(tools=tools, tool_token_budget=1600)
+
+    first = catalog.render_prompt()
+    second = catalog.render_prompt()
+    lines = [line for line in first.splitlines() if line.startswith("- ")]
+
+    assert first == second
+    assert lines[0].startswith("- grep")
+    assert lines[1].startswith("- tenant_specific_loader")
+    assert "zz_dynamic_probe" not in first
+    assert "capability_recall/search_capabilities" in first
+
+
+@pytest.mark.asyncio
 async def test_capability_catalog_discovers_tools_skills_and_mcp_assets() -> None:
     actions = ActionRegistry()
     actions.register(ActionSpec(name="finish", description="Finish the run", terminal=True))

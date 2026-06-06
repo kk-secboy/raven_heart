@@ -7,6 +7,8 @@ from agent_core.memory import (
     ExternalMemoryStore,
     InMemoryMemoryStore,
     MarkdownMemoryStore,
+    MemoryFlushBuffer,
+    MemoryFlushSignal,
     MemoryCenter,
     MemoryHit,
     MemoryGovernanceDeniedError,
@@ -17,6 +19,8 @@ from agent_core.memory import (
     MemoryWrite,
     RuleBasedMemoryGovernance,
     SQLiteMemoryStore,
+    build_memory_injection,
+    infer_memory_recall_intent,
 )
 from agent_core.prompt import PromptIR
 from agent_core.react import ReActExecutor
@@ -43,6 +47,81 @@ class _FailingMemoryStore:
 
     async def write(self, item: MemoryWrite) -> None:
         raise RuntimeError("memory write failed")
+
+
+def test_memory_injection_routes_and_reranks_hits_by_intent() -> None:
+    hits = (
+        MemoryHit(
+            content="Operator must verify admin panel exposure before reporting.",
+            score=0.82,
+            source="policy",
+            metadata={"p_score": 0.9, "r_score": 0.8, "o_score": 0.95},
+        ),
+        MemoryHit(
+            content="Previous finding about admin panel came from an unverified guess.",
+            score=0.9,
+            source="note",
+            metadata={"o_score": 0.2, "r_score": 0.88},
+        ),
+        MemoryHit(
+            content="Use passive reconnaissance first, then check /admin.",
+            score=0.74,
+            source="playbook",
+            metadata={"a_score": 0.95, "r_score": 0.7},
+        ),
+    )
+
+    intent = infer_memory_recall_intent("verify admin evidence before report")
+    result = build_memory_injection(hits, query="verify admin evidence before report", intent=intent)
+
+    assert intent == "fact_check"
+    assert "[ reliability_warning ]" in result.content
+    assert "[ must_aware ]" in result.content
+    assert "[ action_tips ]" in result.content
+    assert result.manifest()["routes"][0] == "reliability_warning"
+    assert result.manifest()["selected_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_memory_flush_buffer_batches_done_signal_and_dedupes() -> None:
+    buffer = MemoryFlushBuffer(byte_threshold=10_000)
+
+    assert await buffer.observe(
+        MemoryFlushSignal(
+            content="tool found admin panel",
+            run_id="run",
+            turn_id="turn-1",
+            iteration=1,
+            status="tool_finished",
+        )
+    ) == ()
+    writes = await buffer.observe(
+        MemoryFlushSignal(
+            content="second fact confirms admin panel exposure",
+            run_id="run",
+            turn_id="turn-2",
+            iteration=2,
+            status="finished",
+            is_done=True,
+        )
+    )
+
+    assert len(writes) == 1
+    assert "tool found admin panel" in writes[0].content
+    assert writes[0].metadata["signal_count"] == 2
+    assert buffer.last_manifest["flushed"] is True
+
+    duplicate = await buffer.observe(
+        MemoryFlushSignal(
+            content=writes[0].content,
+            run_id="run",
+            turn_id="turn-3",
+            iteration=3,
+            status="finished",
+            is_done=True,
+        )
+    )
+    assert duplicate == ()
 
 
 @pytest.mark.asyncio
@@ -95,6 +174,94 @@ async def test_markdown_memory_store_writes_and_indexes_markdown_files(tmp_path)
     assert guidance[0].metadata["kind"] == "guidance"
     assert "Playbook" in playbook[0].content
     assert playbook[0].source.endswith("playbook.md")
+
+
+@pytest.mark.asyncio
+async def test_builtin_memory_store_enriches_writes_with_core_pact_profile() -> None:
+    store = InMemoryMemoryStore()
+    await store.write(
+        MemoryWrite(
+            content="Use passive reconnaissance before active scans.",
+            source="operator-note",
+            metadata={
+                "kind": "guidance",
+                "core_pact_scores": {
+                    "c": 0.2,
+                    "o": 0.8,
+                    "r": 0.7,
+                    "e": 0.0,
+                    "p": 0.9,
+                    "a": 0.95,
+                    "t": 0.6,
+                },
+            },
+        )
+    )
+    await store.write(
+        MemoryWrite(
+            content="Unverified admin panel rumor.",
+            source="scratch",
+            metadata={
+                "kind": "note",
+                "core_pact_scores": {
+                    "c": 0.1,
+                    "o": 0.1,
+                    "r": 0.2,
+                    "e": 0.0,
+                    "p": 0.1,
+                    "a": 0.1,
+                    "t": 0.2,
+                },
+            },
+        )
+    )
+
+    profile = store.records[0].metadata["memory_entity_profile"]
+    vector = tuple(profile["core_pact_vector"])
+    hits = await store.search(MemoryQuery(query="", mode="vector", vector=vector, limit=2))
+
+    assert profile["schema_version"] == "agent-core-memory-entity-profile/v1"
+    assert len(vector) == 7
+    assert store.records[0].metadata["potential_questions"]
+    assert hits[0].source == "operator-note"
+    assert hits[0].metadata["core_pact_vector"] == list(vector)
+
+
+@pytest.mark.asyncio
+async def test_persistent_memory_stores_keep_profile_and_strategy_vector(tmp_path) -> None:
+    sqlite = SQLiteMemoryStore(tmp_path / "memory.sqlite")
+    markdown = MarkdownMemoryStore(tmp_path / "notes")
+    item = MemoryWrite(
+        content="Always verify callback binding before reporting CSRF.",
+        source="operator-policy",
+        metadata={
+            "kind": "policy",
+            "core_pact_scores": {
+                "c": 0.4,
+                "o": 0.9,
+                "r": 0.85,
+                "e": 0.0,
+                "p": 0.95,
+                "a": 0.8,
+                "t": 0.55,
+            },
+        },
+    )
+    await sqlite.write(item)
+    await markdown.write(item)
+
+    restored_sqlite = SQLiteMemoryStore(tmp_path / "memory.sqlite")
+    sqlite_hits = await restored_sqlite.search(MemoryQuery(query="callback csrf", mode="hybrid"))
+    vector = tuple(sqlite_hits[0].metadata["core_pact_vector"])
+    markdown_hits = await markdown.search(MemoryQuery(query="", mode="vector", vector=vector))
+
+    assert sqlite_hits[0].source == "operator-policy"
+    assert sqlite_hits[0].metadata["memory_entity_profile"]["schema_version"] == (
+        "agent-core-memory-entity-profile/v1"
+    )
+    assert markdown_hits[0].source == "operator-policy"
+    assert markdown.manifest()["strategy_vector_index"] is True
+    assert "vector" in restored_sqlite.manifest()["backend"]["capabilities"]
 
 
 @pytest.mark.asyncio

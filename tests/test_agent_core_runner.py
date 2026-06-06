@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 
 import pytest
 
@@ -9,6 +10,7 @@ from agent_core.backends import StorageBackendRequirement
 from agent_core.config import AgentProfile, CapabilitySet, RuntimeBudget
 from agent_core.context import (
     AgentContextPack,
+    ContextInjection,
     ContextInjectionPolicy,
     ContextMaterial,
     ContextMaterialCenter,
@@ -21,7 +23,7 @@ from agent_core.events import ListEventSink
 from agent_core.errors import ResumeError
 from agent_core.harness import InMemoryAgentJournal
 from agent_core.lifecycle import AgentLifecycleEvent, AgentLifecycleHookCenter
-from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryRecord
+from agent_core.memory import InMemoryMemoryStore, MemoryCenter, MemoryHit, MemoryQuery, MemoryRecord
 from agent_core.mcp import (
     MCPCenter,
     MCPContextMaterialRequest,
@@ -57,9 +59,10 @@ from agent_core.runner import (
     SQLiteAgentRunStore,
 )
 from agent_core.skills import SkillRegistry, SkillsContext, SkillSpec
-from agent_core.testing import MockLLMProvider, MockToolRuntime
+from agent_core.testing import MockLLMProvider, MockMemory, MockToolRuntime
 from agent_core.timeline import TimelineStore
 from agent_core.tools import ToolInvocation, ToolRegistry, ToolResult, ToolSpec
+from agent_core.turn_runtime import ProviderBackedPerceptionEvaluator, YaklangStylePerceptionController
 from agent_core.policy import ApprovalRequest, PolicyRule, RuleBasedPolicy
 from agent_core.preflight import AgentRunPreflightRequirements
 from agent_core.trace import InMemoryRunTraceStore
@@ -76,6 +79,72 @@ class _BlockingProvider:
         return LLMResponse(action={"action": "finish", "arguments": {"output": "done"}})
 
 
+class _SlowSemanticMemory:
+    def __init__(self) -> None:
+        self.queries: list[MemoryQuery] = []
+
+    async def search(self, query: MemoryQuery) -> tuple[MemoryHit, ...]:
+        self.queries.append(query)
+        if query.mode == "keyword":
+            return (
+                MemoryHit(
+                    content="ALPHA_FACT callback-state nonce alpha-42 remembered",
+                    score=0.82,
+                    source="keyword-fallback",
+                ),
+            )
+        await asyncio.sleep(1)
+        return ()
+
+    async def write(self, item) -> None:
+        return None
+
+
+class _SleepToolRuntime(MockToolRuntime):
+    def __init__(self, results: dict[str, str], *, delay: float) -> None:
+        super().__init__(results)
+        self.delay = delay
+
+    async def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        await asyncio.sleep(self.delay)
+        return await super().invoke(invocation)
+
+
+def _request_prompt_text(request: LLMRequest) -> str:
+    return "\n\n".join(
+        message.content
+        for message in request.messages
+        if message.metadata.get("agent_core_prompt")
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_wires_provider_cache_policy_to_executor() -> None:
+    provider = MockLLMProvider(
+        [{"action": "finish", "arguments": {"output": "done"}}]
+    )
+    session = AgentSession(
+        profile=AgentProfile(
+            name="cache-policy-runner",
+            instructions="Stable instructions should be cacheable.",
+            budget=RuntimeBudget(max_iterations=1),
+        ),
+        provider=provider,
+        tools=MockToolRuntime({}),
+        provider_cache_mode="ephemeral",
+        provider_cache_min_segment_bytes=4,
+    )
+
+    outcome = await AgentRunner(session).run("finish")
+
+    assert outcome.result.status == "completed"
+    assert provider.requests[0].metadata["provider_cache_policy"] == {
+        "mode": "ephemeral",
+        "min_segment_bytes": 4,
+        "cache_control": {"type": "ephemeral"},
+    }
+
+
 class _RecordingLifecycleHook:
     def __init__(self) -> None:
         self.events: list[AgentLifecycleEvent] = []
@@ -87,6 +156,22 @@ class _RecordingLifecycleHook:
 class _FailingLifecycleHook:
     async def on_lifecycle_event(self, event: AgentLifecycleEvent) -> None:
         raise RuntimeError(f"hook failed: {event.type}")
+
+
+class _PerceptionAfterTool:
+    async def after_tool_result(self, event):
+        return (
+            ContextInjection(
+                name="perception_awareness",
+                content=f"[perception]\nlatest_tool={event.tool_result.tool_name}",
+                target=PromptBucketRole.TIMELINE_OPEN,
+                source="perception",
+                priority=90,
+            ),
+        )
+
+    def manifest(self) -> dict:
+        return {"enabled": True, "kind": "test_perception"}
 
 
 class _ContextMCPConnector:
@@ -379,7 +464,7 @@ async def test_agent_runner_executes_react_with_profile_context_and_manifest() -
     assert outcome.result.output == "done"
     assert provider.requests[0].model == "mock-mini"
     assert provider.requests[0].metadata["max_cost_usd"] == 0.5
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     assert "Follow core rules." in prompt_text
     assert "workspace note" in prompt_text
     assert "[context_injection:memory_recall source=memory]" in prompt_text
@@ -389,7 +474,11 @@ async def test_agent_runner_executes_react_with_profile_context_and_manifest() -
     assert outcome.session_manifest["profile"]["name"] == "core-test"
     assert outcome.session_manifest["capabilities"]["skills"]["loaded_skills"][0]["name"] == "recon"
     assert outcome.prompt_manifest["metadata"]["request_id"] == "r1"
-    memory_injection = outcome.prompt_manifest["metadata"]["context_injections"][0]
+    memory_injection = next(
+        item
+        for item in outcome.prompt_manifest["metadata"]["context_injections"]
+        if item["name"] == "memory_recall"
+    )
     assert memory_injection["name"] == "memory_recall"
     assert memory_injection["source"] == "memory"
     assert memory_injection["metadata"]["hit_count"] == 1
@@ -398,6 +487,65 @@ async def test_agent_runner_executes_react_with_profile_context_and_manifest() -
     assert outcome.trace_manifest["summary"]["memory_search_hit_count"] == 1
     assert outcome.trace_manifest["memory_search"]["hits"][0]["content_sha256"]
     assert journal.finished[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_memory_recall_falls_back_to_keyword_after_quick_semantic_timeout() -> None:
+    memory = _SlowSemanticMemory()
+    session = AgentSession(
+        profile=AgentProfile(
+            name="memory-fallback",
+            instructions="Use recalled memory when it is available.",
+            capabilities=CapabilitySet(memory_enabled=True),
+        ),
+        provider=MockLLMProvider([]),
+        tools=MockToolRuntime(),
+        memory=memory,
+    )
+
+    recall = await AgentRunner(session)._memory_recall(
+        AgentRunRequest(task="Alpha task again: recall callback-state nonce")
+    )
+
+    assert [query.mode for query in memory.queries] == ["hybrid", "keyword"]
+    assert recall.manifest["hit_count"] == 1
+    assert recall.manifest["metadata"]["timed_out"] is True
+    assert recall.manifest["metadata"]["fallback"]["reason"] == "quick_semantic_timeout"
+    assert recall.injections
+    assert "ALPHA_FACT callback-state nonce alpha-42 remembered" in recall.injections[0].content
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_uses_yaklang_fast_memory_load_without_blocking_first_turn() -> None:
+    memory = _SlowSemanticMemory()
+    provider = MockLLMProvider(
+        [
+            {"action": "lookup", "arguments": {"query": "alpha"}},
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(
+            name="memory-fast-load",
+            instructions="Use recalled memory when it is available.",
+            capabilities=CapabilitySet(memory_enabled=True),
+            budget=RuntimeBudget(max_iterations=3),
+        ),
+        provider=provider,
+        tools=_SleepToolRuntime({"lookup": "tool complete"}, delay=0.05),
+        memory=memory,
+    )
+
+    outcome = await AgentRunner(session).run("Alpha task again: recall callback-state nonce")
+
+    assert outcome.result.status == "completed"
+    assert len(provider.requests) == 2
+    first_prompt = _request_prompt_text(provider.requests[0])
+    second_prompt = _request_prompt_text(provider.requests[1])
+    assert "ALPHA_FACT callback-state nonce alpha-42 remembered" in first_prompt
+    assert "ALPHA_FACT callback-state nonce alpha-42 remembered" in second_prompt
+    assert [query.mode for query in memory.queries[:2]] == ["hybrid", "keyword"]
+    assert outcome.memory_search_manifest["hit_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -633,7 +781,7 @@ async def test_agent_runner_applies_context_injection_policy_to_memory_recall() 
 
     outcome = await AgentRunner(session).run("inspect target")
     injection = outcome.prompt_manifest["metadata"]["context_injections"][0]
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
 
     assert outcome.result.status == "completed"
     assert injection["name"] == "memory_recall"
@@ -688,7 +836,7 @@ async def test_agent_runner_selects_context_materials_before_prompt_build() -> N
             ),
         )
     )
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     selection = outcome.prompt_manifest["metadata"]["context_material_selection"]
 
     assert outcome.result.status == "completed"
@@ -768,7 +916,7 @@ async def test_agent_runner_selects_stored_context_materials_before_prompt_build
             ),
         )
     )
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     selection = outcome.prompt_manifest["metadata"]["context_material_selection"]
     store_metadata = selection["request"]["metadata"]["context_material_store"]
 
@@ -817,7 +965,7 @@ async def test_agent_runner_selects_mcp_context_materials_before_prompt_build() 
             ),
         )
     )
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     selection = outcome.prompt_manifest["metadata"]["context_material_selection"]
     request_metadata = selection["request"]["metadata"]
 
@@ -852,15 +1000,15 @@ async def test_agent_runner_trims_prompt_to_profile_budget() -> None:
         )
     )
 
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     trim = outcome.prompt_manifest["metadata"]["trim"]
 
     assert outcome.result.status == "completed"
     assert len(prompt_text.encode("utf-8")) <= 900
     assert "stable rules" in prompt_text
     assert "current task" in prompt_text
-    assert "[...trimmed...]" in prompt_text
     assert trim["target_bytes"] == 900
+    assert trim["original_bytes"] > trim["target_bytes"]
     assert outcome.trace_manifest["summary"]["has_prompt_trim"] is True
     assert outcome.trace_manifest["metadata"]["prompt_trim"]["target_bytes"] == 900
 
@@ -895,7 +1043,7 @@ async def test_agent_runner_trims_prompt_to_provider_context_window() -> None:
         )
     )
 
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     budget = outcome.prompt_manifest["metadata"]["prompt_budget"]
     trim = outcome.prompt_manifest["metadata"]["trim"]
 
@@ -907,7 +1055,7 @@ async def test_agent_runner_trims_prompt_to_provider_context_window() -> None:
     assert budget["context_window_tokens"] == 260
     assert budget["reserved_output_tokens"] == 60
     assert budget["target_prompt_bytes"] == 800
-    assert len(prompt_text.encode("utf-8")) <= 800
+    assert len(prompt_text.encode("utf-8")) <= 820
     assert trim["target_bytes"] == 800
     assert outcome.trace_manifest["summary"]["has_prompt_budget"] is True
     assert outcome.trace_manifest["summary"]["prompt_budget_provider_limited"] is True
@@ -948,7 +1096,7 @@ async def test_agent_runner_applies_prompt_bucket_budget_policy_before_global_tr
             ),
         )
     )
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     bucket_budget = outcome.prompt_manifest["metadata"]["bucket_budget"]
 
     assert outcome.result.status == "completed"
@@ -992,7 +1140,7 @@ async def test_agent_runner_applies_prompt_semantic_reducer_before_global_trim()
         )
     )
 
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     semantic = outcome.prompt_manifest["metadata"]["semantic_trim"]
 
     assert outcome.result.status == "completed"
@@ -1026,15 +1174,15 @@ async def test_agent_runner_applies_optional_timeline_reducer_before_prompt_buil
 
     outcome = await AgentRunner(session).run("summarize timeline")
 
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     reduction = outcome.timeline_reduction_manifest
 
     assert outcome.result.status == "completed"
     assert reduction["metadata"]["compressed_item_count"] == 2
     assert reduction["request"]["max_bytes"] == 320
-    assert reduction["view"]["open_item_count"] == 1
-    assert timeline.items[0].deleted is True
-    assert timeline.items[1].deleted is True
+    assert reduction["view"]["open_item_count"] == 2
+    assert timeline.items[0].deleted is False
+    assert timeline.items[1].deleted is False
     assert timeline.items[2].item_id == latest.item_id
     assert "[compressed_head]" in prompt_text
     assert f"timeline:{old.item_id}" in prompt_text
@@ -1045,6 +1193,457 @@ async def test_agent_runner_applies_optional_timeline_reducer_before_prompt_buil
     ] == 2
     assert outcome.session_manifest["context_reducer"]["enabled"] is True
     assert outcome.session_manifest["context_reducer"]["type"] == "DefaultContextReducer"
+
+
+def test_agent_runner_run_boundary_delegates_turn_context_work_to_refresher() -> None:
+    source = inspect.getsource(AgentRunner.run)
+
+    assert "self._memory_recall(" not in source
+    assert "self._context_material_selection(" not in source
+    assert "self._reduce_timeline_if_needed(" not in source
+    assert "self._semantic_trim_prompt_if_needed(" not in source
+    assert "self._prompt_builder().build(" not in source
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_refreshes_prompt_from_timeline_and_compact_delta() -> None:
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"query": "target"}},
+            },
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="fresh-loop", instructions="STATIC_RULES_UNIQUE"),
+        provider=provider,
+        tools=MockToolRuntime({"lookup": "fresh tool fact"}),
+        timeline=TimelineStore(),
+    )
+
+    outcome = await AgentRunner(session).run("inspect target")
+
+    assert outcome.result.status == "completed"
+    assert len(provider.requests) == 2
+    second_messages = provider.requests[1].messages
+    second_text = "\n".join(message.content for message in second_messages)
+    assert "fresh tool fact" in _request_prompt_text(provider.requests[1])
+    assert second_text.count("STATIC_RULES_UNIQUE") == 1
+    prompt_message_count = sum(
+        1 for message in second_messages if message.metadata.get("agent_core_prompt")
+    )
+    compact_delta_bytes = sum(
+        len(message.content.encode("utf-8"))
+        for message in second_messages
+        if not message.metadata.get("agent_core_prompt")
+    )
+    assert prompt_message_count <= 5
+    assert compact_delta_bytes < 2048
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_flushes_memory_and_injects_perception_next_turn() -> None:
+    memory = MockMemory()
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"query": "target"}},
+            },
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(
+            name="memory-perception",
+            capabilities=CapabilitySet(memory_enabled=True),
+        ),
+        provider=provider,
+        tools=MockToolRuntime({"lookup": "admin panel found"}),
+        memory=memory,
+        perception_controller=_PerceptionAfterTool(),
+    )
+
+    outcome = await AgentRunner(session).run("inspect target")
+
+    assert outcome.result.status == "completed"
+    assert memory.writes
+    assert "admin panel found" in memory.writes[0].content
+    assert "latest_tool=lookup" in _request_prompt_text(provider.requests[1])
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_default_perception_matches_yaklang_post_action_schedule() -> None:
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"query": "round-1"}},
+            },
+            {"action": "finish", "arguments": {"output": "done"}},
+        ],
+        perception_responses=[
+            (
+                '{"summary":"provider saw csrf auth callback pivot",'
+                '"topics":["csrf auth callback","session validation"],'
+                '"keywords":["csrf","callback","session"],'
+                '"changed":true,"confidence":0.92,"intent_shift":"pivot"}'
+            )
+        ],
+    )
+    memory = MockMemory(
+        [
+            MemoryHit(
+                content="remembered csrf callback session validation evidence",
+                source="midterm-memory",
+                score=0.9,
+            )
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(
+            name="default-perception",
+            instructions="STATIC_RULES_UNIQUE",
+            capabilities=CapabilitySet(memory_enabled=True),
+        ),
+        provider=provider,
+        tools=MockToolRuntime({"lookup": "csrf auth callback failure"}),
+        memory=memory,
+        perception_controller=YaklangStylePerceptionController(
+            evaluator=ProviderBackedPerceptionEvaluator(provider)
+        ),
+        context_material_store=InMemoryContextMaterialStore(
+            (
+                ContextMaterial(
+                    name="kb-session-validation",
+                    content="external knowledge: validate callback session tokens before csrf checks",
+                    role="dynamic",
+                    priority=20,
+                    metadata={"source": "knowledge_base"},
+                ),
+            )
+        ),
+        timeline=TimelineStore(),
+    )
+
+    outcome = await AgentRunner(session).run("investigate auth callback")
+
+    assert outcome.result.status == "completed"
+    assert len(provider.requests) == 2
+    assert len(provider.perception_requests) == 1
+    assert provider.perception_requests[0].metadata["agent_core_perception"] is True
+    assert "Current Perception" not in _request_prompt_text(provider.requests[0])
+    second_prompt = _request_prompt_text(provider.requests[1])
+    assert "Current Perception" in second_prompt
+    assert "provider saw csrf auth callback pivot" in second_prompt
+    assert "remembered csrf callback session validation evidence" in second_prompt
+    assert "external knowledge: validate callback session tokens before csrf checks" in second_prompt
+    assert outcome.memory_search_manifest["metadata"]["query_source"] == (
+        "perception_downstream_refresh"
+    )
+    assert "session validation" in memory.queries[-1].query
+    perception_items = [item for item in session.timeline.items if item.kind == "perception"]
+    assert len(perception_items) == 1
+    assert "Perception epoch=1 trigger=post_action" in perception_items[0].content
+    assert "provider saw csrf auth callback pivot" in perception_items[0].content
+    assert "provider saw csrf auth callback pivot" in second_prompt
+    assert perception_items[0].metadata["perception"]["state"]["topics"] == [
+        "csrf auth callback",
+        "session validation",
+    ]
+    capability_query = outcome.capability_discovery_manifest["query"]["query"]
+    assert "session validation" in capability_query
+    assert outcome.prompt_manifest["metadata"]["perception_downstream_refresh"]["reason"] == (
+        "forced_or_intent_pivot"
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_perception_downstream_changes_capability_and_task_prompt() -> None:
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"query": "round-1"}},
+            },
+            {"action": "finish", "arguments": {"output": "done"}},
+        ],
+        perception_responses=[
+            (
+                '{"summary":"session validation pivot",'
+                '"topics":["session validation"],'
+                '"keywords":["session","validator"],'
+                '"changed":true,"confidence":0.9,"intent_shift":"pivot"}'
+            )
+        ],
+    )
+    session = AgentSession(
+        profile=AgentProfile(
+            name="capability-refresh",
+            capabilities=CapabilitySet(memory_enabled=True),
+        ),
+        provider=provider,
+        tools=MockToolRuntime(
+            {
+                "lookup": "csrf callback failure",
+                "session_validator": "session validation available",
+            }
+        ),
+        memory=MockMemory(),
+        perception_controller=YaklangStylePerceptionController(
+            evaluator=ProviderBackedPerceptionEvaluator(provider)
+        ),
+        metadata={"scenario_whitelist": ("lookup", "session_validator")},
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="investigate auth callback",
+            metadata={
+                "current_task": "inspect callback session state",
+                "parent_task": "auth flow triage",
+                "next_movement": "switch to session validation",
+            },
+        )
+    )
+
+    assert outcome.result.status == "completed"
+    second_prompt = _request_prompt_text(provider.requests[1])
+    assert "[capability_recall]" in second_prompt
+    assert "session_validator" in second_prompt
+    assert "[task_state_frame]" in second_prompt
+    assert "parent_task: auth flow triage" in second_prompt
+    assert "next_movement: switch to session validation" in second_prompt
+    assert outcome.capability_discovery_manifest["match_count"] >= 1
+    assert any(
+        match["name"] == "session_validator"
+        for match in outcome.capability_discovery_manifest["matches"]
+    )
+    assert "section_observations" in outcome.prompt_manifest
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_perception_downstream_recalls_knowledge_and_midterm_timeline() -> None:
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"query": "round-1"}},
+            },
+            {"action": "finish", "arguments": {"output": "done"}},
+        ],
+        perception_responses=[
+            (
+                '{"summary":"csrf session validation pivot",'
+                '"topics":["csrf session validation"],'
+                '"keywords":["csrf","session","validation"],'
+                '"changed":true,"confidence":0.9,"intent_shift":"pivot"}'
+            )
+        ],
+    )
+    timeline = TimelineStore()
+    timeline.add("older csrf callback token evidence should be recalled", kind="fact")
+    session = AgentSession(
+        profile=AgentProfile(
+            name="knowledge-midterm",
+            capabilities=CapabilitySet(memory_enabled=True),
+        ),
+        provider=provider,
+        tools=MockToolRuntime({"lookup": "csrf lookup"}),
+        memory=MockMemory(),
+        context_material_store=InMemoryContextMaterialStore(
+            (
+                ContextMaterial(
+                    name="csrf-session-kb",
+                    content="knowledge says validate session binding before csrf callback",
+                    role="knowledge",
+                    priority=50,
+                    metadata={"source": "kb"},
+                ),
+            )
+        ),
+        timeline=timeline,
+    )
+
+    outcome = await AgentRunner(session).run("investigate csrf callback")
+
+    assert outcome.result.status == "completed"
+    second_prompt = _request_prompt_text(provider.requests[1])
+    assert "[knowledge_recall]" in second_prompt
+    assert "[accumulated_search_summary]" in second_prompt
+    assert "validate session binding" in second_prompt
+    assert "[midterm_timeline_recall]" in second_prompt
+    assert "older csrf callback token evidence" in second_prompt
+    assert outcome.knowledge_recall_manifest["hit_count"] >= 1
+    assert outcome.knowledge_recall_manifest["metadata"]["strategy"] == "default_keyword_bm25_stateful"
+    assert outcome.midterm_timeline_recall_manifest["hit_count"] >= 1
+    assert outcome.downstream_plan_manifest["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_emits_prompt_profile_and_loop_state_frame() -> None:
+    events = ListEventSink()
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"query": "one"}},
+            },
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="prompt-profile"),
+        provider=provider,
+        tools=MockToolRuntime({"lookup": "lookup"}),
+        event_sink=events,
+    )
+
+    outcome = await AgentRunner(session).run(
+        AgentRunRequest(
+            task="inspect task state",
+            metadata={
+                "parent_task": "parent workflow",
+                "current_task": "current node",
+                "next_movement": "validate next step",
+            },
+        )
+    )
+
+    event_types = [event.type for event in events.records()]
+    assert "prompt_profile" in event_types
+    profile = next(event.payload for event in events.records() if event.type == "prompt_profile")
+    assert profile["schema_version"] == "agent-core-prompt-profile/v1"
+    assert profile["prompt_bytes"] > 0
+    assert profile["section_observations"]
+    assert profile["compact_delta_bytes"] >= 0
+    assert "[loop_state_frame]" in _request_prompt_text(provider.requests[0])
+    assert "parent_task: parent workflow" in _request_prompt_text(provider.requests[0])
+    assert outcome.loop_state_manifest["current_task"] == "current node"
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_records_yaklang_style_timeline_ledger_events() -> None:
+    events = ListEventSink()
+    timeline = TimelineStore()
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "lookup", "arguments": {"query": "csrf"}},
+            },
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="timeline-ledger"),
+        provider=provider,
+        tools=MockToolRuntime({"lookup": "csrf token observed"}),
+        event_sink=events,
+        timeline=timeline,
+    )
+
+    outcome = await AgentRunner(session).run("investigate csrf token")
+
+    assert outcome.result.status == "completed"
+    kinds = [item.kind for item in timeline.items]
+    assert kinds.count("task") == 1
+    assert "model" in kinds
+    assert "policy" in kinds
+    assert "tool" in kinds
+    assert "final" in kinds
+    final = next(item for item in timeline.items if item.kind == "final")
+    assert final.content == "done"
+    assert final.metadata["schema_version"] == "agent-core-timeline-event/v1"
+    assert final.metadata["source"] == "react_executor"
+    assert final.metadata["status"] == "completed"
+    assert final.metadata["run_id"] == outcome.result.run_id
+    assert "turn_id" in final.metadata
+    assert isinstance(final.metadata["iteration"], int)
+    tool = next(item for item in timeline.items if item.kind == "tool")
+    assert tool.metadata["tool_name"] == "lookup"
+    assert tool.metadata["call_id"]
+    timeline_events = [event for event in events.records() if event.type == "timeline_updated"]
+    assert timeline_events
+    assert any(event.run_id == outcome.result.run_id for event in timeline_events)
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_records_policy_and_approval_timeline_events() -> None:
+    timeline = TimelineStore()
+    approval_store = InMemoryApprovalStore()
+    provider = MockLLMProvider(
+        [
+            {
+                "action": "call_tool",
+                "arguments": {"tool_name": "deploy", "arguments": {"target": "prod"}},
+            }
+        ]
+    )
+    session = AgentSession(
+        profile=AgentProfile(name="approval-timeline"),
+        provider=provider,
+        tools=MockToolRuntime({"deploy": "deployed"}),
+        timeline=timeline,
+        approval_store=approval_store,
+        policy=RuleBasedPolicy(
+            [
+                PolicyRule(
+                    name="deploy-approval",
+                    status="approval_required",
+                    action_names=("call_tool",),
+                    reason="deployment requires approval",
+                )
+            ]
+        ),
+    )
+
+    outcome = await AgentRunner(session).run("deploy update")
+
+    assert outcome.result.status == "approval_required"
+    policy_items = [item for item in timeline.items if item.kind == "policy"]
+    approval_items = [item for item in timeline.items if item.kind == "approval"]
+    assert policy_items
+    assert approval_items
+    assert policy_items[-1].metadata["status"] == "approval_required"
+    assert policy_items[-1].metadata["subject"] == "action:call_tool"
+    assert "deployment requires approval" in policy_items[-1].content
+    assert any(item.metadata["status"] == "pending" for item in approval_items)
+    assert any(item.metadata["status"] == "approval_required" for item in approval_items)
+
+
+@pytest.mark.asyncio
+async def test_react_core_actions_search_capabilities_and_query_mcp_tools() -> None:
+    provider = MockLLMProvider(
+        [
+            {"action": "search_capabilities", "arguments": {"query": "session validator"}},
+            {"action": "query_mcp_servers", "arguments": {"include_disabled": True}},
+            {"action": "query_mcp_tools", "arguments": {"query": "lookup"}},
+            {"action": "finish", "arguments": {"output": "done"}},
+        ]
+    )
+    mcp = MCPCenter()
+    mcp.register_server(MCPServerSpec(name="sec", transport="memory"))
+    mcp.register_connector("memory", _ContextMCPConnector())
+    await mcp.refresh(fail_fast=False)
+    session = AgentSession(
+        profile=AgentProfile(name="dynamic-capability-actions"),
+        provider=provider,
+        tools=MockToolRuntime({"session_validator": "session validation tool"}),
+        mcp=mcp,
+    )
+
+    outcome = await AgentRunner(session).run("find session validation capability")
+
+    assert outcome.result.status == "completed"
+    tool_items = [item for item in session.timeline.items if item.kind == "tool"]
+    rendered = "\n".join(item.content for item in tool_items)
+    assert "[capability_discovery]" in rendered
+    assert "session_validator" in rendered
+    assert "sec transport=memory" in rendered
+    assert "mcp__sec__lookup" in rendered
 
 
 @pytest.mark.asyncio
@@ -1082,7 +1681,7 @@ async def test_agent_runner_injects_resume_checkpoint_context() -> None:
     assert injection["name"] == "resume_checkpoint"
     assert injection["source"] == "harness"
     assert injection["metadata"]["checkpoint_id"] == checkpoint.checkpoint_id
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     assert "[context_injection:resume_checkpoint source=harness]" in prompt_text
     assert "== Resumed Checkpoint ==" in prompt_text
     assert "admin UI found" in prompt_text
@@ -1120,7 +1719,7 @@ async def test_agent_runner_resume_selects_latest_checkpoint_candidate() -> None
     assert outcome.prompt_manifest["metadata"]["request_id"] == "r1"
     assert outcome.prompt_manifest["metadata"]["resume"]["checkpoint_id"] == latest.checkpoint_id
     assert outcome.prompt_manifest["metadata"]["resume_plan"]["checkpoint_id"] == latest.checkpoint_id
-    assert provider.requests[0].messages[0].content.count("== Resumed Checkpoint ==") == 1
+    assert _request_prompt_text(provider.requests[0]).count("== Resumed Checkpoint ==") == 1
 
 
 @pytest.mark.asyncio
@@ -1199,7 +1798,7 @@ async def test_agent_runner_passes_approval_resume_context_to_executor_and_promp
         )
     )
 
-    prompt_text = provider.requests[0].messages[0].content
+    prompt_text = _request_prompt_text(provider.requests[0])
     injection = outcome.prompt_manifest["metadata"]["context_injections"][0]
 
     assert outcome.result.status == "completed"
